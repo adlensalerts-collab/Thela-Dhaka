@@ -1,0 +1,8 @@
+{
+  "name": "Remix Thela Dhaka",
+  "description": "A chaotic 3D street-survival game where you navigate pushcarts through Dhaka’s vibrant, obstacle-filled urban landscape.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
