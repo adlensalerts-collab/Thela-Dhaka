@@ -30,15 +30,16 @@ import {
 import { SpatialSoundManager } from './audio/ambient';
 import { GARAGE_SITES, buildGarage, entranceForSite, nearestGarage } from './world/garages';
 import { AAROT_SITES, buildAarot, entranceForAarot, nearestAarot } from './world/aarots';
+import { nearJunction, auditObstacles } from './world/layout';
 
-const STALL_POSITIONS: ReadonlyArray<readonly [number, number]> = [
-  [-9, -27],
-  [11, 25],
-  [-49, -8],
-  [71, 51],
-  [-35, 70],
-  [35, -42]
-];
+const STALL_POSITIONS = [
+  [-20, 10.5, 'x'],
+  [-20, -10.5, 'x'],
+  [10.5, -20, 'z'],
+  [50.5, 20, 'z'],
+  [-50.5, 20, 'z'],
+  [60, 50.5, 'x']
+] as const;
 
 export interface GameState {
   mode: 'vendor' | 'police' | 'online_vendor' | 'online_police';
@@ -557,7 +558,7 @@ export class GameEngine {
     const shops = ['চায়ের দোকান', 'ফলের আড়ৎ', 'নিউ মার্কেট', 'সিটি স্টোর', 'ঢাকা খাবার', 'মা ফার্মেসি', 'সবজি বাজার', 'ফুচকা হাউস', 'মায়ের দোয়া', 'মিষ্টি ঘর'];
 
     const buildBuilding = (x: number, z: number) => {
-      const h = rand(10, 31), width = rand(17, 23), depth = rand(17, 23);
+      const h = rand(10, 31), width = rand(15, 17), depth = rand(15, 17);
       const color = pick(['#e0d4bc', '#d9cdb4', '#e8dfce', '#d4c7af', '#dfd7c5']);
       const b = buildDhakaBuilding(this.scene, { x, z, width, depth, height: h, color, shopNames: shops });
       this.obstacles.push(b.obstacle);
@@ -602,13 +603,16 @@ export class GameEngine {
         tag: 'pole'
       });
     };
-    for (let z = -110; z < 110; z += 27) {
-      makePole(-10, z);
-      makePole(50, z);
+    for (const n of [0, 40]) {
+      for (let z = -110; z <= 110; z += 27) {
+        if (nearJunction(z, 11)) continue;
+        makePole(n - 7.1, z);
+      }
     }
 
     // Elevated metro roadway & concrete pillars
     for (let x = -115; x < 115; x += 15) {
+      if (nearJunction(x, 10.75)) continue;
       cylinder(this.scene, 0.95, 1.2, 8.1, mat.concrete, x, 4, -79.5, 8);
       this.obstacles.push({
         type: 'circle',
@@ -621,18 +625,19 @@ export class GameEngine {
     block(this.scene, 244, 1.1, 11.2, mat.concrete, 0, 8.4, -79.5, false);
     block(this.scene, 244, 0.16, 10, mat.road, 0, 9.1, -79.5, false);
 
-    const makeStall = (x: number, z: number) => {
+    const makeStall = (x: number, z: number, axis: 'x' | 'z' = 'x') => {
       const g = new THREE.Group();
       g.position.set(x, 0, z);
-      block(g, 3.9, 1, 2.5, mat.wood, 0, 0.8, 0);
+      if (axis === 'z') g.rotation.y = Math.PI / 2;
+      block(g, 3.9, 1, 1.8, mat.wood, 0, 0.8, 0);
       for (const xx of [-1.5, 1.5]) {
-        for (const zz of [-0.8, 0.8]) {
+        for (const zz of [-0.6, 0.6]) {
           cylinder(g, 0.055, 0.055, 2.5, mat.metal, xx, 2.35, zz);
         }
       }
-      block(g, 4.4, 0.3, 2.9, matte('#e7b344'), 0, 3.75, 0);
+      block(g, 4.4, 0.3, 2.1, matte('#e7b344'), 0, 3.75, 0);
       for (let i = 0; i < 9; i++) {
-        sphere(g, 0.25, matte(pick(['#dd4931', '#86ae4a', '#e6bc3c'])), rand(-1.6, 1.6), 1.5, rand(-0.7, 0.7));
+        sphere(g, 0.25, matte(pick(['#dd4931', '#86ae4a', '#e6bc3c'])), rand(-1.6, 1.6), 1.5, rand(-0.5, 0.5));
       }
       this.scene.add(g);
 
@@ -641,14 +646,14 @@ export class GameEngine {
         type: 'box',
         x,
         z,
-        hw: 2.2,
-        hd: 1.5,
+        hw: axis === 'x' ? 1.95 : 0.9,
+        hd: axis === 'x' ? 0.9 : 1.95,
         tag: 'stall'
       });
       return g;
     };
-    for (const [x, z] of STALL_POSITIONS) {
-      makeStall(x, z);
+    for (const [x, z, axis] of STALL_POSITIONS) {
+      makeStall(x, z, axis);
     }
 
     buildPavementTrees(this.scene, this.obstacles, {
@@ -707,6 +712,10 @@ export class GameEngine {
     // Initialize Dhaka sidewalk waypoint network and pool of 14 A* pedestrian NPCs
     this.sidewalkGraph = new SidewalkGraph();
     this.pedestrianManager = new PedestrianManager(this.scene, this.sidewalkGraph, 14);
+
+    if ((import.meta as any).env?.DEV) {
+      auditObstacles(this.obstacles);
+    }
   }
 
   clearInputs() {
