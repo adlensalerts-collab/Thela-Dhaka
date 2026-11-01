@@ -12,7 +12,8 @@ import {
   Sliders,
   Wrench,
   Volume2,
-  VolumeX
+  VolumeX,
+  Zap
 } from 'lucide-react';
 import { GameState } from '../game/simulation';
 import { GameSettingsData, formatCode } from '../game/keybindings';
@@ -169,12 +170,17 @@ export const GameHUD: React.FC<GameHUDProps> = ({
 
   const sellKey = formatCode(settings.bindings.sell?.[0] || 'Space');
   const upgradeKey = formatCode(settings.bindings.upgrade?.[0] || 'KeyU');
+  const staminaKey = formatCode(settings.bindings.upgradeStamina?.[0] || 'KeyT');
   const restockKey = formatCode(settings.bindings.restock?.[0] || 'KeyR');
   const stallKey = formatCode(settings.bindings.placeStall?.[0] || 'KeyB');
   const repairKey = formatCode(settings.bindings.repair?.[0] || 'KeyF');
 
   const damage = state.damage || 0;
   const repairCost = state.repairCost || 0;
+  const stamina = Math.round(state.stamina ?? 100);
+  const staminaLevel = state.staminaLevel ?? (isVendor ? 1 : 3);
+  const staminaUpgradeCost = state.staminaUpgradeCost === undefined ? 150 : state.staminaUpgradeCost;
+  const exhausted = Boolean(state.exhausted);
   const showFps = state.showFps ?? loadDisplaySettings().showFps;
   const fps = state.fps ?? 60;
   const renderHeight = state.renderHeight ?? 1080;
@@ -188,6 +194,17 @@ export const GameHUD: React.FC<GameHUDProps> = ({
   } else if (damage >= 40) {
     damageBarColor = 'bg-amber-500';
     damageTextColor = 'text-amber-400';
+  }
+
+  // Stamina bar color (sky-blue normally, amber below 35, flashing red while exhausted)
+  let staminaBarColor = 'bg-sky-400';
+  let staminaTextColor = 'text-sky-300';
+  if (exhausted) {
+    staminaBarColor = 'bg-rose-500 animate-pulse';
+    staminaTextColor = 'text-rose-400 animate-pulse';
+  } else if (stamina < 35) {
+    staminaBarColor = 'bg-amber-400';
+    staminaTextColor = 'text-amber-300';
   }
 
   return (
@@ -253,6 +270,29 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                 style={{ width: `${Math.min(100, Math.max(damage > 0 ? 8 : 0, damage))}%` }}
               />
             </div>
+          </div>
+
+          <div className="h-8 w-px bg-teal-800/60" />
+
+          {/* Stamina Bar */}
+          <div className="flex flex-col min-w-[120px]">
+            <div className="flex justify-between items-center text-[10px] uppercase tracking-wider mb-1 gap-2">
+              <span className="text-gray-400">STAMINA · দম</span>
+              <span className={`font-mono font-bold ${staminaTextColor}`}>
+                L{staminaLevel}
+              </span>
+            </div>
+            <div className="w-full h-2 bg-gray-900/90 rounded-full overflow-hidden border border-teal-800/40">
+              <div
+                className={`h-full transition-all duration-150 rounded-full ${staminaBarColor}`}
+                style={{ width: `${Math.min(100, Math.max(0, stamina))}%` }}
+              />
+            </div>
+            {exhausted && (
+              <span className="text-[10px] text-rose-400 font-bold animate-pulse mt-0.5 leading-none">
+                হাঁপাচ্ছে
+              </span>
+            )}
           </div>
 
           <div className="h-8 w-px bg-teal-800/60" />
@@ -385,6 +425,24 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                 <ArrowUp className="w-4 h-4" />
                 <span>Upgrade (৳{130 + state.level * 85}) [{upgradeKey}]</span>
               </button>
+              {staminaLevel >= 5 || staminaUpgradeCost === null ? (
+                <button
+                  onClick={() => onAction('upgradeStamina')}
+                  disabled
+                  className="px-4 py-3 rounded-2xl bg-teal-950/50 border border-teal-800/30 text-gray-500 font-bold text-xs shadow-lg flex items-center gap-2 cursor-not-allowed opacity-60"
+                >
+                  <Zap className="w-4 h-4" />
+                  <span>Stamina MAX</span>
+                </button>
+              ) : (
+                <button
+                  onClick={() => onAction('upgradeStamina')}
+                  className="px-4 py-3 rounded-2xl bg-sky-900/80 hover:bg-sky-800 border border-sky-500/60 text-sky-200 font-bold text-xs shadow-lg flex items-center gap-2 transition active:scale-95"
+                >
+                  <Zap className="w-4 h-4 text-sky-400" />
+                  <span>Stamina ৳{staminaUpgradeCost} [{staminaKey}]</span>
+                </button>
+              )}
               {state.nearAarot ? (
                 <button
                   onClick={() => onAction('restock')}

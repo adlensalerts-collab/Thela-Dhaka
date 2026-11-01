@@ -7,6 +7,7 @@ export type ActionName =
   | 'sprint'
   | 'restock'
   | 'upgrade'
+  | 'upgradeStamina'
   | 'changeView'
   | 'placeStall'
   | 'repair'
@@ -34,6 +35,7 @@ export const DEFAULT_BINDINGS: KeyBindings = {
   sprint: ['ShiftLeft', 'ShiftRight'],
   restock: ['KeyR'],
   upgrade: ['KeyU'],
+  upgradeStamina: ['KeyT'],
   changeView: ['KeyC'],
   placeStall: ['KeyB'],
   repair: ['KeyF'],
@@ -56,6 +58,7 @@ export const ACTION_METADATA: Record<ActionName, { label: string; bnLabel: strin
   sprint: { label: 'Sprint (Hold)', bnLabel: 'দৌড়ান (ধরে রাখুন)', isHold: true },
   restock: { label: 'Restock Cart', bnLabel: 'পণ্য রিস্টক', isHold: false },
   upgrade: { label: 'Upgrade Cart', bnLabel: 'গাড়ি আপগ্রেড', isHold: false },
+  upgradeStamina: { label: 'Upgrade Stamina', bnLabel: 'স্ট্যামিনা আপগ্রেড', isHold: false },
   changeView: { label: 'Change Camera View', bnLabel: 'ক্যামেরা পরিবর্তন', isHold: false },
   placeStall: { label: 'Place Food Stall', bnLabel: 'বড় দোকান বসান', isHold: false },
   repair: { label: 'Repair Vehicle', bnLabel: 'মেরামত করুন', isHold: false },

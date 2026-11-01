@@ -31,6 +31,7 @@ import { SpatialSoundManager } from './audio/ambient';
 import { GARAGE_SITES, buildGarage, entranceForSite, nearestGarage } from './world/garages';
 import { AAROT_SITES, buildAarot, entranceForAarot, nearestAarot } from './world/aarots';
 import { nearJunction, auditObstacles } from './world/layout';
+import { StaminaSystem } from './stamina';
 
 const STALL_POSITIONS = [
   [-20, 10.5, 'x'],
@@ -85,6 +86,10 @@ export interface GameState {
   playerZ: number;
   officerX: number;
   officerZ: number;
+  stamina: number;
+  staminaLevel: number;
+  staminaUpgradeCost: number | null;
+  exhausted: boolean;
 }
 
 // Module-level reusable math objects for zero garbage collection during 60 FPS loop
@@ -115,6 +120,7 @@ export class GameEngine {
   obstacles: Obstacle[] = [];
   traffic: TrafficItem[] = [];
   damage = new DamageSystem();
+  stamina = new StaminaSystem();
   lighting: LightingRig | null = null;
   saleIndicator!: SaleIndicator;
   vendorPhase: number = 0;
@@ -205,6 +211,7 @@ export class GameEngine {
   }
 
   getInitialState(mode: GameState['mode']): GameState {
+    const isVendor = mode === 'vendor' || mode === 'online_vendor';
     return {
       mode,
       stage: 'playing',
@@ -247,7 +254,11 @@ export class GameEngine {
       playerX: 0,
       playerZ: 0,
       officerX: 0,
-      officerZ: 0
+      officerZ: 0,
+      stamina: 100,
+      staminaLevel: isVendor ? 1 : 3,
+      staminaUpgradeCost: isVendor ? 150 : null,
+      exhausted: false
     };
   }
 
@@ -783,7 +794,7 @@ export class GameEngine {
         e.preventDefault();
 
         // One-shot actions trigger once on initial physical keydown
-        if (['sell', 'restock', 'upgrade', 'changeView', 'placeStall', 'repair', 'pause'].includes(action)) {
+        if (['sell', 'restock', 'upgrade', 'upgradeStamina', 'changeView', 'placeStall', 'repair', 'pause'].includes(action)) {
           if (!e.repeat) {
             this.handleAction(action);
           }
@@ -947,6 +958,7 @@ export class GameEngine {
     this.currentSpeed = 0;
     this.mouseMovedRecently = 0;
     this.damage.reset();
+    this.stamina.reset(isVendor ? 1 : 3);
     this.clearInputs();
     this.acc = 0;
     this.playBeep(520, 0.2);
@@ -1040,6 +1052,31 @@ export class GameEngine {
     this.playBeep(750, 0.25);
     this.onEvent('notify', `Cart level ${this.state.level}! Capacity ${this.state.cap}.`);
     this.publishState(true);
+  }
+
+  upgradeStamina() {
+    const isVendor = this.state.mode === 'vendor' || this.state.mode === 'online_vendor';
+    if (!isVendor) return;
+    if (this.stamina.level >= 5) {
+      this.onEvent('notify', 'স্ট্যামিনা সর্বোচ্চ লেভেলে');
+      return;
+    }
+    const cost = this.stamina.nextUpgradeCost ?? 0;
+    if (this.state.cash < cost) {
+      this.onEvent('notify', `টাকা কম — ৳${cost} লাগবে`);
+      return;
+    }
+    const paid = this.stamina.upgrade(this.state.cash);
+    if (paid > 0) {
+      this.state.cash -= paid;
+      this.state.stamina = Math.round(this.stamina.stamina);
+      this.state.staminaLevel = this.stamina.level;
+      this.state.staminaUpgradeCost = this.stamina.nextUpgradeCost;
+      this.state.exhausted = this.stamina.exhausted;
+      this.playBeep(780, 0.22);
+      this.onEvent('notify', `স্ট্যামিনা লেভেল ${this.stamina.level}! দৌড়: ${this.stamina.sprintSeconds}s`);
+      this.publishState(true);
+    }
   }
 
   restockCart() {
@@ -1160,6 +1197,8 @@ export class GameEngine {
       else if (isPolice) this.arrestVendor();
     } else if (action === 'upgrade') {
       this.upgradeCart();
+    } else if (action === 'upgradeStamina' || action === 'upgrade_stamina') {
+      this.upgradeStamina();
     } else if (action === 'restock') {
       this.restockCart();
     } else if (action === 'placeStall' || action === 'place_stall') {
@@ -1250,15 +1289,27 @@ export class GameEngine {
     }
 
     // Speed along heading: forward (with 1.65x sprint multiplier) or backward (55% speed)
-    const sprint = this.heldActions.has('sprint');
+    const wasExhausted = this.stamina.exhausted;
+    const wantsSprint = !isLocked && this.heldActions.has('sprint');
+    const canSprint = this.stamina.update(
+      dt,
+      wantsSprint,
+      !isLocked && this.heldActions.has('forward'),
+      !isLocked && Math.abs(this.currentSpeed) > 0.3
+    );
+    if (!wasExhausted && this.stamina.exhausted) {
+      this.playBeep(210, 0.18, 'sawtooth');
+      this.onEvent('notify', 'হাঁপিয়ে গেছেন! একটু জিরিয়ে নিন');
+      this.publishState(true);
+    }
     const baseSpeed = isVendor ? 4.85 : 5.85;
 
     let targetSpeed = 0;
     if (!isLocked) {
       if (this.heldActions.has('forward')) {
-        targetSpeed = baseSpeed * (sprint ? 1.65 : 1.0);
+        targetSpeed = baseSpeed * (canSprint ? 1.65 : 1.0) * this.stamina.speedFactor;
       } else if (this.heldActions.has('backward')) {
-        targetSpeed = -baseSpeed * 0.55;
+        targetSpeed = -baseSpeed * 0.55 * this.stamina.speedFactor;
       }
       targetSpeed *= this.damage.speedFactor;
     }
@@ -1457,7 +1508,11 @@ export class GameEngine {
     const vendorSpeed = isVendorPlayer ? Math.abs(this.currentSpeed) : 0;
     this.vendorPhase += vendorSpeed * dt * 2.2;
     if (this.human.userData.rig) {
-      animateHuman(this.human.userData.rig, this.vendorPhase, Math.min(1, vendorSpeed / 5), true);
+      const vendorIntensity = Math.min(1, vendorSpeed / 5) * (isVendorPlayer && this.stamina.exhausted ? 0.55 : 1);
+      animateHuman(this.human.userData.rig, this.vendorPhase, vendorIntensity, true);
+      if (isVendorPlayer && this.stamina.exhausted) {
+        this.human.userData.rig.body.rotation.x -= 0.12;
+      }
     }
 
     let officerSpeed = 0;
@@ -1643,6 +1698,10 @@ export class GameEngine {
     this.state.officerX = this.officer.position.x;
     this.state.officerZ = this.officer.position.z;
     this.state.displayHz = Math.round(this.measuredDisplayFps);
+    this.state.stamina = Math.round(this.stamina.stamina);
+    this.state.staminaLevel = this.stamina.level;
+    this.state.staminaUpgradeCost = isVendor ? this.stamina.nextUpgradeCost : null;
+    this.state.exhausted = this.stamina.exhausted;
 
     // Throttled publish to React HUD
     this.publishState(false);
