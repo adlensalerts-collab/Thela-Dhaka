@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { Obstacle, PolyObstacle } from '../collision';
 import { pbrMaterial, applyWorldUV } from '../render/pbr';
 import { buildTreesAt } from '../world/trees';
@@ -102,7 +103,7 @@ const compose = (x: number, y: number, z: number, yaw: number, sx = 1, sy = 1, s
 
 export function buildDistrictWorld(scene: THREE.Scene, d: District): DistrictWorld {
   const roads = new RoadGraph(d);
-  const chunks = new ChunkManager(scene, 80);
+  const chunks = new ChunkManager(scene, 120);
   const grid = new ObstacleGrid(12);
   const obstacles: Obstacle[] = [];
   const addObs = (o: Obstacle) => { obstacles.push(o); grid.add(o); };
@@ -201,11 +202,11 @@ export function buildDistrictWorld(scene: THREE.Scene, d: District): DistrictWor
     const isBrick = r() < 0.3;
     const tint = new THREE.Color(isBrick ? '#ffffff' : palette[Math.floor(r() * palette.length)]);
     const white = new THREE.Color('#ffffff');
-    // outward test on the first edge decides the winding for the whole ring
-    const [ax, az] = ring[0], [bx, bz] = ring[1];
-    const ex0 = bx - ax, ez0 = bz - az, l0 = Math.hypot(ex0, ez0) || 1;
-    const natural: [number, number] = [-ez0 / l0, ex0 / l0];           // normal of (v0, v1, v2) order
-    const flip = pointInRing((ax + bx) / 2 + natural[0] * 0.2, (az + bz) / 2 + natural[1] * 0.2, ring);
+    // Winding from the signed area: for area > 0 the natural normal (-ez, ex) points INTO the
+    // building, so flip it (robust for concave and very thin footprints).
+    let area2 = 0;
+    for (let i = 0; i < ring.length; i++) { const [x0, z0] = ring[i], [x1, z1] = ring[(i + 1) % ring.length]; area2 += x0 * z1 - x1 * z0; }
+    const flip = area2 > 0;
     let u = 0;
     let bestEdge = -1, bestLen = 0;
     for (let i = 0; i < ring.length; i++) {
@@ -214,8 +215,8 @@ export function buildDistrictWorld(scene: THREE.Scene, d: District): DistrictWor
       if (len < 0.2) continue;
       let n: [number, number] = [-ez / len, ex / len];
       if (flip) n = [-n[0], -n[1]];
-      quad(buf(chunk, 'shop'), p0, p1, 0, FLOOR, n, u, len, white, flip);
-      quad(buf(chunk, isBrick ? 'brick' : 'plaster'), p0, p1, FLOOR, h, n, u, len, tint, flip);
+      quad(buf(chunk, 'shop'), p0, p1, 0, Math.min(FLOOR, h), n, u, len, white, flip);
+      if (h > FLOOR + 0.01) quad(buf(chunk, isBrick ? 'brick' : 'plaster'), p0, p1, FLOOR, h, n, u, len, tint, flip);   // no zero-height walls
       u += len;
       const yaw = Math.atan2(n[0], n[1]);
       // windows on every floor above the shop level
@@ -285,8 +286,12 @@ export function buildDistrictWorld(scene: THREE.Scene, d: District): DistrictWor
     mesh.castShadow = true; mesh.receiveShadow = true;
     chunk.add(mesh);
   }
+  // one merged roof mesh per chunk (was one mesh per building → hundreds of draw calls)
   for (const [chunk, list] of roofs) {
-    for (const g of list) { const m = new THREE.Mesh(g, roofMat); m.receiveShadow = true; m.castShadow = true; chunk.add(m); }
+    const merged = mergeGeometries(list.map((g) => (g.index ? g.toNonIndexed() : g)), false);
+    if (!merged) continue;
+    const m = new THREE.Mesh(merged, roofMat); m.receiveShadow = true; m.castShadow = true; chunk.add(m);
+    list.forEach((g) => g.dispose());
   }
   stats.buildings = d.buildings.length; stats.signs = signs;
   stats.windows = winDark.build() + winLit.build(); grills.build(); stats.shutters = shutters.build(); stats.tanks = tanks.build();

@@ -101,6 +101,16 @@ export class GraphTraffic {
       v.speed = THREE.MathUtils.damp(v.speed, target, gap < BRAKE_DIST ? 6 : 1.5, dt);
       v.travelled += v.speed * dt;
 
+      // Dead-end lane: turn round a car-length before the end, so the nose never enters the building there.
+      {
+        const cur = this.graph.edges[v.edge];
+        const stop = cur.length - v.length / 2 - 1;
+        if (this.graph.endsDead(cur, v.dir) && v.travelled > stop) {
+          v.travelled = Math.max(0, cur.length - v.travelled);
+          v.dir = v.dir === 1 ? -1 : 1;
+          v.speed *= 0.3;
+        }
+      }
       // Arrived at the end of the edge: choose the next road.
       while (v.travelled > this.graph.edges[v.edge].length) {
         const cur = this.graph.edges[v.edge];

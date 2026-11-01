@@ -17,6 +17,8 @@ export interface RoadEdge {
   traffic: boolean;
   name: string;
   roadClass: string;
+  deadA?: boolean;                 // node a is a dead end (lane ends at a building)
+  deadB?: boolean;
 }
 export interface RoadNode { id: number; x: number; z: number; edges: Array<{ edge: number; dir: 1 | -1 }> }
 export interface Pose { x: number; z: number; tx: number; tz: number }   // position + unit travel direction
@@ -57,6 +59,25 @@ export class RoadGraph {
         start = i;
       }
     }
+    // Mark dead ends (lanes that stop at a building) so traffic turns round before the end.
+    for (const e of this.edges) {
+      e.deadA = this.nodes[e.a].edges.length === 1;
+      e.deadB = this.nodes[e.b].edges.length === 1;
+    }
+  }
+
+  /** Projection parameter of (x, z) on segment i of edge e, or null when past a dead end. */
+  private segT(edge: RoadEdge, i: number, x: number, z: number): number | null {
+    const [x0, z0] = edge.points[i], [x1, z1] = edge.points[i + 1];
+    const ex = x1 - x0, ez = z1 - z0, l2 = ex * ex + ez * ez || 1e-9;
+    const raw = ((x - x0) * ex + (z - z0) * ez) / l2;
+    // Square ends at BOTH ends of every edge (matches the converter's drawn road surface exactly);
+    // junctions stay covered because every road meeting there ends at the shared node.
+    // (5 cm inset: a building face that touches a lane's square end is touching, not on the road)
+    const eps = 0.05 / Math.sqrt(l2);
+    if (raw < eps && i === 0) return null;
+    if (raw > 1 - eps && i === edge.points.length - 2) return null;
+    return Math.max(0, Math.min(1, raw));
   }
 
   private addEdge(a: number, b: number, points: XZ[], width: number, footpath: number, oneway: boolean, traffic: boolean, name: string, roadClass: string) {
@@ -109,10 +130,10 @@ export class RoadGraph {
     if (!cell) return false;
     for (const { e, i } of cell) {
       const edge = this.edges[e];
+      const t = this.segT(edge, i, x, z);
+      if (t === null) continue;
       const [x0, z0] = edge.points[i], [x1, z1] = edge.points[i + 1];
-      const ex = x1 - x0, ez = z1 - z0, l2 = ex * ex + ez * ez || 1e-9;
-      const t = Math.max(0, Math.min(1, ((x - x0) * ex + (z - z0) * ez) / l2));
-      if (Math.hypot(x - (x0 + ex * t), z - (z0 + ez * t)) < edge.width / 2 + margin) return true;
+      if (Math.hypot(x - (x0 + (x1 - x0) * t), z - (z0 + (z1 - z0) * t)) < edge.width / 2 + margin) return true;
     }
     return false;
   }
@@ -145,6 +166,9 @@ export class RoadGraph {
     const off = edge.oneway ? edge.width * 0.18 : edge.width / 4;   // left of travel = (tz, -tx)
     return { x: p.x + tz * off, z: p.z - tx * off, tx, tz };
   }
+
+  /** True if travelling `dir` along `edge` ends at a dead end. */
+  endsDead(edge: RoadEdge, dir: 1 | -1) { return dir === 1 ? !!edge.deadB : !!edge.deadA; }
 
   /** Edges a vehicle may take when arriving at node `nodeId` from `fromEdge` (no U-turn unless dead end). */
   exits(nodeId: number, fromEdge: number): Array<{ edge: number; dir: 1 | -1 }> {

@@ -30,7 +30,8 @@ notraffic = [r for r in d['roads'] if not r.get('traffic', True)]
 if notraffic: print(f"note: {len(notraffic)} road piece(s) not connected to the main network — visible, no traffic")
 if 'fixes' in d: print('converter fixes:', d['fixes'])
 
-fig, ax = plt.subplots(figsize=(10, 10), dpi=110)
+import warnings; warnings.filterwarnings('ignore')
+fig, ax = plt.subplots(figsize=(13, 13), dpi=100)
 ax.set_facecolor('#d8cfb4')
 from matplotlib.path import Path
 from matplotlib.patches import PathPatch
@@ -88,9 +89,13 @@ for kind in ('garages', 'aarots', 'stalls'):
 print(f"placements: {len(S.get('trees',[]))} trees, {len(S.get('poles',[]))} poles, {len(S.get('stalls',[]))} stalls, {len(S.get('garages',[]))} garages, {len(S.get('aarots',[]))} aarots, {len(S.get('hotspots',[]))} hotspots")
 for j in d['junctions']: ax.plot(j['x'], -j['z'], 'o', ms=2.5, color='#f2c45d')
 for l in d['landmarks']:
-    ax.plot(l['x'], -l['z'], '*', ms=11, color='#1f6b5a'); ax.annotate(l['name'], (l['x'], -l['z']), fontsize=7, xytext=(4, 4), textcoords='offset points')
+    if l['kind'] not in ('marketplace', 'mall', 'department_store', 'bus_station', 'station', 'college', 'university', 'stadium'): continue
+    ax.plot(l['x'], -l['z'], '*', ms=11, color='#1f6b5a')
+    if l['name'].isascii(): ax.annotate(l['name'].split(',')[0][:32], (l['x'], -l['z']), fontsize=8, xytext=(4, 4), textcoords='offset points', bbox=dict(boxstyle='round,pad=0.15', fc='#ffffffc0', lw=0))
+labelled = set()
 for r in d['roads']:
-    if r['name'] and len(r['points']) > 2:
+    if r['name'] and r['name'].isascii() and r['name'] not in labelled and r['class'] in ('trunk', 'primary', 'secondary', 'tertiary') and len(r['points']) > 2:
+        labelled.add(r['name'])
         m = r['points'][len(r['points']) // 2]; ax.annotate(r['name'], (m[0], -m[1]), fontsize=6, color='white', ha='center',
                                                             bbox=dict(boxstyle='round,pad=0.15', fc='#000000a0', lw=0))
 ax.set_xlim(-hw, hw); ax.set_ylim(-hd, hd); ax.set_aspect('equal')

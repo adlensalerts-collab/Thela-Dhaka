@@ -2,7 +2,8 @@
 """
 M1 — OpenStreetMap export (.osm XML) -> Thela Dhaka district JSON.
 
-Usage:  python3 tools/osm2district.py <export.osm> <district_id> "<Display Name>" > public/maps/<district_id>.json
+Usage:  python3 tools/osm2district.py <export.osm> <district_id> "<Display Name>" [--crop LAT,LON,SIZE_M] > public/maps/<district_id>.json
+        --crop keeps only a SIZE_M x SIZE_M square centred on LAT,LON (recommended: 900).
 
 Coordinates: 1 game unit = 1 metre. Origin = centre of the export's <bounds>.
 x = east, z = south (north is -Z, matching the game's "forward" and the minimap's "up").
@@ -29,12 +30,19 @@ def num(v, default=None):
     try: return float(str(v).split(';')[0].replace('m', '').strip())
     except ValueError: return default
 
-def main(path, did, name):
+def main(path, did, name, crop=None):
     root = ET.parse(path).getroot()
     b = root.find('bounds')
     if b is None: sys.exit('No <bounds> in the export; use openstreetmap.org Export.')
     minlat, minlon, maxlat, maxlon = (float(b.get(k)) for k in ('minlat', 'minlon', 'maxlat', 'maxlon'))
     lat0, lon0 = (minlat + maxlat) / 2, (minlon + maxlon) / 2
+    if crop:
+        clat, clon, size = crop
+        dlat = size / 2 / 111_320.0
+        dlon = size / 2 / (111_320.0 * math.cos(math.radians(clat)))
+        minlat, maxlat = max(minlat, clat - dlat), min(maxlat, clat + dlat)
+        minlon, maxlon = max(minlon, clon - dlon), min(maxlon, clon + dlon)
+        lat0, lon0 = (minlat + maxlat) / 2, (minlon + maxlon) / 2
     mlat = 111_320.0
     mlon = 111_320.0 * math.cos(math.radians(lat0))
     def xz(lat, lon): return (round((lon - lon0) * mlon, 2), round(-(lat - lat0) * mlat, 2))
@@ -104,6 +112,17 @@ def main(path, did, name):
     #    clearance; drop it if less than 60% would remain (it really sits in the road).
     from shapely.geometry import LineString, Polygon
     from shapely.ops import unary_union
+    def clean(geom, cut):
+        """Remove needle spikes/slivers (< 30 cm) left by cutting, then cut again so nothing re-enters `cut`."""
+        g = geom.buffer(-0.15, join_style=2).buffer(0.15, join_style=2)
+        if cut is not None: g = g.difference(cut)
+        if g.geom_type == 'MultiPolygon': g = max(g.geoms, key=lambda x: x.area)
+        if g.is_empty or g.geom_type != 'Polygon': return None
+        g = g.simplify(0.2)
+        if cut is not None:
+            g = g.difference(cut)
+            if g.geom_type == 'MultiPolygon': g = max(g.geoms, key=lambda x: x.area)
+        return g if (not g.is_empty and g.geom_type == 'Polygon') else None
     clearance = unary_union([LineString(r['points']).buffer(r['width'] / 2 + r['footpath'], cap_style=2, join_style=2)
                              for r in roads]) if roads else None
     kept, trimmed, dropped = [], 0, 0
@@ -111,16 +130,35 @@ def main(path, did, name):
         poly = Polygon(b['footprint'])
         if not poly.is_valid: poly = poly.buffer(0)
         if clearance is not None and poly.intersects(clearance):
-            rest = poly.difference(clearance)
-            if rest.geom_type == 'MultiPolygon': rest = max(rest.geoms, key=lambda g: g.area)
-            if rest.is_empty or rest.area < 0.6 * poly.area: dropped += 1; continue
-            rest = rest.simplify(0.3)
+            rest = clean(poly.difference(clearance), clearance)
+            if rest is None or rest.area < 0.6 * poly.area: dropped += 1; continue
             ring = [(round(x, 2), round(z, 2)) for x, z in list(rest.exterior.coords)[:-1]]
             a = 0.5 * sum(ring[i][0] * ring[(i + 1) % len(ring)][1] - ring[(i + 1) % len(ring)][0] * ring[i][1] for i in range(len(ring)))
             if a > 0: ring = ring[::-1]
             b['footprint'] = ring; b['area'] = round(abs(a), 1); trimmed += 1
         kept.append(b)
     buildings = kept
+    # 1b) Overlapping footprints (a complex mapped twice, inner blocks inside an outline):
+    #     keep largest first, trim later ones by what's already kept, drop near-duplicates.
+    from shapely.strtree import STRtree
+    buildings.sort(key=lambda b: -b['area'])
+    placed, final, overlapFixed = [], [], 0
+    for b in buildings:
+        poly = Polygon(b['footprint'])
+        if not poly.is_valid: poly = poly.buffer(0)
+        if placed:
+            tree = STRtree(placed)
+            hits = [placed[i] for i in tree.query(poly) if placed[i].intersection(poly).area > 0.3]
+            if hits:
+                cut = unary_union(hits + ([clearance] if clearance is not None else []))
+                rest = clean(poly.difference(cut), cut)
+                if rest is None or rest.area < 0.6 * poly.area: overlapFixed += 1; continue
+                ring = [(round(x, 2), round(z, 2)) for x, z in list(rest.exterior.coords)[:-1]]
+                a = 0.5 * sum(ring[i][0] * ring[(i + 1) % len(ring)][1] - ring[(i + 1) % len(ring)][0] * ring[i][1] for i in range(len(ring)))
+                if a > 0: ring = ring[::-1]
+                b['footprint'] = ring; b['area'] = round(abs(a), 1); poly = Polygon(ring); overlapFixed += 1
+        placed.append(poly); final.append(b)
+    buildings = final
     # 2) Road connectivity: union-find over shared OSM nodes; only the largest connected
     #    network carries traffic (other pieces stay visible).
     parent = {}
@@ -135,7 +173,7 @@ def main(path, did, name):
     for i in range(len(roads)): comp.setdefault(find(('r', i)), []).append(i)
     biggest = max(comp.values(), key=lambda c: sum(len(roads[i]['points']) for i in c)) if comp else []
     for i, r in enumerate(roads): r['traffic'] = i in biggest
-    fixes = {'buildingsTrimmed': trimmed, 'buildingsDropped': dropped,
+    fixes = {'buildingsTrimmed': trimmed, 'buildingsDropped': dropped, 'overlapsResolved': overlapFixed,
              'roadsWithoutTraffic': sum(1 for r in roads if not r['traffic'])}
 
     # ---- 3) Ready-to-draw surfaces (merged, so junctions are clean) -------------------
@@ -256,14 +294,22 @@ def main(path, did, name):
         trees[:] = [t for t in trees if e.distance(Point(t)) > 5]
         poles[:] = [q for q in poles if e.distance(Point(q[0], q[1])) > 5]
     # Hotspots: landmarks + the busiest junctions (most roads meeting)
-    hot = [{'x': l['x'], 'z': l['z'], 'name': l['name'], 'kind': l['kind']} for l in landmarks]
+    # Only places that really draw buyers become hotspots (max 8), spread at least 120 m apart.
+    prio = {'marketplace': 0, 'mall': 1, 'department_store': 1, 'bus_station': 1, 'station': 1, 'stadium': 2,
+            'college': 3, 'university': 3, 'school': 4, 'hospital': 4}
+    hot = []
+    for l in sorted((l for l in landmarks if l['kind'] in prio), key=lambda l: prio[l['kind']]):
+        if len(hot) >= 8: break
+        if all(math.hypot(l['x'] - h['x'], l['z'] - h['z']) >= 120 for h in hot):
+            hot.append({'x': l['x'], 'z': l['z'], 'name': l['name'], 'kind': l['kind']})
     busy = sorted(junction_pts.items(), key=lambda kv: -node_use.get(kv[0], 0))[:4]
     hot += [{'x': v[0], 'z': v[1], 'name': 'Junction', 'kind': 'junction'} for _, v in busy]
-    # Spawn: footpath point nearest the centre
+    # Spawn: footpath point nearest the district's main market (else the centre)
     spawn = None
     if footpath is not None and not footpath.is_empty:
         from shapely.ops import nearest_points
-        sp = nearest_points(footpath.buffer(-0.6) if not footpath.buffer(-0.6).is_empty else footpath, Point(0, 0))[0]
+        target = Point(hot[0]['x'], hot[0]['z']) if hot and hot[0]['kind'] in ('marketplace', 'mall') else Point(0, 0)
+        sp = nearest_points(footpath.buffer(-0.6) if not footpath.buffer(-0.6).is_empty else footpath, target)[0]
         spawn = [round(sp.x, 2), round(sp.y, 2)]
     sites = {'trees': trees, 'poles': poles, 'stalls': stall_sites, 'garages': garages, 'aarots': aarots,
              'hotspots': hot, 'spawn': spawn}
@@ -296,4 +342,7 @@ def main(path, did, name):
 
 if __name__ == '__main__':
     if len(sys.argv) < 4: sys.exit(__doc__)
-    main(sys.argv[1], sys.argv[2], sys.argv[3])
+    crop = None
+    if '--crop' in sys.argv:
+        crop = tuple(float(v) for v in sys.argv[sys.argv.index('--crop') + 1].split(','))
+    main(sys.argv[1], sys.argv[2], sys.argv[3], crop)
