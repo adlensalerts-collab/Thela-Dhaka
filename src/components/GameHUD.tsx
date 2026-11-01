@@ -114,13 +114,56 @@ export const GameHUD: React.FC<GameHUDProps> = ({
     const cx = canvas.getContext('2d');
     if (!cx) return;
     const size = 160;
+    const toMap = (v: number) => ((v + 120) / 240) * size;
+    const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
+
     cx.drawImage(bgCanvasRef.current, 0, 0);
 
-    // Compass circle
+    // Police blip (vendor modes only): shown when alert or within 40 units of player
+    if (isVendor) {
+      const distToOfficer = Math.hypot(
+        (state.officerX ?? 0) - (state.playerX ?? 0),
+        (state.officerZ ?? 0) - (state.playerZ ?? 0)
+      );
+      if (state.alert || distToOfficer <= 40) {
+        const blinkOn = !state.alert || Math.floor(Date.now() / 220) % 2 === 0;
+        if (blinkOn) {
+          const ox = clamp(toMap(state.officerX ?? 0), 6, size - 6);
+          const oy = clamp(toMap(state.officerZ ?? 0), 6, size - 6);
+          cx.beginPath();
+          cx.arc(ox, oy, 4, 0, Math.PI * 2);
+          cx.fillStyle = '#ef4444';
+          cx.fill();
+          cx.strokeStyle = '#ffffff';
+          cx.lineWidth = 1.5;
+          cx.stroke();
+        }
+      }
+    }
+
+    // Player blip: white-outlined amber arrow rotated by state.heading
+    const px = clamp(toMap(state.playerX ?? 0), 8, size - 8);
+    const py = clamp(toMap(state.playerZ ?? 0), 8, size - 8);
+    cx.save();
+    cx.translate(px, py);
+    cx.rotate(state.heading || 0);
+    cx.beginPath();
+    cx.moveTo(0, -7);
+    cx.lineTo(-5, 5);
+    cx.lineTo(5, 5);
+    cx.closePath();
+    cx.fillStyle = '#f59e0b';
+    cx.fill();
+    cx.strokeStyle = '#ffffff';
+    cx.lineWidth = 1.5;
+    cx.stroke();
+    cx.restore();
+
+    // Frame border stroke on top
     cx.strokeStyle = '#c5a059';
     cx.lineWidth = 2;
     cx.strokeRect(1, 1, size - 2, size - 2);
-  }, []);
+  }, [state.playerX, state.playerZ, state.heading, state.officerX, state.officerZ, state.alert, isVendor]);
 
   const stars = Math.min(5, Math.ceil(state.heat / 20));
 

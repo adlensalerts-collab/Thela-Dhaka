@@ -79,6 +79,10 @@ export interface GameState {
   fps: number;
   renderHeight: number;
   showFps?: boolean;
+  playerX: number;
+  playerZ: number;
+  officerX: number;
+  officerZ: number;
 }
 
 // Module-level reusable math objects for zero garbage collection during 60 FPS loop
@@ -235,7 +239,11 @@ export class GameEngine {
       crowdNoise: 0.15,
       fps: this.currentFps,
       renderHeight: Math.round((this.container?.clientHeight || 720) * (this.currentPixelRatio || 1)),
-      showFps: this.showFps
+      showFps: this.showFps,
+      playerX: 0,
+      playerZ: 0,
+      officerX: 0,
+      officerZ: 0
     };
   }
 
@@ -894,6 +902,11 @@ export class GameEngine {
     this.human.position.set(0, 0, 7);
     this.officer.position.set(0, 0, -23);
     this.npcVendor.position.set(0, 0, -19);
+    const activePlayer = isVendor ? this.human : this.officer;
+    this.state.playerX = activePlayer.position.x;
+    this.state.playerZ = activePlayer.position.z;
+    this.state.officerX = this.officer.position.x;
+    this.state.officerZ = this.officer.position.z;
     this.state.heading = 0;
     this.human.rotation.y = 0;
     this.officer.rotation.y = 0;
@@ -1600,6 +1613,10 @@ export class GameEngine {
     this.state.trafficNoise = snap.trafficLevel;
     this.state.crowdNoise = snap.crowdLevel;
     this.state.marketNoise = snap.marketLevel;
+    this.state.playerX = p.position.x;
+    this.state.playerZ = p.position.z;
+    this.state.officerX = this.officer.position.x;
+    this.state.officerZ = this.officer.position.z;
 
     // Throttled publish to React HUD
     this.publishState(false);
