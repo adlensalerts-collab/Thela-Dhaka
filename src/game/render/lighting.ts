@@ -22,6 +22,7 @@ export interface LightingRig {
   setTimeOfDay(elevationDeg: number, azimuthDeg?: number): void;
   /** 1 = default. Range 0.5–1.6 is sensible; clamped to 0.3–2.0. */
   setBrightness(multiplier: number): void;
+  getBrightness(): number;
   clouds: THREE.Mesh;
   dispose(): void;
 }
@@ -33,6 +34,9 @@ export function setupRealisticLighting(renderer: THREE.WebGLRenderer, scene: THR
   renderer.toneMappingExposure = BASE_EXPOSURE;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+  let brightnessMultiplier = 1.0;
+  let baseSunIntensity = 2.47;
 
   // Sky dome — kept inside the camera far plane (470).
   const sky = new Sky();
@@ -117,7 +121,7 @@ export function setupRealisticLighting(renderer: THREE.WebGLRenderer, scene: THR
     envRT?.dispose();
     envRT = pmrem.fromScene(envScene, 0, 0.1, 100);
     scene.environment = envRT.texture;
-    scene.environmentIntensity = 0.9;
+    scene.environmentIntensity = 0.9 * brightnessMultiplier;
   };
 
   const setTimeOfDay = (elevationDeg: number, azimuthDeg = 215) => {
@@ -129,7 +133,8 @@ export function setupRealisticLighting(renderer: THREE.WebGLRenderer, scene: THR
     // Warmer, dimmer sun near the horizon
     const t = THREE.MathUtils.clamp(elevationDeg / 60, 0, 1);
     sun.color.setRGB(1, 0.78 + 0.2 * t, 0.6 + 0.35 * t);
-    sun.intensity = 1.2 + 2.0 * t;
+    baseSunIntensity = 1.2 + 2.0 * t;
+    sun.intensity = baseSunIntensity * brightnessMultiplier;
     bakeEnvironment();
   };
 
@@ -149,11 +154,21 @@ export function setupRealisticLighting(renderer: THREE.WebGLRenderer, scene: THR
   };
 
   const setBrightness = (multiplier: number) => {
-    renderer.toneMappingExposure = BASE_EXPOSURE * THREE.MathUtils.clamp(multiplier, 0.3, 2.0);
+    const b = THREE.MathUtils.clamp(multiplier, 0.3, 2.0);
+    brightnessMultiplier = b;
+    renderer.toneMappingExposure = BASE_EXPOSURE * b;
+    fill.intensity = 0.35 * b;
+    scene.environmentIntensity = 0.9 * b;
+    sun.intensity = baseSunIntensity * b;
+    if (renderer.domElement) {
+      renderer.domElement.style.filter = Math.abs(b - 1) < 0.01 ? '' : `brightness(${b})`;
+    }
   };
 
+  const getBrightness = () => brightnessMultiplier;
+
   return {
-    sun, sky, clouds, update, setTimeOfDay, setBrightness,
+    sun, sky, clouds, update, setTimeOfDay, setBrightness, getBrightness,
     dispose: () => { envRT?.dispose(); pmrem.dispose(); cloudMat.dispose(); clouds.geometry.dispose(); }
   };
 }

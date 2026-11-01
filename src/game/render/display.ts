@@ -29,17 +29,24 @@ function isValidFpsLimit(f: unknown): f is 60 | 120 | 0 {
   return f === 60 || f === 120 || f === 0;
 }
 
+let memoryDisplaySettings: DisplaySettings | null = null;
+
 export function loadDisplaySettings(): DisplaySettings {
-  const fallback: DisplaySettings = {
-    ...DEFAULT_DISPLAY,
-    quality: defaultQuality()
-  };
+  const fallback: DisplaySettings = memoryDisplaySettings
+    ? { ...memoryDisplaySettings }
+    : {
+        ...DEFAULT_DISPLAY,
+        quality: defaultQuality()
+      };
   try {
     const raw = localStorage.getItem(KEY);
-    if (!raw) return fallback;
+    if (!raw) {
+      memoryDisplaySettings = { ...fallback };
+      return fallback;
+    }
     const p = JSON.parse(raw);
     const b = Number(p.brightness);
-    return {
+    const loaded: DisplaySettings = {
       brightness: Number.isFinite(b)
         ? Math.min(BRIGHTNESS_MAX, Math.max(BRIGHTNESS_MIN, b))
         : fallback.brightness,
@@ -47,20 +54,30 @@ export function loadDisplaySettings(): DisplaySettings {
       fpsLimit: isValidFpsLimit(p.fpsLimit) ? p.fpsLimit : fallback.fpsLimit,
       showFps: typeof p.showFps === 'boolean' ? p.showFps : fallback.showFps
     };
+    memoryDisplaySettings = { ...loaded };
+    return loaded;
   } catch {
     return fallback;
   }
 }
 
-export function saveDisplaySettings(s: Partial<DisplaySettings>): void {
+export function saveDisplaySettings(s: Partial<DisplaySettings>): DisplaySettings {
+  const current = loadDisplaySettings();
+  const b = s.brightness !== undefined ? Number(s.brightness) : current.brightness;
+  const merged: DisplaySettings = {
+    brightness: Number.isFinite(b)
+      ? Math.min(BRIGHTNESS_MAX, Math.max(BRIGHTNESS_MIN, b))
+      : current.brightness,
+    quality: s.quality !== undefined && isValidQuality(s.quality) ? s.quality : current.quality,
+    fpsLimit: s.fpsLimit !== undefined && isValidFpsLimit(s.fpsLimit) ? s.fpsLimit : current.fpsLimit,
+    showFps: typeof s.showFps === 'boolean' ? s.showFps : current.showFps
+  };
+  memoryDisplaySettings = { ...merged };
   try {
-    const merged: DisplaySettings = {
-      ...loadDisplaySettings(),
-      ...s
-    };
     localStorage.setItem(KEY, JSON.stringify(merged));
   } catch {
     /* storage unavailable (private mode) — keep the in-memory value */
   }
+  return merged;
 }
 

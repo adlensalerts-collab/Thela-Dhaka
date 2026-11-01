@@ -29,6 +29,8 @@ interface SettingsModalProps {
   onAmbientVolumeChange?: (v: number) => void;
   onDisplayOptionsChange?: (opts: Partial<Pick<DisplaySettings, 'quality' | 'fpsLimit' | 'showFps'>>) => void;
   displayHz?: number;
+  currentFps?: number;
+  renderHeight?: number;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -38,7 +40,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onBrightnessChange,
   onAmbientVolumeChange,
   onDisplayOptionsChange,
-  displayHz = 60
+  displayHz = 60,
+  currentFps = 60,
+  renderHeight = 1080
 }) => {
   const [settings, setSettings] = useState<GameSettingsData>(() => loadSettings());
   const [display, setDisplay] = useState<DisplaySettings>(() => loadDisplaySettings());
@@ -64,15 +68,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     const handleKeyDown = (e: KeyboardEvent) => {
       e.preventDefault();
       e.stopPropagation();
+      e.stopImmediatePropagation();
 
-      // Escape cancels rebinding
-      if (e.code === 'Escape') {
+      // Escape cancels rebinding without closing the modal
+      if (e.code === 'Escape' || e.key === 'Escape') {
         setRebinding(null);
         return;
       }
 
+      const keyCode = e.code || e.key;
+      if (!keyCode) return;
+
       // Assign the new code, automatically removing it from any other action
-      const updatedBindings = assignKey(settings.bindings, rebinding.action, rebinding.slot, e.code);
+      const updatedBindings = assignKey(settings.bindings, rebinding.action, rebinding.slot, keyCode);
       const newSettings: GameSettingsData = {
         ...settings,
         bindings: updatedBindings
@@ -111,6 +119,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       fpsLimit: defDisplay.fpsLimit,
       showFps: defDisplay.showFps
     });
+
+    const defVolume = 0.75;
+    setAmbientVolume(defVolume);
+    saveAmbientVolume(defVolume);
+    onAmbientVolumeChange?.(defVolume);
+
     setRebinding(null);
   };
 
@@ -150,8 +164,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const actionsList = Object.keys(ACTION_METADATA) as ActionName[];
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 select-none">
-      <div className="bg-[#122826] border border-teal-600/50 rounded-3xl max-w-2xl w-full max-h-[92vh] flex flex-col shadow-2xl overflow-hidden font-['Poppins','Hind_Siliguri',sans-serif]">
+    <div className="fixed inset-0 z-50 bg-black/45 backdrop-blur-[2px] flex items-center justify-center p-4 select-none">
+      <div className="bg-[#122826]/95 border border-teal-600/50 rounded-3xl max-w-2xl w-full max-h-[92vh] flex flex-col shadow-2xl overflow-hidden font-['Poppins','Hind_Siliguri',sans-serif]">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-teal-800/60 bg-teal-950/50">
           <div className="flex items-center gap-3">
@@ -334,7 +348,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             {/* Show FPS Counter Toggle */}
             <div className="flex items-center justify-between pt-3 border-t border-teal-900/50">
               <div className="text-xs">
-                <span className="font-semibold text-white">Show FPS Counter</span>
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-white">Show FPS Counter</span>
+                  <span className="px-2 py-0.5 rounded bg-black/40 border border-teal-700/40 font-mono text-[10px] text-emerald-400">
+                    Live: {currentFps} FPS · {renderHeight}p
+                  </span>
+                </div>
                 <p className="text-[11px] text-gray-400">Display live FPS and render resolution in HUD</p>
               </div>
               <button

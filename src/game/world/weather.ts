@@ -217,8 +217,9 @@ export class WeatherSystem {
     }
 
     if (this.lighting) {
-      // Base mid-afternoon sun intensity at 38° is ~2.47
-      this.lighting.sun.intensity = 2.47 * this.sunMultiplier;
+      // Base mid-afternoon sun intensity at 38° is ~2.47, scaled by user brightness setting
+      const b = typeof this.lighting.getBrightness === 'function' ? this.lighting.getBrightness() : 1;
+      this.lighting.sun.intensity = 2.47 * this.sunMultiplier * b;
       const cloudMat = this.lighting.clouds.material as THREE.ShaderMaterial;
       if (cloudMat?.uniforms?.uCover) {
         cloudMat.uniforms.uCover.value = this.cloudCover;

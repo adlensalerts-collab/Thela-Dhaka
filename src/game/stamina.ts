@@ -26,7 +26,13 @@ export class StaminaSystem {
   }
 
   get speedFactor(): number {
-    return this.exhausted ? 0.75 : 1;
+    const ratio = Math.max(0, Math.min(1, this.stamina / 100));
+    if (this.exhausted) {
+      // Heavily slowed while exhausted (40% at 0 stamina up to 55% as stamina recovers toward 35)
+      return 0.4 + 0.15 * Math.min(1, ratio / 0.35);
+    }
+    // Smoothly slow down as stamina goes down from 100% (1.0x) toward 0% (0.50x)
+    return 0.5 + 0.5 * ratio;
   }
 
   get nextUpgradeCost(): number | null {

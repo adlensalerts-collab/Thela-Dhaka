@@ -82,62 +82,92 @@ export function formatCode(code: string | undefined): string {
   return code;
 }
 
+let memorySettings: GameSettingsData | null = null;
+
+function cloneDefaultBindings(): KeyBindings {
+  return JSON.parse(JSON.stringify(DEFAULT_BINDINGS));
+}
+
 export function loadBindings(): KeyBindings {
+  const fallback = memorySettings
+    ? JSON.parse(JSON.stringify(memorySettings.bindings))
+    : cloneDefaultBindings();
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return JSON.parse(JSON.stringify(DEFAULT_BINDINGS));
+    if (!raw) return fallback;
     const parsed = JSON.parse(raw);
     const storedBindings = parsed.bindings || parsed;
-    const validated: KeyBindings = JSON.parse(JSON.stringify(DEFAULT_BINDINGS));
+    const validated: KeyBindings = cloneDefaultBindings();
 
     (Object.keys(DEFAULT_BINDINGS) as ActionName[]).forEach((action) => {
       if (Array.isArray(storedBindings[action]) && storedBindings[action].length > 0) {
-        validated[action] = storedBindings[action].filter((c: any) => typeof c === 'string' && c.length > 0).slice(0, 2);
+        validated[action] = storedBindings[action]
+          .filter((c: any) => typeof c === 'string' && c.length > 0)
+          .slice(0, 2);
       }
     });
     return validated;
   } catch (err) {
     console.warn('Failed to load keybindings from localStorage:', err);
-    return JSON.parse(JSON.stringify(DEFAULT_BINDINGS));
+    return fallback;
   }
 }
 
 export function loadSettings(): GameSettingsData {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      return {
-        bindings: JSON.parse(JSON.stringify(DEFAULT_BINDINGS)),
+  const fallback: GameSettingsData = memorySettings
+    ? {
+        bindings: JSON.parse(JSON.stringify(memorySettings.bindings)),
+        mouseSensitivity: memorySettings.mouseSensitivity,
+        invertY: memorySettings.invertY
+      }
+    : {
+        bindings: cloneDefaultBindings(),
         mouseSensitivity: DEFAULT_MOUSE_SETTINGS.mouseSensitivity,
         invertY: DEFAULT_MOUSE_SETTINGS.invertY
       };
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) {
+      memorySettings = fallback;
+      return fallback;
     }
     const parsed = JSON.parse(raw);
     const bindings = loadBindings();
-    const mouseSensitivity = typeof parsed.mouseSensitivity === 'number' && parsed.mouseSensitivity >= 0.5 && parsed.mouseSensitivity <= 2.0
-      ? parsed.mouseSensitivity
-      : DEFAULT_MOUSE_SETTINGS.mouseSensitivity;
-    const invertY = typeof parsed.invertY === 'boolean' ? parsed.invertY : DEFAULT_MOUSE_SETTINGS.invertY;
+    const mouseSensitivity =
+      typeof parsed.mouseSensitivity === 'number' &&
+      parsed.mouseSensitivity >= 0.5 &&
+      parsed.mouseSensitivity <= 2.0
+        ? parsed.mouseSensitivity
+        : fallback.mouseSensitivity;
+    const invertY =
+      typeof parsed.invertY === 'boolean' ? parsed.invertY : fallback.invertY;
 
-    return { bindings, mouseSensitivity, invertY };
+    const loaded: GameSettingsData = { bindings, mouseSensitivity, invertY };
+    memorySettings = {
+      bindings: JSON.parse(JSON.stringify(bindings)),
+      mouseSensitivity,
+      invertY
+    };
+    return loaded;
   } catch (err) {
     console.warn('Failed to load settings from localStorage:', err);
-    return {
-      bindings: JSON.parse(JSON.stringify(DEFAULT_BINDINGS)),
-      mouseSensitivity: DEFAULT_MOUSE_SETTINGS.mouseSensitivity,
-      invertY: DEFAULT_MOUSE_SETTINGS.invertY
-    };
+    return fallback;
   }
 }
 
 export function saveBindings(bindings: KeyBindings, mouseSettings?: Partial<MouseSettings>): void {
+  const current = loadSettings();
+  const toSave: GameSettingsData = {
+    bindings: JSON.parse(JSON.stringify(bindings)),
+    mouseSensitivity: mouseSettings?.mouseSensitivity ?? current.mouseSensitivity,
+    invertY: mouseSettings?.invertY ?? current.invertY
+  };
+  memorySettings = {
+    bindings: JSON.parse(JSON.stringify(toSave.bindings)),
+    mouseSensitivity: toSave.mouseSensitivity,
+    invertY: toSave.invertY
+  };
   try {
-    const current = loadSettings();
-    const toSave: GameSettingsData = {
-      bindings,
-      mouseSensitivity: mouseSettings?.mouseSensitivity ?? current.mouseSensitivity,
-      invertY: mouseSettings?.invertY ?? current.invertY
-    };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
   } catch (err) {
     console.warn('Failed to save keybindings to localStorage:', err);
@@ -145,7 +175,7 @@ export function saveBindings(bindings: KeyBindings, mouseSettings?: Partial<Mous
 }
 
 export function resetBindings(): KeyBindings {
-  const def = JSON.parse(JSON.stringify(DEFAULT_BINDINGS));
+  const def = cloneDefaultBindings();
   saveBindings(def, DEFAULT_MOUSE_SETTINGS);
   return def;
 }

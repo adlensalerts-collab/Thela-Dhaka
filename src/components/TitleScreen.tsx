@@ -27,10 +27,23 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
   const [roomCodeInput, setRoomCodeInput] = useState('');
   const [showHelp, setShowHelp] = useState(false);
 
+  const formatBindingPair = (codes?: string[], fallback = '—') => {
+    if (!codes || codes.length === 0) return fallback;
+    return codes.map((c) => formatCode(c)).join(' / ');
+  };
+
+  const forwardLabel = formatBindingPair(settings?.bindings?.forward, '↑ / W');
+  const backwardLabel = formatBindingPair(settings?.bindings?.backward, '↓ / S');
+  const leftLabel = formatBindingPair(settings?.bindings?.turnLeft, '← / A');
+  const rightLabel = formatBindingPair(settings?.bindings?.turnRight, '→ / D');
   const interactLabel = formatCode(settings?.bindings?.sell?.[0] || 'Space');
+  const sprintLabel = formatCode(settings?.bindings?.sprint?.[0] || 'ShiftLeft');
+  const upgradeLabel = formatCode(settings?.bindings?.upgrade?.[0] || 'KeyU');
+  const restockLabel = formatCode(settings?.bindings?.restock?.[0] || 'KeyR');
+  const viewLabel = formatCode(settings?.bindings?.changeView?.[0] || 'KeyC');
 
   return (
-    <div className="absolute inset-0 z-20 flex flex-col items-center justify-between p-6 bg-gradient-to-b from-[#122826]/90 via-[#0d1b1a]/95 to-[#091211] text-white overflow-y-auto">
+    <div className="absolute inset-0 z-20 flex flex-col items-center justify-between p-6 bg-gradient-to-b from-[#122826]/75 via-[#0d1b1a]/80 to-[#091211]/85 text-white overflow-y-auto">
       {/* Top bar */}
       <div className="w-full max-w-5xl flex items-center justify-between py-3">
         <div className="flex items-center gap-3">
@@ -193,25 +206,25 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
 
       {/* Footer controls hint with updated keys */}
       <div className="text-xs text-gray-400 text-center pb-2 flex flex-wrap items-center justify-center gap-3">
-        <span>↑ / W Forward</span>
+        <span>{forwardLabel} Forward</span>
         <span>·</span>
-        <span>↓ / S Reverse</span>
+        <span>{backwardLabel} Reverse</span>
         <span>·</span>
-        <span>← / A / → / D Steer</span>
+        <span>{leftLabel} / {rightLabel} Steer</span>
         <span>·</span>
         <span>{interactLabel} Sell / Arrest</span>
         <span>·</span>
-        <span>Hold Shift Sprint</span>
+        <span>Hold {sprintLabel} Sprint</span>
         <span>·</span>
         <span>Drag Mouse to Look</span>
         <span>·</span>
         <span>Scroll Zoom</span>
         <span>·</span>
-        <span>U Upgrade</span>
+        <span>{upgradeLabel} Upgrade</span>
         <span>·</span>
-        <span>R Restock</span>
+        <span>{restockLabel} Restock</span>
         <span>·</span>
-        <span>C View</span>
+        <span>{viewLabel} View</span>
       </div>
 
       {/* Help Modal */}
@@ -221,18 +234,18 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
             <h3 className="text-lg font-bold text-amber-400">How to Play Thela Dhaka</h3>
             <div className="text-xs text-gray-300 space-y-2">
               <p>
-                <strong>Vehicle Controls:</strong> Steer left/right (<code className="bg-black/50 px-1.5 py-0.5 rounded text-amber-300">A / D / ← / →</code>) to rotate your heading. Drive forward (<code className="bg-black/50 px-1.5 py-0.5 rounded text-amber-300">W / ↑</code>) or reverse backward (<code className="bg-black/50 px-1.5 py-0.5 rounded text-amber-300">S / ↓</code>) with authentic cart handling. Hold <code className="bg-black/50 px-1.5 py-0.5 rounded text-amber-300">Shift</code> to sprint.
+                <strong>Vehicle Controls:</strong> Steer left/right (<code className="bg-black/50 px-1.5 py-0.5 rounded text-amber-300">{leftLabel} / {rightLabel}</code>) to rotate your heading. Drive forward (<code className="bg-black/50 px-1.5 py-0.5 rounded text-amber-300">{forwardLabel}</code>) or reverse backward (<code className="bg-black/50 px-1.5 py-0.5 rounded text-amber-300">{backwardLabel}</code>) with authentic cart handling. Hold <code className="bg-black/50 px-1.5 py-0.5 rounded text-amber-300">{sprintLabel}</code> to sprint.
               </p>
               <p>
                 <strong>As Vendor (ঠেলাগাড়িওয়ালা):</strong> Park near wandering pedestrians on the sidewalk, press{' '}
-                <code className="bg-black/50 px-1.5 py-0.5 rounded text-amber-300">{interactLabel}</code> to start a sale. Earn Taka, upgrade your cart (U), restock items (R), and avoid police pursuit when heat rises!
+                <code className="bg-black/50 px-1.5 py-0.5 rounded text-amber-300">{interactLabel}</code> to start a sale. Earn Taka, upgrade your cart ({upgradeLabel}), restock items ({restockLabel}), and avoid police pursuit when heat rises!
               </p>
               <p>
                 <strong>As Police (পুলিশ কনস্টেবল):</strong> Patrol the streets, chase the vendor, and press{' '}
                 <code className="bg-black/50 px-1.5 py-0.5 rounded text-amber-300">{interactLabel}</code> at close range to arrest or negotiate.
               </p>
               <p>
-                <strong>Drag Camera:</strong> Click and drag anywhere on screen to look around freely in 360°. Release to let the camera smoothly align behind your cart after 1.2s. Scroll mouse wheel to zoom in/out, or press <code className="bg-black/50 px-1.5 py-0.5 rounded text-amber-300">C</code> to cycle camera presets.
+                <strong>Drag Camera:</strong> Click and drag anywhere on screen to look around freely in 360°. Release to let the camera smoothly align behind your cart after 1.2s. Scroll mouse wheel to zoom in/out, or press <code className="bg-black/50 px-1.5 py-0.5 rounded text-amber-300">{viewLabel}</code> to cycle camera presets.
               </p>
               <p>
                 <strong>Rebindable Keys:</strong> Rebind any key, adjust mouse sensitivity, and toggle inverted look in Settings.

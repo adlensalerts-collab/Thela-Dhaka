@@ -306,11 +306,13 @@ export class GameEngine {
   }
 
   setAmbientVolume(v: number) {
+    this.resumeAudio();
     this.ambientAudio.setVolume(v);
   }
 
   playBeep(freq = 440, duration = 0.1, type: OscillatorType = 'sine') {
-    if (this.muted || !this.audioCtx) return;
+    const vol = this.ambientAudio.getVolume();
+    if (this.muted || !this.audioCtx || vol <= 0.001) return;
     try {
       if (this.audioCtx.state === 'suspended') {
         this.audioCtx.resume();
@@ -319,7 +321,7 @@ export class GameEngine {
       const gain = this.audioCtx.createGain();
       osc.type = type;
       osc.frequency.setValueAtTime(freq, this.audioCtx.currentTime);
-      gain.gain.setValueAtTime(0.12, this.audioCtx.currentTime);
+      gain.gain.setValueAtTime(Math.max(0.001, 0.12 * vol), this.audioCtx.currentTime);
       gain.gain.exponentialRampToValueAtTime(0.001, this.audioCtx.currentTime + duration);
       osc.connect(gain);
       gain.connect(this.audioCtx.destination);
@@ -329,7 +331,8 @@ export class GameEngine {
   }
 
   playThud(intensity = 0.5) {
-    if (this.muted || !this.audioCtx) return;
+    const vol = this.ambientAudio.getVolume();
+    if (this.muted || !this.audioCtx || vol <= 0.001) return;
     try {
       if (this.audioCtx.state === 'suspended') {
         this.audioCtx.resume();
@@ -339,7 +342,7 @@ export class GameEngine {
       osc.type = 'triangle';
       osc.frequency.setValueAtTime(110 * intensity, this.audioCtx.currentTime);
       osc.frequency.exponentialRampToValueAtTime(35, this.audioCtx.currentTime + 0.18);
-      gain.gain.setValueAtTime(0.2 * intensity, this.audioCtx.currentTime);
+      gain.gain.setValueAtTime(Math.max(0.001, 0.2 * intensity * vol), this.audioCtx.currentTime);
       gain.gain.exponentialRampToValueAtTime(0.001, this.audioCtx.currentTime + 0.18);
       osc.connect(gain);
       gain.connect(this.audioCtx.destination);
@@ -349,7 +352,8 @@ export class GameEngine {
   }
 
   playRickshawBell() {
-    if (this.muted || !this.audioCtx) return;
+    const vol = this.ambientAudio.getVolume();
+    if (this.muted || !this.audioCtx || vol <= 0.001) return;
     try {
       if (this.audioCtx.state === 'suspended') {
         this.audioCtx.resume();
@@ -362,7 +366,7 @@ export class GameEngine {
         osc.type = 'sine';
         osc.frequency.setValueAtTime(1280, now + delay);
         osc.frequency.exponentialRampToValueAtTime(1420, now + delay + 0.04);
-        gain.gain.setValueAtTime(0.18, now + delay);
+        gain.gain.setValueAtTime(Math.max(0.001, 0.18 * vol), now + delay);
         gain.gain.exponentialRampToValueAtTime(0.001, now + delay + 0.12);
         osc.connect(gain);
         gain.connect(this.audioCtx!.destination);
@@ -449,18 +453,19 @@ export class GameEngine {
       });
     }
 
-    this.updatePixelRatio();
+    this.updatePixelRatio(true);
   }
 
-  updatePixelRatio() {
+  updatePixelRatio(force = false) {
     if (!this.container) return;
     const width = Math.max(1, this.container.clientWidth);
     const height = Math.max(1, this.container.clientHeight);
     const dpr = window.devicePixelRatio || 1;
     const capRatio = this.qualityPreset.maxRenderHeight / height;
-    const pixelRatio = Math.max(0.5, Math.min(dpr, capRatio) * this.adaptive.scale);
+    const maxScale = Math.max(dpr, 2.25);
+    const pixelRatio = Math.max(0.5, Math.min(maxScale, capRatio) * this.adaptive.scale);
 
-    if (Math.abs(pixelRatio - this.currentPixelRatio) >= 0.02) {
+    if (force || Math.abs(pixelRatio - this.currentPixelRatio) >= 0.01) {
       this.currentPixelRatio = pixelRatio;
       this.renderer.setPixelRatio(pixelRatio);
     }
@@ -478,6 +483,9 @@ export class GameEngine {
     }
     if (opts.fpsLimit !== undefined) {
       this.fpsLimit = opts.fpsLimit;
+      this.limiterTime = 0;
+      this.fpsFrameCount = 0;
+      this.fpsWindowStart = performance.now();
     }
     if (opts.showFps !== undefined) {
       this.showFps = opts.showFps;
@@ -1393,9 +1401,10 @@ export class GameEngine {
     const weatherSpeedMult = this.weather ? this.weather.speedMultiplier : 1;
     const traction = this.weather ? this.weather.traction : 1;
 
-    // Steering: turnLeft / turnRight rotate heading (affected by surface turnGrip)
+    // Steering: turnLeft / turnRight rotate heading (affected by surface turnGrip and stamina fatigue)
     const isLocked = Boolean(this.state.repairing || this.state.restocking);
-    const turnRate = (isVendor ? 2.2 : 3.2) * turnGrip;
+    const staminaTurnScale = 0.75 + 0.25 * this.stamina.speedFactor;
+    const turnRate = (isVendor ? 2.2 : 3.2) * turnGrip * staminaTurnScale;
     let turnInput = isLocked
       ? 0
       : (this.heldActions.has('turnRight') ? 1 : 0) - (this.heldActions.has('turnLeft') ? 1 : 0);
@@ -1679,10 +1688,12 @@ export class GameEngine {
     const vendorSpeed = isVendorPlayer ? Math.abs(this.currentSpeed) : 0;
     this.vendorPhase += vendorSpeed * dt * 2.2;
     if (this.human.userData.rig) {
-      const vendorIntensity = Math.min(1, vendorSpeed / 5) * (isVendorPlayer && this.stamina.exhausted ? 0.55 : 1);
+      const vendorIntensity =
+        Math.min(1, vendorSpeed / 5) *
+        (isVendorPlayer ? (this.stamina.exhausted ? 0.55 : this.stamina.speedFactor) : 1);
       animateHuman(this.human.userData.rig, this.vendorPhase, vendorIntensity, true);
-      if (isVendorPlayer && this.stamina.exhausted) {
-        this.human.userData.rig.body.rotation.x -= 0.12;
+      if (isVendorPlayer && (this.stamina.exhausted || this.stamina.stamina < 35)) {
+        this.human.userData.rig.body.rotation.x -= this.stamina.exhausted ? 0.12 : 0.06;
       }
     }
 
@@ -1700,7 +1711,13 @@ export class GameEngine {
     }
     this.officerPhase += officerSpeed * dt * 2.2;
     if (this.officer.userData.rig) {
-      animateHuman(this.officer.userData.rig, this.officerPhase, Math.min(1, officerSpeed / 5), false);
+      const officerIntensity =
+        Math.min(1, officerSpeed / 5) *
+        (!isVendorPlayer ? (this.stamina.exhausted ? 0.55 : this.stamina.speedFactor) : 1);
+      animateHuman(this.officer.userData.rig, this.officerPhase, officerIntensity, false);
+      if (!isVendorPlayer && (this.stamina.exhausted || this.stamina.stamina < 35)) {
+        this.officer.userData.rig.body.rotation.x -= this.stamina.exhausted ? 0.12 : 0.06;
+      }
     }
 
     let npcSpeed = 0;
@@ -1943,7 +1960,7 @@ export class GameEngine {
             Math.max(1, this.container.clientHeight) * (this.currentPixelRatio || 1)
           );
           this.state.showFps = this.showFps;
-          if (!this.state.stage || this.state.stage !== 'playing') {
+          if (!this.state.stage || this.state.stage !== 'playing' || this.isMenuOrModalOpen) {
             this.publishState(false);
           }
         }
@@ -1953,7 +1970,7 @@ export class GameEngine {
     const rawDt = this.clock.getDelta();
     const dt = Math.min(rawDt, 0.1); // Guard against giant delta jumps when returning from tab switch
 
-    if (this.state && this.state.stage === 'playing') {
+    if (this.state && this.state.stage === 'playing' && !this.isMenuOrModalOpen) {
       const MAX_STEP = 1 / 60;
       let rem = dt;
       let steps = 0;

@@ -5,6 +5,7 @@ import { GameHUD } from './components/GameHUD';
 import { EventModal } from './components/EventModal';
 import { SettingsModal } from './components/SettingsModal';
 import { loadSettings, GameSettingsData } from './game/keybindings';
+import { loadDisplaySettings, DisplaySettings } from './game/render/display';
 import { RunStats } from './game/stats';
 import { io, Socket } from 'socket.io-client';
 
@@ -18,6 +19,7 @@ export default function App() {
   const socketRef = useRef<Socket | null>(null);
 
   const [settings, setSettings] = useState<GameSettingsData>(() => loadSettings());
+  const [displaySettings, setDisplaySettings] = useState<DisplaySettings>(() => loadDisplaySettings());
   const [showSettings, setShowSettings] = useState(false);
 
   const [view, setView] = useState<'menu' | 'playing'>('menu');
@@ -59,6 +61,7 @@ export default function App() {
 
     engineRef.current = engine;
     engine.start();
+    engine.publishState(true);
 
     // Socket.io connection for online multiplayer
     const socket = ONLINE_AVAILABLE ? (SERVER_URL ? io(SERVER_URL) : io()) : null;
@@ -93,6 +96,9 @@ export default function App() {
   useEffect(() => {
     const isMenuOpen = showSettings || modalType !== null || view === 'menu';
     engineRef.current?.setMenuOpen(isMenuOpen);
+    if (!isMenuOpen && view === 'playing') {
+      engineRef.current?.renderer?.domElement?.focus();
+    }
   }, [showSettings, modalType, view]);
 
   // Global Escape key handling for game pause and closing settings
@@ -169,6 +175,26 @@ export default function App() {
     });
   };
 
+  const handleBrightnessChange = (v: number) => {
+    setDisplaySettings((prev) => ({ ...prev, brightness: v }));
+    engineRef.current?.setBrightness(v);
+  };
+
+  const handleAmbientVolumeChange = (v: number) => {
+    if (v > 0 && muted) {
+      engineRef.current?.setMuted(false);
+      setMuted(false);
+    }
+    engineRef.current?.setAmbientVolume(v);
+  };
+
+  const handleDisplayOptionsChange = (
+    opts: Partial<Pick<DisplaySettings, 'quality' | 'fpsLimit' | 'showFps'>>
+  ) => {
+    setDisplaySettings((prev) => ({ ...prev, ...opts }));
+    engineRef.current?.setDisplayOptions(opts);
+  };
+
   const handlePause = () => {
     engineRef.current?.pauseGame();
     setModalType('paused');
@@ -180,88 +206,129 @@ export default function App() {
     setModalType(null);
   };
 
+  const currentFps = gameState?.fps ?? engineRef.current?.currentFps ?? 60;
+  const currentRenderHeight =
+    gameState?.renderHeight ?? engineRef.current?.state?.renderHeight ?? 1080;
+  const currentDisplayHz =
+    gameState?.displayHz ?? engineRef.current?.state?.displayHz ?? 60;
+  const showFps = displaySettings.showFps || Boolean(gameState?.showFps);
+  const uiBrightness = 0.25 + 0.75 * displaySettings.brightness;
+
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-black select-none">
-      {/* Three.js Canvas Container */}
-      <div ref={containerRef} className="absolute inset-0 w-full h-full" />
+      {/* Game Viewport (Canvas + Views) with live brightness control */}
+      <div
+        className="relative w-full h-full"
+        style={
+          Math.abs(displaySettings.brightness - 1) > 0.01
+            ? { filter: `brightness(${uiBrightness.toFixed(3)})` }
+            : undefined
+        }
+      >
+        {/* Three.js Canvas Container */}
+        <div ref={containerRef} className="absolute inset-0 w-full h-full" />
 
-      {/* Menu View */}
-      {view === 'menu' && (
-        <TitleScreen
-          onStartSolo={handleStartSolo}
-          onCreateRoom={handleCreateRoom}
-          onJoinRoom={handleJoinRoom}
-          muted={muted}
-          onToggleMute={handleToggleMute}
-          onOpenSettings={handleOpenSettings}
-          settings={settings}
-        />
-      )}
+        {/* Menu View */}
+        {view === 'menu' && (
+          <TitleScreen
+            onStartSolo={handleStartSolo}
+            onCreateRoom={handleCreateRoom}
+            onJoinRoom={handleJoinRoom}
+            muted={muted}
+            onToggleMute={handleToggleMute}
+            onOpenSettings={handleOpenSettings}
+            settings={settings}
+          />
+        )}
 
-      {/* HUD View */}
-      {view === 'playing' && gameState && (
-        <GameHUD
+        {/* Menu FPS Counter when Show FPS is enabled on Title Screen */}
+        {view === 'menu' && showFps && (
+          <div
+            className={`fixed bottom-4 right-4 z-30 px-2.5 py-1 rounded-lg bg-black/75 backdrop-blur-md border border-teal-700/40 font-mono text-[11px] font-bold tracking-tight shadow-lg pointer-events-none ${
+              currentFps >= 55
+                ? 'text-emerald-400'
+                : currentFps >= 30
+                ? 'text-amber-400'
+                : 'text-rose-400'
+            }`}
+          >
+            {currentFps} FPS · {currentRenderHeight}p
+          </div>
+        )}
+
+        {/* HUD View */}
+        {view === 'playing' && gameState && (
+          <GameHUD
+            state={{
+              ...gameState,
+              showFps,
+              fps: currentFps,
+              renderHeight: currentRenderHeight,
+              displayHz: currentDisplayHz
+            }}
+            notice={notice}
+            onAction={handleAction}
+            onPause={handlePause}
+            onOpenSettings={handleOpenSettings}
+            settings={settings}
+            roomCode={roomCode}
+            muted={muted}
+            onToggleMute={handleToggleMute}
+          />
+        )}
+
+        {/* Modals */}
+        <EventModal
+          type={modalType}
           state={gameState}
-          notice={notice}
-          onAction={handleAction}
-          onPause={handlePause}
-          onOpenSettings={handleOpenSettings}
-          settings={settings}
-          roomCode={roomCode}
-          muted={muted}
-          onToggleMute={handleToggleMute}
-        />
-      )}
-
-      {/* Modals */}
-      <EventModal
-        type={modalType}
-        state={gameState}
-        stats={runStats ?? engineRef.current?.lastRunStats ?? null}
-        onPayBribe={() => {
-          if (!engineRef.current) return;
-          if (engineRef.current.payBribe()) {
+          stats={runStats ?? engineRef.current?.lastRunStats ?? null}
+          onPayBribe={() => {
+            if (!engineRef.current) return;
+            if (engineRef.current.payBribe()) {
+              setModalType(null);
+            }
+          }}
+          onGoToJail={() => {
+            engineRef.current?.goToJail();
+          }}
+          onRecordArrest={() => {
+            if (!engineRef.current) return;
+            engineRef.current.recordArrest();
             setModalType(null);
-          }
-        }}
-        onGoToJail={() => {
-          engineRef.current?.goToJail();
-        }}
-        onRecordArrest={() => {
-          if (!engineRef.current) return;
-          engineRef.current.recordArrest();
-          setModalType(null);
-        }}
-        onTakeIllicit={() => {
-          if (!engineRef.current) return;
-          engineRef.current.takeIllicit();
-          setModalType(null);
-        }}
-        onResume={handleResume}
-        onRestart={() => {
-          if (!engineRef.current || !gameState) return;
-          setRunStats(null);
-          engineRef.current.setMode(gameState.mode);
-          setModalType(null);
-        }}
-        onMainMenu={() => {
-          setRunStats(null);
-          setView('menu');
-          setModalType(null);
-          setRoomCode('');
-        }}
-        onOpenSettings={handleOpenSettings}
-      />
+          }}
+          onTakeIllicit={() => {
+            if (!engineRef.current) return;
+            engineRef.current.takeIllicit();
+            setModalType(null);
+          }}
+          onResume={handleResume}
+          onRestart={() => {
+            if (!engineRef.current || !gameState) return;
+            setRunStats(null);
+            engineRef.current.setMode(gameState.mode);
+            setModalType(null);
+          }}
+          onMainMenu={() => {
+            setRunStats(null);
+            setView('menu');
+            setModalType(null);
+            setRoomCode('');
+          }}
+          onOpenSettings={handleOpenSettings}
+        />
+      </div>
 
-      {/* Settings Modal */}
+      {/* Settings Modal (kept outside brightness filter so controls remain clear) */}
       <SettingsModal
         isOpen={showSettings}
         onClose={() => setShowSettings(false)}
         onBindingsUpdated={handleUpdateSettings}
-        onBrightnessChange={(v) => engineRef.current?.setBrightness(v)}
-        onAmbientVolumeChange={(v) => engineRef.current?.setAmbientVolume(v)}
-        onDisplayOptionsChange={(opts) => engineRef.current?.setDisplayOptions(opts)}
-        displayHz={gameState?.displayHz ?? engineRef.current?.state.displayHz ?? 60}
+        onBrightnessChange={handleBrightnessChange}
+        onAmbientVolumeChange={handleAmbientVolumeChange}
+        onDisplayOptionsChange={handleDisplayOptionsChange}
+        displayHz={currentDisplayHz}
+        currentFps={currentFps}
+        renderHeight={currentRenderHeight}
       />
     </div>
   );

@@ -282,7 +282,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
             <div className="flex justify-between items-center text-[10px] uppercase tracking-wider mb-1 gap-2">
               <span className="text-gray-400">STAMINA · দম</span>
               <span className={`font-mono font-bold ${staminaTextColor}`}>
-                L{staminaLevel}
+                {stamina}% · L{staminaLevel}
               </span>
             </div>
             <div className="w-full h-2 bg-gray-900/90 rounded-full overflow-hidden border border-teal-800/40">
@@ -291,11 +291,15 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                 style={{ width: `${Math.min(100, Math.max(0, stamina))}%` }}
               />
             </div>
-            {exhausted && (
+            {exhausted ? (
               <span className="text-[10px] text-rose-400 font-bold animate-pulse mt-0.5 leading-none">
-                হাঁপাচ্ছে
+                হাঁপাচ্ছে · ধীর গতি
               </span>
-            )}
+            ) : stamina < 75 ? (
+              <span className="text-[10px] text-amber-300 font-semibold mt-0.5 leading-none">
+                গতি কমছে ({Math.round(50 + 0.5 * stamina)}%)
+              </span>
+            ) : null}
           </div>
 
           <div className="h-8 w-px bg-teal-800/60" />

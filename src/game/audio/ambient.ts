@@ -257,23 +257,32 @@ export const HIGH_ACTIVITY_URBAN_ZONES: ReadonlyArray<UrbanActivityZone> = [
   }
 ];
 
+let memoryAmbientVolume: number | null = null;
+
 export function loadAmbientVolume(): number {
+  const fallback = memoryAmbientVolume ?? 0.75;
   try {
     const raw = localStorage.getItem(AMBIENT_STORAGE_KEY);
-    if (!raw) return 0.75;
+    if (!raw) {
+      memoryAmbientVolume = fallback;
+      return fallback;
+    }
     const parsed = JSON.parse(raw);
     if (typeof parsed?.volume === 'number') {
-      return Math.max(0, Math.min(1, parsed.volume));
+      const clamped = Math.max(0, Math.min(1, parsed.volume));
+      memoryAmbientVolume = clamped;
+      return clamped;
     }
   } catch {
     // ignore storage errors
   }
-  return 0.75;
+  return fallback;
 }
 
 export function saveAmbientVolume(volume: number): void {
+  const clamped = Math.max(0, Math.min(1, volume));
+  memoryAmbientVolume = clamped;
   try {
-    const clamped = Math.max(0, Math.min(1, volume));
     localStorage.setItem(AMBIENT_STORAGE_KEY, JSON.stringify({ volume: clamped }));
   } catch {
     // ignore storage errors
@@ -342,6 +351,15 @@ export class SpatialSoundManager {
   public setVolume(v: number): void {
     this.userVolume = Math.max(0, Math.min(1, v));
     saveAmbientVolume(this.userVolume);
+    this.loadTracks();
+    if (this.ctx && this.masterGain) {
+      const now = this.ctx.currentTime;
+      const target =
+        this.muted || this.userVolume <= 0.001
+          ? 0.0001
+          : Math.max(0.0001, this.userVolume);
+      this.masterGain.gain.setTargetAtTime(target, now, 0.05);
+    }
   }
 
   public getVolume(): number {
@@ -352,7 +370,10 @@ export class SpatialSoundManager {
     this.muted = muted;
     if (this.ctx && this.masterGain) {
       const now = this.ctx.currentTime;
-      const target = this.muted ? 0.0001 : Math.max(0.0001, this.userVolume);
+      const target =
+        this.muted || this.userVolume <= 0.001
+          ? 0.0001
+          : Math.max(0.0001, this.userVolume);
       this.masterGain.gain.setTargetAtTime(target, now, 0.08);
     }
   }
@@ -745,11 +766,12 @@ export class SpatialSoundManager {
     const isPlaying = params.isPlaying ?? true;
     const isPaused = params.isPaused ?? false;
 
-    const masterTarget = this.muted
-      ? 0.0001
-      : isPlaying && !isPaused
-      ? Math.max(0.0001, this.userVolume)
-      : Math.max(0.0001, this.userVolume * 0.25);
+    const masterTarget =
+      this.muted || this.userVolume <= 0.001
+        ? 0.0001
+        : isPlaying && !isPaused
+        ? Math.max(0.0001, this.userVolume)
+        : Math.max(0.0001, this.userVolume * 0.45);
 
     this.masterGain.gain.setTargetAtTime(masterTarget, now, 0.1);
 
