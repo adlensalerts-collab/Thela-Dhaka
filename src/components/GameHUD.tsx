@@ -10,7 +10,7 @@ import {
   RefreshCw,
   Store,
   Sliders,
-  MousePointer
+  Wrench
 } from 'lucide-react';
 import { GameState } from '../game/simulation';
 import { GameSettingsData, formatCode } from '../game/keybindings';
@@ -87,6 +87,21 @@ export const GameHUD: React.FC<GameHUDProps> = ({
   const upgradeKey = formatCode(settings.bindings.upgrade?.[0] || 'KeyU');
   const restockKey = formatCode(settings.bindings.restock?.[0] || 'KeyR');
   const stallKey = formatCode(settings.bindings.placeStall?.[0] || 'KeyB');
+  const repairKey = formatCode(settings.bindings.repair?.[0] || 'KeyF');
+
+  const damage = state.damage || 0;
+  const repairCost = state.repairCost || 0;
+
+  // Damage bar color (green → amber → red)
+  let damageBarColor = 'bg-emerald-500';
+  let damageTextColor = 'text-emerald-400';
+  if (damage >= 70) {
+    damageBarColor = 'bg-rose-500';
+    damageTextColor = 'text-rose-400';
+  } else if (damage >= 30) {
+    damageBarColor = 'bg-amber-500';
+    damageTextColor = 'text-amber-400';
+  }
 
   return (
     <div className="absolute inset-0 z-10 pointer-events-none flex flex-col justify-between p-4 font-['Poppins','Hind_Siliguri',sans-serif]">
@@ -133,6 +148,24 @@ export const GameHUD: React.FC<GameHUDProps> = ({
             <span className="text-base font-extrabold text-white">
               {isVendor ? `${state.stock}/${state.cap}` : `${state.integrity}%`}
             </span>
+          </div>
+
+          <div className="h-8 w-px bg-teal-800/60" />
+
+          {/* Damage / Condition Bar */}
+          <div className="flex flex-col min-w-[110px]">
+            <div className="flex justify-between items-center text-[10px] uppercase tracking-wider mb-1">
+              <span className="text-gray-400">{isVendor ? 'Damage' : 'Damage'}</span>
+              <span className={`font-mono font-bold ${damageTextColor}`}>
+                {damage >= 100 ? 'BROKEN' : `${damage}%`}
+              </span>
+            </div>
+            <div className="w-full h-2 bg-gray-900/90 rounded-full overflow-hidden border border-teal-800/40">
+              <div
+                className={`h-full transition-all duration-300 rounded-full ${damageBarColor}`}
+                style={{ width: `${Math.min(100, Math.max(damage > 0 ? 8 : 0, damage))}%` }}
+              />
+            </div>
           </div>
 
           <div className="h-8 w-px bg-teal-800/60" />
@@ -226,6 +259,19 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                   <span>Big Stall [{stallKey}]</span>
                 </button>
               )}
+              <button
+                onClick={() => onAction('repair')}
+                disabled={damage <= 0}
+                className={`px-4 py-3 rounded-2xl font-bold text-xs shadow-lg flex items-center gap-2 transition active:scale-95 ${
+                  damage > 0
+                    ? 'bg-amber-600 hover:bg-amber-500 text-gray-950 border border-amber-400 shadow-amber-500/20 animate-pulse cursor-pointer'
+                    : 'bg-teal-950/50 border border-teal-800/30 text-gray-500 cursor-not-allowed opacity-50'
+                }`}
+                title={damage > 0 ? `Repair damage for ৳${repairCost}` : 'No repair needed'}
+              >
+                <Wrench className="w-4 h-4" />
+                <span>Repair ৳{repairCost} [{repairKey}]</span>
+              </button>
             </>
           ) : (
             <>
@@ -235,6 +281,19 @@ export const GameHUD: React.FC<GameHUDProps> = ({
               >
                 <Shield className="w-4 h-4" />
                 <span>Attempt Arrest [{sellKey}]</span>
+              </button>
+              <button
+                onClick={() => onAction('repair')}
+                disabled={damage <= 0}
+                className={`px-4 py-3 rounded-2xl font-bold text-xs shadow-lg flex items-center gap-2 transition active:scale-95 ${
+                  damage > 0
+                    ? 'bg-amber-600 hover:bg-amber-500 text-gray-950 border border-amber-400 shadow-amber-500/20 animate-pulse cursor-pointer'
+                    : 'bg-teal-950/50 border border-teal-800/30 text-gray-500 cursor-not-allowed opacity-50'
+                }`}
+                title={damage > 0 ? `Repair damage for ৳${repairCost}` : 'No repair needed'}
+              >
+                <Wrench className="w-4 h-4" />
+                <span>Repair ৳{repairCost} [{repairKey}]</span>
               </button>
             </>
           )}

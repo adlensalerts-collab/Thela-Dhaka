@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { Obstacle, resolveMovement, checkTrafficImpact } from './collision';
+import { Obstacle, resolveMovement } from './collision';
 import { SidewalkGraph } from './pathfinding';
 import { PedestrianManager, PedestrianNPC } from './pedestrians';
 import {
@@ -11,6 +11,11 @@ import {
   DEFAULT_BINDINGS,
   DEFAULT_MOUSE_SETTINGS
 } from './keybindings';
+import { buildPavementTrees } from './world/trees';
+import { spawnTraffic, updateTraffic, type TrafficItem } from './world/traffic';
+import { DamageSystem, checkVehicleImpact } from './damage';
+import { createPbrMaterials, applyWorldUV } from './render/pbr';
+import { setupRealisticLighting, type LightingRig } from './render/lighting';
 
 export interface GameState {
   mode: 'vendor' | 'police' | 'online_vendor' | 'online_police';
@@ -35,6 +40,8 @@ export interface GameState {
   heading: number;
   speed: number;
   score: number;
+  damage: number;
+  repairCost: number;
 }
 
 // Module-level reusable math objects for zero garbage collection during 60 FPS loop
@@ -62,7 +69,9 @@ export class GameEngine {
   sidewalkGraph!: SidewalkGraph;
   pedestrianManager!: PedestrianManager;
   obstacles: Obstacle[] = [];
-  traffic: Array<{ mesh: THREE.Group; vertical: boolean; v: number }> = [];
+  traffic: TrafficItem[] = [];
+  damage = new DamageSystem();
+  lighting: LightingRig | null = null;
   animId: number = 0;
   acc: number = 0;
   lastHudPublishTime: number = 0;
@@ -114,8 +123,6 @@ export class GameEngine {
     this.clock = new THREE.Clock();
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color('#b7d2ce');
-    this.scene.fog = new THREE.FogExp2('#c9c9af', 0.0075);
 
     this.camera = new THREE.PerspectiveCamera(66, container.clientWidth / container.clientHeight, 0.1, 470);
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -123,19 +130,6 @@ export class GameEngine {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.7));
     this.renderer.domElement.tabIndex = 0;
     this.renderer.domElement.style.outline = 'none';
-    this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.55;
-    
-    container.replaceChildren(this.renderer.domElement);
-    this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.55;
-    
     container.replaceChildren(this.renderer.domElement);
 
     this.initLights();
@@ -170,7 +164,9 @@ export class GameEngine {
       time: 0,
       heading: 0,
       speed: 0,
-      score: 0
+      score: 0,
+      damage: 0,
+      repairCost: 0
     };
   }
 
@@ -268,49 +264,21 @@ export class GameEngine {
   }
 
   initLights() {
-    this.scene.add(new THREE.HemisphereLight(0xe6f2ff, 0x9c8065, 2.15));
-    const sun = new THREE.DirectionalLight(0xffecd0, 2.55);
-    sun.position.set(-55, 115, 70);
-    sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
-    sun.shadow.camera.left = -125;
-    sun.shadow.camera.right = 125;
-    sun.shadow.camera.top = 125;
-    sun.shadow.camera.bottom = -125;
-    sun.shadow.bias = -0.00035;
-    this.scene.add(sun);
+    this.lighting = setupRealisticLighting(this.renderer, this.scene);
   }
 
   initWorld() {
     this.obstacles = [];
 
     const matte = (color: string, roughness = 0.92) => new THREE.MeshStandardMaterial({ color, roughness });
-    const mat = {
-      soil: matte('#a49e7a'),
-      road: matte('#5b6260'),
-      median: matte('#cbb880'),
-      pavement: matte('#ae9580'),
-      stripe: matte('#e7ddae'),
-      yellow: matte('#f2c45d'),
-      curb: matte('#252829'),
-      red: matte('#c54f3c'),
-      green: matte('#27835c'),
-      leaf: matte('#51773e'),
-      brown: matte('#604a37'),
-      wood: matte('#a87843'),
-      dark: matte('#292e36'),
-      light: matte('#e8dfc1'),
-      glass: new THREE.MeshStandardMaterial({ color: '#b6d3c7', roughness: 0.24, metalness: 0.05 }),
-      concrete: matte('#a6a598'),
-      metal: matte('#6a7678'),
-      sky: matte('#93c1be')
-    };
+    const mat = createPbrMaterials();
 
     const block = (p: THREE.Object3D, w: number, h: number, d: number, m: THREE.Material, x = 0, y = h / 2, z = 0, cast = true) => {
       const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
       mesh.position.set(x, y, z);
       mesh.castShadow = cast;
       mesh.receiveShadow = true;
+      if ((m as any).userData?.surface) applyWorldUV(mesh);
       p.add(mesh);
       return mesh;
     };
@@ -320,6 +288,7 @@ export class GameEngine {
       mesh.position.set(x, y, z);
       mesh.castShadow = true;
       mesh.receiveShadow = true;
+      if ((m as any).userData?.surface) applyWorldUV(mesh);
       p.add(mesh);
       return mesh;
     };
@@ -388,13 +357,12 @@ export class GameEngine {
       }
     }
 
-    const palette = ['#dc9a6f', '#b47e68', '#a8a38b', '#e0b883', '#729da0', '#8ba48b', '#c3a5a0'];
     const shops = ['চায়ের দোকান', 'ফলের আড়ৎ', 'নিউ মার্কেট', 'সিটি স্টোর', 'ঢাকা খাবার', 'মা ফার্মেসি', 'সবজি বাজার', 'ফুচকা হাউস', 'মায়ের দোয়া', 'মিষ্টি ঘর'];
 
     const buildBuilding = (x: number, z: number) => {
-      const h = rand(10, 31), color = pick(palette), width = rand(17, 23), depth = rand(17, 23);
-      const facade = matte(color);
-      block(this.scene, width, h, depth, facade, x, h / 2, z);
+      const h = rand(10, 31), width = rand(17, 23), depth = rand(17, 23);
+      const wallMat = Math.random() < 0.5 ? mat.plaster : mat.brick;
+      block(this.scene, width, h, depth, wallMat, x, h / 2, z);
       block(this.scene, width + 1, 0.5, depth + 1, mat.concrete, x, h + 0.25, z);
       const faces = Math.max(2, Math.floor(h / 3.4));
       for (let f = 0; f < faces; f++) {
@@ -430,26 +398,6 @@ export class GameEngine {
     for (const x of [-100, 100]) {
       for (const z of [-100, -60, -20, 20, 60, 100]) {
         if (Math.random() < 0.63) buildBuilding(x, z);
-      }
-    }
-
-    const makeTree = (x: number, z: number) => {
-      cylinder(this.scene, 0.18, 0.22, 3.9, mat.brown, x, 1.95, z, 7);
-      sphere(this.scene, 2.3, matte(pick(['#457a42', '#638c4a', '#356d46'])), x, 5, z);
-      // Register tree obstacle
-      this.obstacles.push({
-        type: 'circle',
-        x,
-        z,
-        radius: 0.45,
-        tag: 'tree'
-      });
-    };
-    for (const v of [-80, -40, 0, 40, 80]) {
-      for (let a = -115; a < 116; a += 17) {
-        if (Math.abs(a - v) < 10) continue;
-        if (Math.random() < 0.57) makeTree(a, v + 10.5);
-        if (Math.random() < 0.47) makeTree(v + 10.5, a);
       }
     }
 
@@ -510,34 +458,17 @@ export class GameEngine {
       });
       return g;
     };
-    for (const [x, z] of [[-9, -27], [11, 25], [-49, -8], [71, 51], [-35, 70], [35, -42]]) {
+    const STALL_POSITIONS: Array<[number, number]> = [[-9, -27], [11, 25], [-49, -8], [71, 51], [-35, 70], [35, -42]];
+    for (const [x, z] of STALL_POSITIONS) {
       makeStall(x, z);
     }
 
-    const makeRickshaw = (x: number, z: number, color: string) => {
-      const g = new THREE.Group();
-      g.position.set(x, 0, z);
-      block(g, 1.7, 0.4, 2.6, matte(color), 0, 0.86, 0);
-      block(g, 1.5, 1.4, 1.2, matte('#efd87d'), 0, 1.73, 0.4);
-      block(g, 1.6, 0.11, 2.7, matte('#c73c59'), 0, 2.5, 0.2);
-      for (const xx of [-0.85, 0.85]) {
-        for (const zz of [-0.8, 0.9]) {
-          const wheel = cylinder(g, 0.39, 0.39, 0.13, mat.dark, xx, 0.42, zz, 12);
-          wheel.rotation.z = Math.PI / 2;
-        }
-      }
-      return g;
-    };
+    buildPavementTrees(this.scene, this.obstacles, {
+      streets: street,
+      avoid: STALL_POSITIONS.map(([x, z]) => ({ x, z, r: 3.5 }))
+    });
 
-    for (let i = 0; i < 14; i++) {
-      const vertical = Math.random() < 0.5;
-      const lane = pick(street) + (Math.random() < 0.5 ? 2.8 : -2.8);
-      const r = makeRickshaw(vertical ? lane : rand(-112, 112), vertical ? rand(-112, 112) : lane, pick(['#d24449', '#e0b738', '#469c8b', '#d7723c']));
-      if (vertical) r.rotation.y = Math.random() < 0.5 ? 0 : Math.PI;
-      else r.rotation.y = Math.random() < 0.5 ? Math.PI / 2 : -Math.PI / 2;
-      this.scene.add(r);
-      this.traffic.push({ mesh: r, vertical, v: rand(0.7, 2.0) * (r.rotation.y === 0 || r.rotation.y === Math.PI / 2 ? -1 : 1) });
-    }
+    this.traffic = spawnTraffic(this.scene, street, 18);
 
     const makeHuman = (police = false) => {
       const g = new THREE.Group();
@@ -815,6 +746,7 @@ export class GameEngine {
     this.cameraDistance = 10.5;
     this.currentSpeed = 0;
     this.mouseMovedRecently = 0;
+    this.damage.reset();
     this.clearInputs();
     this.acc = 0;
     this.playBeep(520, 0.2);
@@ -838,6 +770,10 @@ export class GameEngine {
   beginSale() {
     const isVendor = this.state.mode === 'vendor' || this.state.mode === 'online_vendor';
     if (!isVendor || this.state.sale || this.state.stock <= 0 || this.state.cooldown > 0) return;
+    if (this.damage.broken) {
+      this.onEvent('notify', 'Thela broken — press Repair');
+      return;
+    }
     const { nearest, d } = this.distanceToCustomer();
     if (d > 4.8 || !nearest) {
       this.onEvent('notify', 'Get closer to a pedestrian on the sidewalk to sell (ফুটপাতের ক্রেতার কাছে যান)');
@@ -1011,6 +947,29 @@ export class GameEngine {
       this.placeStall();
     } else if (action === 'changeView' || action === 'change_view') {
       this.cycleCameraView();
+    } else if (action === 'repair') {
+      if (this.state.alert) {
+        this.onEvent('notify', "Can't repair during a chase");
+        return;
+      }
+      const currentCash = isVendor ? this.state.cash : this.state.policeCash;
+      const costPaid = this.damage.repair(currentCash, this.state.level);
+      if (costPaid > 0) {
+        if (isVendor) {
+          this.state.cash -= costPaid;
+        } else {
+          this.state.policeCash -= costPaid;
+        }
+        this.state.damage = 0;
+        this.state.repairCost = 0;
+        this.playBeep(480, 0.2);
+        this.onEvent('notify', `Vehicle repaired! Cost ৳${costPaid}`);
+        this.publishState(true);
+      } else if (this.damage.damage <= 0) {
+        this.onEvent('notify', 'No damage — vehicle in good shape');
+      } else {
+        this.onEvent('notify', 'Not enough cash to repair');
+      }
     } else if (action === 'pause') {
       this.onEvent('pause');
     }
@@ -1027,6 +986,7 @@ export class GameEngine {
   simulate(dt: number) {
     if (!this.state || this.state.stage !== 'playing') return;
     this.state.time += dt;
+    this.damage.tick(dt);
 
     // Dampen physics recoil & timers
     if (Math.abs(this.recoilVx) > 0.01 || Math.abs(this.recoilVz) > 0.01) {
@@ -1073,6 +1033,7 @@ export class GameEngine {
     } else if (this.heldActions.has('backward')) {
       targetSpeed = -baseSpeed * 0.55;
     }
+    targetSpeed *= this.damage.speedFactor;
 
     this.currentSpeed = THREE.MathUtils.damp(this.currentSpeed, targetSpeed, 8, dt);
 
@@ -1111,8 +1072,16 @@ export class GameEngine {
       this.spawnCollisionParticles(impactPointX, 0.5, impactPointZ, '#d4c29a', 6);
     }
 
-    // Dynamic Traffic (Rickshaw) collision detection
-    const trafficHit = checkTrafficImpact(p.position.x, p.position.z, this.state.heading, isVendor, this.traffic);
+    // Dynamic Traffic collision detection & damage
+    const trafficHit = checkVehicleImpact(
+      p.position.x,
+      p.position.z,
+      moveHeadingX,
+      moveHeadingZ,
+      this.currentSpeed,
+      isVendor,
+      this.traffic
+    );
     if (trafficHit.hit && this.trafficHitCooldown <= 0) {
       this.trafficHitCooldown = 0.65;
       this.cameraShake = 0.5;
@@ -1127,11 +1096,17 @@ export class GameEngine {
           this.state.sale.customer.isEngagedInSale = false;
         }
         this.state.sale = null;
-        this.onEvent('notify', 'রিকশায় ধাক্কা! বেচাকেনা বাতিল (Rickshaw collision cancelled sale!)');
-        this.publishState(true);
-      } else {
-        this.onEvent('notify', 'সাবধান! রিকশার সাথে সংঘর্ষ (Watch out! Rickshaw bump!)');
       }
+
+      const added = this.damage.applyImpact(trafficHit);
+      if (added > 0) {
+        const kind = trafficHit.vehicle?.kind || 'vehicle';
+        const cost = this.damage.repairCost(this.state.level);
+        this.onEvent('notify', `Hit by ${kind}! Damage +${added}% · Repair ৳${cost}`);
+      } else {
+        this.onEvent('notify', 'Watch out! Traffic collision!');
+      }
+      this.publishState(true);
     }
 
     if (this.mouseMovedRecently > 0) {
@@ -1295,17 +1270,7 @@ export class GameEngine {
     }
 
     // Traffic motion
-    for (const item of this.traffic) {
-      const pos = item.mesh.position;
-      const delta = item.v * dt;
-      if (item.vertical) {
-        pos.z += delta;
-        if (Math.abs(pos.z) > 112) pos.z = -Math.sign(pos.z) * 112;
-      } else {
-        pos.x += delta;
-        if (Math.abs(pos.x) > 112) pos.x = -Math.sign(pos.x) * 112;
-      }
-    }
+    updateTraffic(this.traffic, dt, p.position.x, p.position.z);
 
     // Particle updates
     for (let i = this.particles.length - 1; i >= 0; i--) {
@@ -1326,6 +1291,10 @@ export class GameEngine {
         this.particles.splice(i, 1);
       }
     }
+
+    // Sync damage state
+    this.state.damage = this.damage.damage;
+    this.state.repairCost = this.damage.repairCost(this.state.level);
 
     // Throttled publish to React HUD
     this.publishState(false);
@@ -1395,6 +1364,7 @@ export class GameEngine {
       }
 
       this.camera.lookAt(_lookTarget);
+      this.lighting?.update(p.position, this.camera.position);
     } else {
       const t = performance.now() * 0.00012;
       this.camera.position.set(Math.sin(t) * 42, 22, Math.cos(t) * 45);
@@ -1411,6 +1381,7 @@ export class GameEngine {
   stop() {
     this.isDestroyed = true;
     cancelAnimationFrame(this.animId);
+    this.lighting?.dispose();
     for (const cleanup of this.cleanupListeners) {
       cleanup();
     }
