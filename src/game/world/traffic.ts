@@ -22,8 +22,8 @@ export interface TrafficItem {
   wheels: THREE.Mesh[];
 }
 
-interface Spec { len: number; wid: number; speed: [number, number]; mass: number; weight: number }
-const SPECS: Record<VehicleKind, Spec> = {
+export interface Spec { len: number; wid: number; speed: [number, number]; mass: number; weight: number }
+export const SPECS: Record<VehicleKind, Spec> = {
   rickshaw: { len: 2.8, wid: 1.3, speed: [2.2, 3.2], mass: 1, weight: 0.45 },
   cng:      { len: 2.7, wid: 1.4, speed: [4.0, 5.5], mass: 1.6, weight: 0.25 },
   car:      { len: 4.2, wid: 1.8, speed: [5.0, 7.0], mass: 3, weight: 0.2 },
@@ -148,7 +148,7 @@ function buildBus(wheels: THREE.Mesh[]) {
   return g;
 }
 
-function buildVehicle(kind: VehicleKind, wheels: THREE.Mesh[], rnd: () => number): THREE.Group {
+export function buildVehicle(kind: VehicleKind, wheels: THREE.Mesh[], rnd: () => number): THREE.Group {
   const pick = <T,>(a: T[]) => a[Math.floor(rnd() * a.length)];
   switch (kind) {
     case 'rickshaw': return buildRickshaw(pick(['#d24449', '#e0b738', '#469c8b', '#d7723c', '#3d6fb6']), wheels);
@@ -158,7 +158,7 @@ function buildVehicle(kind: VehicleKind, wheels: THREE.Mesh[], rnd: () => number
   }
 }
 
-function pickKind(rnd: () => number): VehicleKind {
+export function pickKind(rnd: () => number): VehicleKind {
   let r = rnd();
   for (const k of Object.keys(SPECS) as VehicleKind[]) {
     r -= SPECS[k].weight;

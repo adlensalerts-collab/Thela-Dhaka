@@ -204,3 +204,29 @@ export function buildPavementTrees(scene: THREE.Scene, obstacles: Obstacle[], op
   scene.add(root);
   return root;
 }
+
+/**
+ * M4 — real-map trees: build trees at exact points (from the district file) with the same
+ * instanced, branching, flowering trees as the grid map. Adds a circle obstacle per tree.
+ */
+export function buildTreesAt(scene: THREE.Scene, obstacles: Obstacle[], points: Array<[number, number]>, seed = 2024): THREE.Group {
+  const rnd = mulberry32(seed);
+  const root = new THREE.Group();
+  root.name = 'pavement-trees';
+  const parts: TreeParts = { wood: [], leaves: [], leafTint: [], flowers: [] };
+  const pits: THREE.Matrix4[] = [];
+  for (const [x, z] of points) {
+    addTree(parts, x, z, rnd);
+    pits.push(new THREE.Matrix4().makeTranslation(x, 0.16, z));
+    obstacles.push({ type: 'circle', x, z, radius: 0.45, tag: 'tree' });
+  }
+  const sh = getShared();
+  root.add(
+    instanced(sh.wood, sh.bark, parts.wood),
+    instanced(sh.card, sh.leaf, parts.leaves, parts.leafTint),
+    instanced(sh.card, sh.flower, parts.flowers),
+    instanced(sh.pit, sh.soil, pits)
+  );
+  scene.add(root);
+  return root;
+}

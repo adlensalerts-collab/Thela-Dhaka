@@ -19,7 +19,42 @@ export interface CircleObstacle {
   tag?: string;
 }
 
-export type Obstacle = BoxObstacle | CircleObstacle;
+/** Real-map building footprint (M3). points = ring [x, z][], any winding, may be concave. */
+export interface PolyObstacle {
+  type: 'poly';
+  id?: string;
+  x: number;            // bbox centre (used by grids / audits)
+  z: number;
+  hw: number;           // bbox half extents
+  hd: number;
+  points: Array<[number, number]>;
+  tag?: string;
+}
+
+export type Obstacle = BoxObstacle | CircleObstacle | PolyObstacle;
+
+/** Circle vs polygon: pushes the circle out of the nearest edge (works inside or outside, concave OK). */
+export function circleVsPolygon(px: number, pz: number, radius: number, pts: Array<[number, number]>): { collided: boolean; normalX: number; normalZ: number; penetration: number } {
+  let inside = false;
+  let bestD2 = Infinity, bx = 0, bz = 0;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const [xi, zi] = pts[i], [xj, zj] = pts[j];
+    if ((zi > pz) !== (zj > pz) && px < ((xj - xi) * (pz - zi)) / (zj - zi) + xi) inside = !inside;
+    const ex = xi - xj, ez = zi - zj;
+    const len2 = ex * ex + ez * ez || 1e-9;
+    const t = Math.max(0, Math.min(1, ((px - xj) * ex + (pz - zj) * ez) / len2));
+    const cx = xj + ex * t, cz = zj + ez * t;
+    const d2 = (px - cx) ** 2 + (pz - cz) ** 2;
+    if (d2 < bestD2) { bestD2 = d2; bx = cx; bz = cz; }
+  }
+  const d = Math.sqrt(bestD2);
+  if (!inside && d >= radius) return { collided: false, normalX: 0, normalZ: 0, penetration: 0 };
+  let nx = px - bx, nz = pz - bz;
+  const l = Math.hypot(nx, nz) || 1;
+  nx /= l; nz /= l;
+  if (inside) { nx = -nx; nz = -nz; }
+  return { collided: true, normalX: nx, normalZ: nz, penetration: inside ? radius + d : radius - d };
+}
 
 export interface CollisionResult {
   collided: boolean;
@@ -38,6 +73,14 @@ export function checkCircleVsObstacle(
   radius: number,
   obs: Obstacle
 ): CollisionResult {
+  if (obs.type === 'poly') {
+    // cheap bbox reject first
+    if (Math.abs(cx - obs.x) > obs.hw + radius || Math.abs(cz - obs.z) > obs.hd + radius) {
+      return { collided: false, normalX: 0, normalZ: 0, penetration: 0 };
+    }
+    const r = circleVsPolygon(cx, cz, radius, obs.points);
+    return r.collided ? { ...r, obstacle: obs } : r;
+  }
   if (obs.type === 'circle') {
     const dx = cx - obs.x;
     const dz = cz - obs.z;
@@ -146,14 +189,16 @@ export function resolveMovement(
   heading: number,
   isVendor: boolean,
   obstacles: Obstacle[],
-  mapBound = 110
+  mapBound: number | { x: number; z: number } = 110
 ): { newX: number; newZ: number; collided: boolean; hitObstacle?: Obstacle; normalX: number; normalZ: number } {
   const targetX = currentX + vx;
   const targetZ = currentZ + vz;
 
-  // Check map boundary first
-  const clampedX = THREE.MathUtils.clamp(targetX, -mapBound, mapBound);
-  const clampedZ = THREE.MathUtils.clamp(targetZ, -mapBound, mapBound);
+  // Check map boundary first (square number for the old grid map, {x, z} half-extents for real districts)
+  const bx = typeof mapBound === 'number' ? mapBound : mapBound.x;
+  const bz = typeof mapBound === 'number' ? mapBound : mapBound.z;
+  const clampedX = THREE.MathUtils.clamp(targetX, -bx, bx);
+  const clampedZ = THREE.MathUtils.clamp(targetZ, -bz, bz);
 
   // 1. Try full movement (both X and Z)
   let fullCollision: CollisionResult | null = null;
@@ -219,8 +264,8 @@ export function resolveMovement(
 
   // 4. Cornered / cannot slide: push out along normal slightly to prevent tunneling
   const pushOut = Math.min(fullCollision.penetration, 0.06);
-  const pushedX = THREE.MathUtils.clamp(currentX + fullCollision.normalX * pushOut, -mapBound, mapBound);
-  const pushedZ = THREE.MathUtils.clamp(currentZ + fullCollision.normalZ * pushOut, -mapBound, mapBound);
+  const pushedX = THREE.MathUtils.clamp(currentX + fullCollision.normalX * pushOut, -bx, bx);
+  const pushedZ = THREE.MathUtils.clamp(currentZ + fullCollision.normalZ * pushOut, -bz, bz);
 
   return {
     newX: pushedX,
