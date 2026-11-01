@@ -273,6 +273,7 @@ export default function App() {
         onBindingsUpdated={handleUpdateSettings}
         onBrightnessChange={(v) => engineRef.current?.setBrightness(v)}
         onAmbientVolumeChange={(v) => engineRef.current?.setAmbientVolume(v)}
+        onDisplayOptionsChange={(opts) => engineRef.current?.setDisplayOptions(opts)}
       />
     </div>
   );

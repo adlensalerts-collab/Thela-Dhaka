@@ -19,7 +19,14 @@ import { setupRealisticLighting, type LightingRig } from './render/lighting';
 import { SaleIndicator } from './ui/saleIndicator';
 import { createHumanRig, setPushPose, animateHuman } from './world/humans';
 import { buildDhakaBuilding } from './world/buildings';
-import { loadDisplaySettings } from './render/display';
+import { loadDisplaySettings, type DisplaySettings } from './render/display';
+import {
+  QualityLevel,
+  QualityPreset,
+  QUALITY_PRESETS,
+  defaultQuality,
+  AdaptiveResolution
+} from './render/quality';
 import { SpatialSoundManager } from './audio/ambient';
 import { GARAGE_SITES, buildGarage, entranceForSite, nearestGarage } from './world/garages';
 import { AAROT_SITES, buildAarot, entranceForAarot, nearestAarot } from './world/aarots';
@@ -69,6 +76,9 @@ export interface GameState {
   trafficNoise?: number;
   crowdNoise?: number;
   marketNoise?: number;
+  fps: number;
+  renderHeight: number;
+  showFps?: boolean;
 }
 
 // Module-level reusable math objects for zero garbage collection during 60 FPS loop
@@ -109,6 +119,21 @@ export class GameEngine {
   lastHudPublishTime: number = 0;
   isMenuOrModalOpen: boolean = false;
   isDestroyed: boolean = false;
+
+  // Render Quality, Adaptive Resolution & Frame Rate Control
+  qualityLevel: QualityLevel = defaultQuality();
+  qualityPreset: QualityPreset = QUALITY_PRESETS[defaultQuality()];
+  adaptive = new AdaptiveResolution();
+  currentPixelRatio: number = 0;
+  fpsLimit: 60 | 120 | 0 = 0;
+  showFps: boolean = false;
+  lastRenderTime: number = 0;
+  lastRafTime: number = 0;
+  rafIntervals: number[] = [];
+  measuredDisplayFps: number = 60;
+  fpsWindowStart: number = 0;
+  fpsFrameCount: number = 0;
+  currentFps: number = 60;
 
   get customers(): PedestrianNPC[] {
     return this.pedestrianManager ? this.pedestrianManager.pedestrians : [];
@@ -159,8 +184,6 @@ export class GameEngine {
 
     this.camera = new THREE.PerspectiveCamera(66, container.clientWidth / container.clientHeight, 0.1, 470);
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-    this.renderer.setSize(container.clientWidth, container.clientHeight);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.7));
     this.renderer.domElement.tabIndex = 0;
     this.renderer.domElement.style.outline = 'none';
     container.replaceChildren(this.renderer.domElement);
@@ -209,7 +232,10 @@ export class GameEngine {
       ambientZone: 'Main Road · Traffic',
       ambientZoneBn: 'মূল সড়ক · যানজট',
       trafficNoise: 0.25,
-      crowdNoise: 0.15
+      crowdNoise: 0.15,
+      fps: this.currentFps,
+      renderHeight: Math.round((this.container?.clientHeight || 720) * (this.currentPixelRatio || 1)),
+      showFps: this.showFps
     };
   }
 
@@ -328,11 +354,91 @@ export class GameEngine {
 
   initLights() {
     this.lighting = setupRealisticLighting(this.renderer, this.scene);
-    this.lighting.setBrightness(loadDisplaySettings().brightness);
+    const saved = loadDisplaySettings();
+    this.lighting.setBrightness(saved.brightness);
+    this.setDisplayOptions({
+      quality: saved.quality,
+      fpsLimit: saved.fpsLimit,
+      showFps: saved.showFps
+    });
   }
 
   setBrightness(v: number) {
     this.lighting?.setBrightness(v);
+  }
+
+  applyQuality(level: QualityLevel) {
+    const preset = QUALITY_PRESETS[level] || QUALITY_PRESETS[defaultQuality()];
+    this.qualityLevel = level;
+    this.qualityPreset = preset;
+
+    this.renderer.shadowMap.enabled = preset.shadows;
+    this.renderer.shadowMap.needsUpdate = true;
+
+    if (this.lighting?.sun) {
+      this.lighting.sun.castShadow = preset.shadows;
+      if (this.lighting.sun.shadow.mapSize.width !== preset.shadowMapSize) {
+        this.lighting.sun.shadow.mapSize.set(preset.shadowMapSize, preset.shadowMapSize);
+        if (this.lighting.sun.shadow.map) {
+          this.lighting.sun.shadow.map.dispose();
+          this.lighting.sun.shadow.map = null;
+        }
+      }
+    }
+
+    const treesGroup = this.scene.getObjectByName('pavement-trees');
+    if (treesGroup) {
+      treesGroup.traverse((obj) => {
+        const mesh = obj as THREE.Mesh;
+        if (mesh.isMesh && mesh.material) {
+          const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+          if (mats.some((m: any) => m && m.alphaTest > 0)) {
+            mesh.castShadow = preset.leafShadows;
+          }
+        }
+      });
+    }
+
+    this.updatePixelRatio();
+  }
+
+  updatePixelRatio() {
+    if (!this.container) return;
+    const width = Math.max(1, this.container.clientWidth);
+    const height = Math.max(1, this.container.clientHeight);
+    const dpr = window.devicePixelRatio || 1;
+    const capRatio = this.qualityPreset.maxRenderHeight / height;
+    const pixelRatio = Math.max(0.5, Math.min(dpr, capRatio) * this.adaptive.scale);
+
+    if (Math.abs(pixelRatio - this.currentPixelRatio) >= 0.02) {
+      this.currentPixelRatio = pixelRatio;
+      this.renderer.setPixelRatio(pixelRatio);
+    }
+    this.renderer.setSize(width, height);
+
+    if (this.state) {
+      this.state.renderHeight = Math.round(height * (this.currentPixelRatio || pixelRatio));
+    }
+  }
+
+  setDisplayOptions(opts: Partial<Pick<DisplaySettings, 'quality' | 'fpsLimit' | 'showFps'>>) {
+    if (opts.quality !== undefined) {
+      this.adaptive.scale = 1;
+      this.applyQuality(opts.quality);
+    }
+    if (opts.fpsLimit !== undefined) {
+      this.fpsLimit = opts.fpsLimit;
+    }
+    if (opts.showFps !== undefined) {
+      this.showFps = opts.showFps;
+    }
+    if (this.state) {
+      this.state.showFps = this.showFps;
+      this.state.renderHeight = Math.round(
+        Math.max(1, this.container.clientHeight) * (this.currentPixelRatio || 1)
+      );
+      this.publishState(true);
+    }
   }
 
   initWorld() {
@@ -530,6 +636,7 @@ export class GameEngine {
         ...AAROT_SITES.map((s) => ({ ...entranceForAarot(s), r: 5 }))
       ]
     });
+    this.applyQuality(this.qualityLevel);
 
     this.traffic = spawnTraffic(this.scene, street, 18);
 
@@ -675,7 +782,7 @@ export class GameEngine {
       if (!this.container) return;
       this.camera.aspect = this.container.clientWidth / this.container.clientHeight;
       this.camera.updateProjectionMatrix();
-      this.renderer.setSize(this.container.clientWidth, this.container.clientHeight);
+      this.updatePixelRatio();
     };
 
     // Mouse drag camera controls (no pointer lock anywhere)
@@ -1502,22 +1609,74 @@ export class GameEngine {
     if (this.isDestroyed) return;
     this.animId = requestAnimationFrame(() => this.renderLoop());
 
-    // Fixed 1/60s simulation timestep for perfectly smooth 60 FPS gameplay
+    const now = performance.now();
+
+    // Estimate native display refresh rate from median rAF interval over first 60 frames
+    if (this.lastRafTime > 0 && this.rafIntervals.length < 60) {
+      const rafDelta = now - this.lastRafTime;
+      if (rafDelta > 2 && rafDelta < 50) {
+        this.rafIntervals.push(rafDelta);
+        if (this.rafIntervals.length >= 10) {
+          const sorted = [...this.rafIntervals].sort((a, b) => a - b);
+          const medianMs = sorted[Math.floor(sorted.length / 2)];
+          this.measuredDisplayFps = Math.max(30, Math.min(240, Math.round(1000 / medianMs)));
+        }
+      }
+    }
+    this.lastRafTime = now;
+
+    // Optional frame rate limiter (0 = display max)
+    if (this.fpsLimit > 0 && this.lastRenderTime > 0) {
+      if (now - this.lastRenderTime < 1000 / this.fpsLimit - 0.5) {
+        return;
+      }
+    }
+    const frameMs = this.lastRenderTime > 0 ? now - this.lastRenderTime : 1000 / 60;
+    this.lastRenderTime = now;
+
+    // Adaptive resolution update based on target FPS
+    const targetFps = this.fpsLimit || this.measuredDisplayFps;
+    if (this.adaptive.update(frameMs, targetFps)) {
+      this.updatePixelRatio();
+    }
+
+    // Measure FPS over 500 ms windows
+    this.fpsFrameCount++;
+    if (this.fpsWindowStart === 0) {
+      this.fpsWindowStart = now;
+    } else {
+      const windowElapsed = now - this.fpsWindowStart;
+      if (windowElapsed >= 500) {
+        this.currentFps = Math.round((this.fpsFrameCount * 1000) / windowElapsed);
+        this.fpsFrameCount = 0;
+        this.fpsWindowStart = now;
+        if (this.state) {
+          this.state.fps = this.currentFps;
+          this.state.renderHeight = Math.round(
+            Math.max(1, this.container.clientHeight) * (this.currentPixelRatio || 1)
+          );
+          this.state.showFps = this.showFps;
+          if (!this.state.stage || this.state.stage !== 'playing') {
+            this.publishState(false);
+          }
+        }
+      }
+    }
+
     const rawDt = this.clock.getDelta();
     const dt = Math.min(rawDt, 0.1); // Guard against giant delta jumps when returning from tab switch
 
     if (this.state && this.state.stage === 'playing') {
-      this.acc += dt;
-      const FIXED_STEP = 1 / 60; // 0.016667s
+      const MAX_STEP = 1 / 60;
+      let rem = dt;
       let steps = 0;
-      while (this.acc >= FIXED_STEP && steps < 4) {
-        this.simulate(FIXED_STEP);
-        this.acc -= FIXED_STEP;
+      while (rem > 0.0001 && steps < 4) {
+        const stepDt = Math.min(rem, MAX_STEP);
+        this.simulate(stepDt);
+        rem -= stepDt;
         steps++;
       }
-      if (steps >= 4) {
-        this.acc = 0; // Prevent accumulator death-spiral if tab stalls
-      }
+      this.acc = 0;
     } else {
       // Paused or in menu: freeze physics accumulator
       this.acc = 0;

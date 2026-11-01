@@ -12,7 +12,13 @@ import {
   GameSettingsData
 } from '../game/keybindings';
 import { BrightnessControl } from './BrightnessControl';
-import { loadDisplaySettings, saveDisplaySettings } from '../game/render/display';
+import {
+  loadDisplaySettings,
+  saveDisplaySettings,
+  DEFAULT_DISPLAY,
+  DisplaySettings
+} from '../game/render/display';
+import { QualityLevel, defaultQuality } from '../game/render/quality';
 import { loadAmbientVolume, saveAmbientVolume } from '../game/audio/ambient';
 
 interface SettingsModalProps {
@@ -21,6 +27,7 @@ interface SettingsModalProps {
   onBindingsUpdated: (settings: GameSettingsData) => void;
   onBrightnessChange?: (v: number) => void;
   onAmbientVolumeChange?: (v: number) => void;
+  onDisplayOptionsChange?: (opts: Partial<Pick<DisplaySettings, 'quality' | 'fpsLimit' | 'showFps'>>) => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -28,19 +35,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onClose,
   onBindingsUpdated,
   onBrightnessChange,
-  onAmbientVolumeChange
+  onAmbientVolumeChange,
+  onDisplayOptionsChange
 }) => {
   const [settings, setSettings] = useState<GameSettingsData>(() => loadSettings());
-  const [brightness, setBrightness] = useState(() => loadDisplaySettings().brightness);
+  const [display, setDisplay] = useState<DisplaySettings>(() => loadDisplaySettings());
   const [ambientVolume, setAmbientVolume] = useState(() => loadAmbientVolume());
   const [rebinding, setRebinding] = useState<{ action: ActionName; slot: number } | null>(null);
   const [saveToast, setSaveToast] = useState(false);
+
+  const recommendedQuality = defaultQuality();
 
   useEffect(() => {
     if (isOpen) {
       const current = loadSettings();
       setSettings(current);
-      setBrightness(loadDisplaySettings().brightness);
+      setDisplay(loadDisplaySettings());
       setAmbientVolume(loadAmbientVolume());
       setRebinding(null);
     }
@@ -82,11 +92,35 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   if (!isOpen) return null;
 
   const handleReset = () => {
-    const def = resetBindings();
+    resetBindings();
     const fresh = loadSettings();
     setSettings(fresh);
     onBindingsUpdated(fresh);
+
+    const defDisplay: DisplaySettings = {
+      ...DEFAULT_DISPLAY,
+      quality: defaultQuality()
+    };
+    setDisplay(defDisplay);
+    saveDisplaySettings(defDisplay);
+    onBrightnessChange?.(defDisplay.brightness);
+    onDisplayOptionsChange?.({
+      quality: defDisplay.quality,
+      fpsLimit: defDisplay.fpsLimit,
+      showFps: defDisplay.showFps
+    });
     setRebinding(null);
+  };
+
+  const updateDisplayOption = (patch: Partial<DisplaySettings>) => {
+    const next: DisplaySettings = { ...display, ...patch };
+    setDisplay(next);
+    saveDisplaySettings(next);
+    onDisplayOptionsChange?.({
+      quality: next.quality,
+      fpsLimit: next.fpsLimit,
+      showFps: next.showFps
+    });
   };
 
   const handleSensitivityChange = (val: number) => {
@@ -160,9 +194,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               Display & Soundscape (ডিসপ্লে ও পরিবেশের শব্দ)
             </h3>
             <BrightnessControl
-              value={brightness}
+              value={display.brightness}
               onChange={(v) => {
-                setBrightness(v);
+                const next = { ...display, brightness: v };
+                setDisplay(next);
                 saveDisplaySettings({ brightness: v });
                 onBrightnessChange?.(v);
               }}
@@ -196,6 +231,112 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 />
                 <span className="text-[11px] text-gray-500 font-mono">100%</span>
               </div>
+            </div>
+          </div>
+
+          {/* Graphics (গ্রাফিক্স) Settings */}
+          <div className="p-4 rounded-2xl bg-black/30 border border-teal-800/50 space-y-4">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-amber-400 flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-amber-400" />
+              Graphics (গ্রাফিক্স)
+            </h3>
+
+            {/* Quality Presets */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <div>
+                  <span className="font-semibold text-white">Quality Preset</span>
+                  <span className="text-gray-400 ml-1.5">(গ্রাফিক্স মান)</span>
+                </div>
+                <span className="text-[11px] text-teal-300 font-mono">
+                  {display.quality === 'low'
+                    ? '720p · Fast'
+                    : display.quality === 'medium'
+                    ? '900p · Balanced'
+                    : display.quality === 'high'
+                    ? '1080p · Sharp'
+                    : '1440p · Max'}
+                </span>
+              </div>
+              <div className="grid grid-cols-4 gap-2">
+                {(['low', 'medium', 'high', 'ultra'] as QualityLevel[]).map((lvl) => {
+                  const isSelected = display.quality === lvl;
+                  const isRecommended = recommendedQuality === lvl;
+                  const label = lvl.charAt(0).toUpperCase() + lvl.slice(1);
+                  return (
+                    <button
+                      key={lvl}
+                      onClick={() => updateDisplayOption({ quality: lvl })}
+                      className={`py-2 px-2 rounded-xl border text-xs font-bold transition flex flex-col items-center justify-center gap-0.5 ${
+                        isSelected
+                          ? 'bg-amber-500 text-gray-950 border-amber-300 shadow-lg'
+                          : 'bg-teal-950/80 hover:bg-teal-900 border-teal-700/50 text-gray-200'
+                      }`}
+                    >
+                      <span>{label}</span>
+                      {isRecommended && (
+                        <span
+                          className={`text-[9px] font-semibold uppercase tracking-tight ${
+                            isSelected ? 'text-gray-900' : 'text-amber-400'
+                          }`}
+                        >
+                          Recommended
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* FPS Limit */}
+            <div className="space-y-2 pt-3 border-t border-teal-900/50">
+              <div className="flex items-center justify-between text-xs">
+                <div>
+                  <span className="font-semibold text-white">FPS Limit</span>
+                  <span className="text-gray-400 ml-1.5">(ফ্রেম রেট সীমা)</span>
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                {(
+                  [
+                    { value: 60, label: '60 FPS' },
+                    { value: 120, label: '120 FPS' },
+                    { value: 0, label: 'Max' }
+                  ] as const
+                ).map((opt) => {
+                  const isSelected = display.fpsLimit === opt.value;
+                  return (
+                    <button
+                      key={opt.value}
+                      onClick={() => updateDisplayOption({ fpsLimit: opt.value })}
+                      className={`py-2 px-3 rounded-xl border text-xs font-bold font-mono transition ${
+                        isSelected
+                          ? 'bg-amber-500 text-gray-950 border-amber-300 shadow-lg'
+                          : 'bg-teal-950/80 hover:bg-teal-900 border-teal-700/50 text-gray-200'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Show FPS Counter Toggle */}
+            <div className="flex items-center justify-between pt-3 border-t border-teal-900/50">
+              <div className="text-xs">
+                <span className="font-semibold text-white">Show FPS Counter</span>
+                <p className="text-[11px] text-gray-400">Display live FPS and render resolution in HUD</p>
+              </div>
+              <button
+                onClick={() => updateDisplayOption({ showFps: !display.showFps })}
+                className={`w-12 h-7 flex items-center rounded-full p-1 transition duration-200 border border-teal-600/50 ${
+                  display.showFps ? 'bg-amber-500 justify-end' : 'bg-teal-950 justify-start'
+                }`}
+              >
+                <div className="bg-white w-5 h-5 rounded-full shadow-md" />
+              </button>
             </div>
           </div>
 

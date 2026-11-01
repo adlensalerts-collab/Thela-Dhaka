@@ -18,6 +18,7 @@ import { GameState } from '../game/simulation';
 import { GameSettingsData, formatCode } from '../game/keybindings';
 import { GARAGE_SITES } from '../game/world/garages';
 import { AAROT_SITES } from '../game/world/aarots';
+import { loadDisplaySettings } from '../game/render/display';
 
 interface GameHUDProps {
   state: GameState;
@@ -131,6 +132,9 @@ export const GameHUD: React.FC<GameHUDProps> = ({
 
   const damage = state.damage || 0;
   const repairCost = state.repairCost || 0;
+  const showFps = state.showFps ?? loadDisplaySettings().showFps;
+  const fps = state.fps ?? 60;
+  const renderHeight = state.renderHeight ?? 1080;
 
   // Damage bar color (green < 40, amber < 75, red otherwise)
   let damageBarColor = 'bg-emerald-500';
@@ -219,67 +223,83 @@ export const GameHUD: React.FC<GameHUDProps> = ({
           </div>
         </div>
 
-        {/* Top Right: Ambient Soundscape, Heat stars, Mute, Settings & Pause */}
-        <div className="flex items-center gap-2.5 pointer-events-auto">
-          {state.ambientZone && (
-            <div
-              className="hidden lg:flex bg-black/60 backdrop-blur-md border border-teal-600/40 rounded-2xl px-3.5 py-2 shadow-xl items-center gap-2 text-xs text-teal-200"
-              title="Location Ambient Soundscape"
-            >
-              <span
-                className={`w-2 h-2 rounded-full ${
-                  muted ? 'bg-gray-500' : 'bg-emerald-400 animate-pulse'
-                }`}
-              />
-              <div className="flex flex-col leading-tight">
-                <span className="font-semibold text-white text-[11px]">{state.ambientZone}</span>
-                {state.ambientZoneBn && (
-                  <span className="text-[10px] text-teal-300/90">{state.ambientZoneBn}</span>
-                )}
+        {/* Top Right: Ambient Soundscape, Heat stars, Mute, Settings, Pause & FPS Counter */}
+        <div className="flex flex-col items-end gap-1.5 pointer-events-auto">
+          <div className="flex items-center gap-2.5">
+            {state.ambientZone && (
+              <div
+                className="hidden lg:flex bg-black/60 backdrop-blur-md border border-teal-600/40 rounded-2xl px-3.5 py-2 shadow-xl items-center gap-2 text-xs text-teal-200"
+                title="Location Ambient Soundscape"
+              >
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    muted ? 'bg-gray-500' : 'bg-emerald-400 animate-pulse'
+                  }`}
+                />
+                <div className="flex flex-col leading-tight">
+                  <span className="font-semibold text-white text-[11px]">{state.ambientZone}</span>
+                  {state.ambientZoneBn && (
+                    <span className="text-[10px] text-teal-300/90">{state.ambientZoneBn}</span>
+                  )}
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {isVendor && (
-            <div className="bg-black/60 backdrop-blur-md border border-amber-500/40 rounded-2xl px-4 py-2.5 shadow-xl flex items-center gap-1.5 text-amber-400 text-sm font-bold">
-              <Star className="w-4 h-4 fill-amber-400 text-amber-400" />
-              <span>Wanted:</span>
-              <span className="font-mono tracking-widest">
-                {'★'.repeat(stars)}
-                {'☆'.repeat(5 - stars)}
-              </span>
-            </div>
-          )}
+            {isVendor && (
+              <div className="bg-black/60 backdrop-blur-md border border-amber-500/40 rounded-2xl px-4 py-2.5 shadow-xl flex items-center gap-1.5 text-amber-400 text-sm font-bold">
+                <Star className="w-4 h-4 fill-amber-400 text-amber-400" />
+                <span>Wanted:</span>
+                <span className="font-mono tracking-widest">
+                  {'★'.repeat(stars)}
+                  {'☆'.repeat(5 - stars)}
+                </span>
+              </div>
+            )}
 
-          {onToggleMute && (
+            {onToggleMute && (
+              <button
+                onClick={onToggleMute}
+                className="p-3 rounded-2xl bg-black/60 backdrop-blur-md border border-teal-600/40 hover:bg-teal-900/60 text-gray-200 hover:text-white shadow-xl transition"
+                title={muted ? 'Unmute Dhaka Soundscape' : 'Mute Dhaka Soundscape'}
+              >
+                {muted ? (
+                  <VolumeX className="w-5 h-5 text-rose-400" />
+                ) : (
+                  <Volume2 className="w-5 h-5 text-amber-300" />
+                )}
+              </button>
+            )}
+
             <button
-              onClick={onToggleMute}
+              onClick={onOpenSettings}
               className="p-3 rounded-2xl bg-black/60 backdrop-blur-md border border-teal-600/40 hover:bg-teal-900/60 text-gray-200 hover:text-white shadow-xl transition"
-              title={muted ? 'Unmute Dhaka Soundscape' : 'Mute Dhaka Soundscape'}
+              title="Open Settings"
             >
-              {muted ? (
-                <VolumeX className="w-5 h-5 text-rose-400" />
-              ) : (
-                <Volume2 className="w-5 h-5 text-amber-300" />
-              )}
+              <Sliders className="w-5 h-5 text-amber-300" />
             </button>
+
+            <button
+              onClick={onPause}
+              className="p-3 rounded-2xl bg-black/60 backdrop-blur-md border border-teal-600/40 hover:bg-teal-900/60 text-white shadow-xl transition"
+              title="Pause Game"
+            >
+              <Pause className="w-5 h-5 text-amber-300" />
+            </button>
+          </div>
+
+          {showFps && (
+            <div
+              className={`px-2.5 py-1 rounded-lg bg-black/70 backdrop-blur-md border border-teal-700/40 font-mono text-[11px] font-bold tracking-tight shadow-lg pointer-events-none ${
+                fps >= 55
+                  ? 'text-emerald-400'
+                  : fps >= 30
+                  ? 'text-amber-400'
+                  : 'text-rose-400'
+              }`}
+            >
+              {fps} FPS · {renderHeight}p
+            </div>
           )}
-
-          <button
-            onClick={onOpenSettings}
-            className="p-3 rounded-2xl bg-black/60 backdrop-blur-md border border-teal-600/40 hover:bg-teal-900/60 text-gray-200 hover:text-white shadow-xl transition"
-            title="Open Settings"
-          >
-            <Sliders className="w-5 h-5 text-amber-300" />
-          </button>
-
-          <button
-            onClick={onPause}
-            className="p-3 rounded-2xl bg-black/60 backdrop-blur-md border border-teal-600/40 hover:bg-teal-900/60 text-white shadow-xl transition"
-            title="Pause Game"
-          >
-            <Pause className="w-5 h-5 text-amber-300" />
-          </button>
         </div>
       </div>
 
