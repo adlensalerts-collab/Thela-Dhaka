@@ -274,6 +274,7 @@ export default function App() {
         onBrightnessChange={(v) => engineRef.current?.setBrightness(v)}
         onAmbientVolumeChange={(v) => engineRef.current?.setAmbientVolume(v)}
         onDisplayOptionsChange={(opts) => engineRef.current?.setDisplayOptions(opts)}
+        displayHz={gameState?.displayHz ?? engineRef.current?.state.displayHz ?? 60}
       />
     </div>
   );

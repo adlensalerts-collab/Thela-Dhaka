@@ -28,6 +28,7 @@ interface SettingsModalProps {
   onBrightnessChange?: (v: number) => void;
   onAmbientVolumeChange?: (v: number) => void;
   onDisplayOptionsChange?: (opts: Partial<Pick<DisplaySettings, 'quality' | 'fpsLimit' | 'showFps'>>) => void;
+  displayHz?: number;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -36,7 +37,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onBindingsUpdated,
   onBrightnessChange,
   onAmbientVolumeChange,
-  onDisplayOptionsChange
+  onDisplayOptionsChange,
+  displayHz = 60
 }) => {
   const [settings, setSettings] = useState<GameSettingsData>(() => loadSettings());
   const [display, setDisplay] = useState<DisplaySettings>(() => loadDisplaySettings());
@@ -296,6 +298,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <span className="font-semibold text-white">FPS Limit</span>
                   <span className="text-gray-400 ml-1.5">(ফ্রেম রেট সীমা)</span>
                 </div>
+                <span className="text-[11px] text-teal-300 font-mono">
+                  Your screen: {displayHz} Hz
+                  {display.fpsLimit > 0 && display.fpsLimit >= displayHz
+                    ? ` (runs at ${displayHz})`
+                    : ''}
+                </span>
               </div>
               <div className="grid grid-cols-3 gap-2">
                 {(

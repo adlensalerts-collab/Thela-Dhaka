@@ -78,6 +78,7 @@ export interface GameState {
   marketNoise?: number;
   fps: number;
   renderHeight: number;
+  displayHz: number;
   showFps?: boolean;
   playerX: number;
   playerZ: number;
@@ -131,6 +132,7 @@ export class GameEngine {
   currentPixelRatio: number = 0;
   fpsLimit: 60 | 120 | 0 = 0;
   showFps: boolean = false;
+  limiterTime: number = 0;
   lastRenderTime: number = 0;
   lastRafTime: number = 0;
   rafIntervals: number[] = [];
@@ -239,6 +241,7 @@ export class GameEngine {
       crowdNoise: 0.15,
       fps: this.currentFps,
       renderHeight: Math.round((this.container?.clientHeight || 720) * (this.currentPixelRatio || 1)),
+      displayHz: Math.round(this.measuredDisplayFps),
       showFps: this.showFps,
       playerX: 0,
       playerZ: 0,
@@ -377,11 +380,22 @@ export class GameEngine {
 
   applyQuality(level: QualityLevel) {
     const preset = QUALITY_PRESETS[level] || QUALITY_PRESETS[defaultQuality()];
+    const shadowsChanged = this.renderer.shadowMap.enabled !== preset.shadows;
     this.qualityLevel = level;
     this.qualityPreset = preset;
 
     this.renderer.shadowMap.enabled = preset.shadows;
     this.renderer.shadowMap.needsUpdate = true;
+
+    if (shadowsChanged) {
+      this.scene.traverse((o) => {
+        const m = (o as THREE.Mesh).material;
+        if (!m) return;
+        (Array.isArray(m) ? m : [m]).forEach((mat) => {
+          mat.needsUpdate = true;
+        });
+      });
+    }
 
     if (this.lighting?.sun) {
       this.lighting.sun.castShadow = preset.shadows;
@@ -442,6 +456,7 @@ export class GameEngine {
     }
     if (this.state) {
       this.state.showFps = this.showFps;
+      this.state.displayHz = Math.round(this.measuredDisplayFps);
       this.state.renderHeight = Math.round(
         Math.max(1, this.container.clientHeight) * (this.currentPixelRatio || 1)
       );
@@ -788,6 +803,7 @@ export class GameEngine {
 
     const onResize = () => {
       if (!this.container) return;
+      this.rafIntervals = [];
       this.camera.aspect = this.container.clientWidth / this.container.clientHeight;
       this.camera.updateProjectionMatrix();
       this.updatePixelRatio();
@@ -1617,6 +1633,7 @@ export class GameEngine {
     this.state.playerZ = p.position.z;
     this.state.officerX = this.officer.position.x;
     this.state.officerZ = this.officer.position.z;
+    this.state.displayHz = Math.round(this.measuredDisplayFps);
 
     // Throttled publish to React HUD
     this.publishState(false);
@@ -1642,17 +1659,21 @@ export class GameEngine {
     }
     this.lastRafTime = now;
 
-    // Optional frame rate limiter (0 = display max)
-    if (this.fpsLimit > 0 && this.lastRenderTime > 0) {
-      if (now - this.lastRenderTime < 1000 / this.fpsLimit - 0.5) {
-        return;
-      }
+    const displayFps = this.measuredDisplayFps;
+    // A limit at or above the screen's refresh rate means "no limit".
+    const effectiveLimit = this.fpsLimit > 0 && this.fpsLimit < displayFps * 0.95 ? this.fpsLimit : 0;
+    if (effectiveLimit > 0) {
+      const interval = 1000 / effectiveLimit;
+      // Tolerate half a display frame of timing error, otherwise whole frames get skipped.
+      if (this.limiterTime > 0 && now - this.limiterTime < interval - 500 / displayFps) return;
+      // Keep the limiter on a fixed schedule so the average rate is exact (no drift).
+      this.limiterTime = (this.limiterTime === 0 || now - this.limiterTime > interval * 1.5) ? now : this.limiterTime + interval;
+    } else {
+      this.limiterTime = 0;
     }
     const frameMs = this.lastRenderTime > 0 ? now - this.lastRenderTime : 1000 / 60;
     this.lastRenderTime = now;
-
-    // Adaptive resolution update based on target FPS
-    const targetFps = this.fpsLimit || this.measuredDisplayFps;
+    const targetFps = effectiveLimit || displayFps;
     if (this.adaptive.update(frameMs, targetFps)) {
       this.updatePixelRatio();
     }
@@ -1669,6 +1690,7 @@ export class GameEngine {
         this.fpsWindowStart = now;
         if (this.state) {
           this.state.fps = this.currentFps;
+          this.state.displayHz = Math.round(this.measuredDisplayFps);
           this.state.renderHeight = Math.round(
             Math.max(1, this.container.clientHeight) * (this.currentPixelRatio || 1)
           );
