@@ -3,12 +3,17 @@ import { GameEngine, GameState } from './game/simulation';
 import { TitleScreen } from './components/TitleScreen';
 import { GameHUD } from './components/GameHUD';
 import { EventModal } from './components/EventModal';
+import { SettingsModal } from './components/SettingsModal';
+import { loadSettings, GameSettingsData } from './game/keybindings';
 import { io, Socket } from 'socket.io-client';
 
 export default function App() {
   const containerRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<GameEngine | null>(null);
   const socketRef = useRef<Socket | null>(null);
+
+  const [settings, setSettings] = useState<GameSettingsData>(() => loadSettings());
+  const [showSettings, setShowSettings] = useState(false);
 
   const [view, setView] = useState<'menu' | 'playing'>('menu');
   const [modalType, setModalType] = useState<'bribe' | 'arrest_decision' | 'paused' | 'over' | 'victory' | null>(null);
@@ -19,6 +24,7 @@ export default function App() {
 
   useEffect(() => {
     if (!containerRef.current) return;
+    const initialSettings = loadSettings();
     const engine = new GameEngine(
       containerRef.current,
       (state) => setGameState({ ...state }),
@@ -30,9 +36,18 @@ export default function App() {
           setModalType('bribe');
         } else if (type === 'police_decision') {
           setModalType('arrest_decision');
+        } else if (type === 'pause') {
+          engineRef.current?.pauseGame();
+          setModalType('paused');
         }
+      },
+      initialSettings.bindings,
+      {
+        mouseSensitivity: initialSettings.mouseSensitivity,
+        invertY: initialSettings.invertY
       }
     );
+
     engineRef.current = engine;
     engine.start();
 
@@ -47,7 +62,7 @@ export default function App() {
       setView('playing');
     });
 
-    socket.on('start_multiplayer', (room) => {
+    socket.on('start_multiplayer', () => {
       setNotice('Match started! Both players connected.');
       setView('playing');
     });
@@ -61,6 +76,28 @@ export default function App() {
       socket.disconnect();
     };
   }, []);
+
+  // Sync menu/modal open state with engine to ensure gameplay input is blocked
+  useEffect(() => {
+    const isMenuOpen = showSettings || modalType !== null || view === 'menu';
+    engineRef.current?.setMenuOpen(isMenuOpen);
+  }, [showSettings, modalType, view]);
+
+  // Global Escape key handling for game pause and closing settings
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (showSettings) {
+          setShowSettings(false);
+        } else if (view === 'playing' && !modalType) {
+          engineRef.current?.pauseGame();
+          setModalType('paused');
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [view, showSettings, modalType]);
 
   const handleStartSolo = (role: 'vendor' | 'police') => {
     if (!engineRef.current) return;
@@ -78,7 +115,7 @@ export default function App() {
     if (!socketRef.current || !engineRef.current) return;
     setRoomCode(code);
     socketRef.current.emit('join_room', { roomCode: code, playerName: name });
-    engineRef.current.setMode('online_police'); // Joined player takes opposing role
+    engineRef.current.setMode('online_police');
     setView('playing');
   };
 
@@ -91,6 +128,28 @@ export default function App() {
     if (!engineRef.current) return;
     engineRef.current.muted = !muted;
     setMuted(!muted);
+  };
+
+  const handleOpenSettings = () => {
+    setShowSettings(true);
+  };
+
+  const handleUpdateSettings = (newSettings: GameSettingsData) => {
+    setSettings(newSettings);
+    engineRef.current?.setBindings(newSettings.bindings, {
+      mouseSensitivity: newSettings.mouseSensitivity,
+      invertY: newSettings.invertY
+    });
+  };
+
+  const handlePause = () => {
+    engineRef.current?.pauseGame();
+    setModalType('paused');
+  };
+
+  const handleResume = () => {
+    engineRef.current?.resumeGame();
+    setModalType(null);
   };
 
   return (
@@ -106,6 +165,8 @@ export default function App() {
           onJoinRoom={handleJoinRoom}
           muted={muted}
           onToggleMute={handleToggleMute}
+          onOpenSettings={handleOpenSettings}
+          settings={settings}
         />
       )}
 
@@ -115,7 +176,9 @@ export default function App() {
           state={gameState}
           notice={notice}
           onAction={handleAction}
-          onPause={() => setModalType('paused')}
+          onPause={handlePause}
+          onOpenSettings={handleOpenSettings}
+          settings={settings}
           roomCode={roomCode}
         />
       )}
@@ -135,7 +198,12 @@ export default function App() {
           gameState.heat = 0;
           gameState.cooldown = 10;
           gameState.sale = null;
-          engineRef.current.officer.position.set(engineRef.current.human.position.x + 26, 0, engineRef.current.human.position.z - 22);
+          engineRef.current.officer.position.set(
+            engineRef.current.human.position.x + 26,
+            0,
+            engineRef.current.human.position.z - 22
+          );
+          engineRef.current.resumeGame();
           setModalType(null);
           setNotice('Released on bribe. Watch out for cooling countdown.');
         }}
@@ -146,6 +214,7 @@ export default function App() {
           gameState.integrity = Math.min(100, gameState.integrity + 2);
           engineRef.current.npcVendor.position.set(-36, 0, 36);
           gameState.rank = Math.min(4, 1 + Math.floor(gameState.arrests / 2));
+          engineRef.current.resumeGame();
           setModalType(null);
           setNotice('Lawful arrest recorded. Promotion progress updated.');
         }}
@@ -154,10 +223,11 @@ export default function App() {
           gameState.policeCash += 150;
           gameState.integrity = Math.max(0, gameState.integrity - 20);
           engineRef.current.npcVendor.position.set(-36, 0, 36);
+          engineRef.current.resumeGame();
           setModalType(null);
           setNotice('Illicit payment received. Integrity decreased.');
         }}
-        onResume={() => setModalType(null)}
+        onResume={handleResume}
         onRestart={() => {
           if (!engineRef.current || !gameState) return;
           engineRef.current.setMode(gameState.mode);
@@ -168,6 +238,14 @@ export default function App() {
           setModalType(null);
           setRoomCode('');
         }}
+        onOpenSettings={handleOpenSettings}
+      />
+
+      {/* Settings Modal */}
+      <SettingsModal
+        isOpen={showSettings}
+        onClose={() => setShowSettings(false)}
+        onBindingsUpdated={handleUpdateSettings}
       />
     </div>
   );

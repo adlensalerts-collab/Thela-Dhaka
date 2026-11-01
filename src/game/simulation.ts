@@ -2,6 +2,15 @@ import * as THREE from 'three';
 import { Obstacle, resolveMovement, checkTrafficImpact } from './collision';
 import { SidewalkGraph } from './pathfinding';
 import { PedestrianManager, PedestrianNPC } from './pedestrians';
+import {
+  ActionName,
+  KeyBindings,
+  MouseSettings,
+  loadSettings,
+  actionForCode,
+  DEFAULT_BINDINGS,
+  DEFAULT_MOUSE_SETTINGS
+} from './keybindings';
 
 export interface GameState {
   mode: 'vendor' | 'police' | 'online_vendor' | 'online_police';
@@ -28,13 +37,20 @@ export interface GameState {
   score: number;
 }
 
+// Module-level reusable math objects for zero garbage collection during 60 FPS loop
+const _toHuman = new THREE.Vector3();
+const _officerDir = new THREE.Vector3();
+const _lookTarget = new THREE.Vector3();
+
 export class GameEngine {
   container: HTMLDivElement;
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera;
   renderer: THREE.WebGLRenderer;
   clock: THREE.Clock;
-  keys: Set<string> = new Set();
+  bindings: KeyBindings;
+  mouseSettings: MouseSettings;
+  heldActions: Set<ActionName> = new Set();
   state: GameState;
   onUpdate: (state: GameState) => void;
   onEvent: (type: string, data?: any) => void;
@@ -49,6 +65,9 @@ export class GameEngine {
   traffic: Array<{ mesh: THREE.Group; vertical: boolean; v: number }> = [];
   animId: number = 0;
   acc: number = 0;
+  lastHudPublishTime: number = 0;
+  isMenuOrModalOpen: boolean = false;
+  isDestroyed: boolean = false;
 
   get customers(): PedestrianNPC[] {
     return this.pedestrianManager ? this.pedestrianManager.pedestrians : [];
@@ -63,7 +82,7 @@ export class GameEngine {
   particles: Array<{ mesh: THREE.Mesh; vx: number; vy: number; vz: number; life: number; maxLife: number }> = [];
   particleGeo = new THREE.SphereGeometry(0.12, 4, 4);
 
-  // GTA-Style Free Third-Person Camera & Character Controls
+  // Mouse Drag Camera & Follow
   cameraYaw: number = 0;
   cameraPitch: number = 0.38;
   cameraDistance: number = 10.5;
@@ -73,10 +92,25 @@ export class GameEngine {
   mouseMovedRecently: number = 0;
   currentSpeed: number = 0;
 
-  constructor(container: HTMLDivElement, onUpdate: (s: GameState) => void, onEvent: (t: string, d?: any) => void) {
+  // Stored listener removal hooks
+  private cleanupListeners: Array<() => void> = [];
+
+  constructor(
+    container: HTMLDivElement,
+    onUpdate: (s: GameState) => void,
+    onEvent: (t: string, d?: any) => void,
+    bindings?: KeyBindings,
+    mouseSettings?: MouseSettings
+  ) {
     this.container = container;
     this.onUpdate = onUpdate;
     this.onEvent = onEvent;
+    const initialSettings = loadSettings();
+    this.bindings = bindings || initialSettings.bindings;
+    this.mouseSettings = mouseSettings || {
+      mouseSensitivity: initialSettings.mouseSensitivity,
+      invertY: initialSettings.invertY
+    };
     this.clock = new THREE.Clock();
 
     this.scene = new THREE.Scene();
@@ -87,6 +121,15 @@ export class GameEngine {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     this.renderer.setSize(container.clientWidth, container.clientHeight);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.7));
+    this.renderer.domElement.tabIndex = 0;
+    this.renderer.domElement.style.outline = 'none';
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.55;
+    
+    container.replaceChildren(this.renderer.domElement);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -519,7 +562,7 @@ export class GameEngine {
       g.add(avatar);
       if (isVendor) {
         const frame = new THREE.Group();
-        frame.position.z = 1.35;
+        frame.position.z = -1.35;
         g.add(frame);
         block(frame, 1.75, 0.2, 1.75, mat.wood, 0, 0.85, 0);
         block(frame, 1.9, 0.33, 0.12, mat.red, 0, 1.35, -0.75);
@@ -531,11 +574,12 @@ export class GameEngine {
         for (let i = 0; i < 17; i++) {
           sphere(frame, 0.24, matte(pick(['#d85e37', '#d4a538', '#82a755', '#7e9f46'])), rand(-0.7, 0.7), 1.12, rand(-0.64, 0.64));
         }
-        const signBoard = block(frame, 1.65, 0.53, 0.12, matte('#216a58'), 0, 1.85, 0.79);
+        const signBoard = block(frame, 1.65, 0.53, 0.12, matte('#216a58'), 0, 1.85, -0.79);
         signBoard.castShadow = false;
-        sign(frame, 'ঠেলা ঢাকা', 0, 1.85, 0.86, 1.55);
+        const frontSign = sign(frame, 'ঠেলা ঢাকা', 0, 1.85, -0.86, 1.55);
+        frontSign.rotation.y = Math.PI;
         for (const xx of [-0.55, 0.55]) {
-          block(frame, 0.09, 0.14, 1.45, mat.metal, xx, 1.05, -0.87);
+          block(frame, 0.09, 0.14, 1.45, mat.metal, xx, 1.05, 0.87);
         }
       }
       return g;
@@ -553,98 +597,214 @@ export class GameEngine {
     this.pedestrianManager = new PedestrianManager(this.scene, this.sidewalkGraph, 14);
   }
 
+  clearInputs() {
+    this.heldActions.clear();
+    this.isMouseDragging = false;
+  }
+
+  setBindings(bindings: KeyBindings, mouseSettings?: Partial<MouseSettings>) {
+    this.bindings = bindings;
+    if (mouseSettings) {
+      this.mouseSettings = { ...this.mouseSettings, ...mouseSettings };
+    }
+  }
+
+  setMenuOpen(isOpen: boolean) {
+    this.isMenuOrModalOpen = isOpen;
+    if (isOpen) {
+      this.clearInputs();
+    }
+  }
+
+  pauseGame() {
+    if (this.state) {
+      this.state.stage = 'paused';
+    }
+    this.clearInputs();
+    this.acc = 0;
+    this.publishState(true);
+  }
+
+  resumeGame() {
+    if (this.state) {
+      this.state.stage = 'playing';
+    }
+    this.clearInputs();
+    this.clock.getDelta(); // flush stale delta
+    this.acc = 0;
+    this.renderer.domElement.focus();
+    this.publishState(true);
+  }
+
   initListeners() {
-    window.addEventListener('keydown', (e) => {
-      const key = e.key.toLowerCase();
-      if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' '].includes(key)) e.preventDefault();
-      if (e.repeat) return;
-      const normalized = key === 'arrowup' ? 'w' : key === 'arrowleft' ? 'a' : key === 'arrowright' ? 'd' : key === 'arrowdown' ? 's' : key;
-      this.keys.add(normalized);
-      this.handleAction(normalized);
-    });
+    const dom = this.renderer.domElement;
 
-    window.addEventListener('keyup', (e) => {
-      let k = e.key.toLowerCase();
-      if (k === 'arrowup') k = 'w';
-      if (k === 'arrowleft') k = 'a';
-      if (k === 'arrowdown') k = 's';
-      if (k === 'arrowright') k = 'd';
-      this.keys.delete(k);
-    });
+    // Suppress context menu on canvas so right-click drag works cleanly
+    dom.addEventListener('contextmenu', (e) => e.preventDefault());
 
-    window.addEventListener('blur', () => this.keys.clear());
+    const onKeyDown = (e: KeyboardEvent) => {
+      // Do not process gameplay keys while typing in form inputs
+      const target = e.target as HTMLElement;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        return;
+      }
 
-    window.addEventListener('resize', () => {
+      // Block gameplay input if menu/modal is open or game is not in active playing state
+      if (this.isMenuOrModalOpen || !this.state || this.state.stage !== 'playing') {
+        return;
+      }
+
+      const action = actionForCode(e.code, this.bindings);
+      if (action) {
+        // Prevent scrolling on arrows, space, etc.
+        e.preventDefault();
+
+        // One-shot actions trigger once on initial physical keydown
+        if (['sell', 'restock', 'upgrade', 'changeView', 'placeStall', 'pause'].includes(action)) {
+          if (!e.repeat) {
+            this.handleAction(action);
+          }
+        } else {
+          // Held actions: forward, backward, turnLeft, turnRight, sprint
+          this.heldActions.add(action);
+        }
+      }
+    };
+
+    const onKeyUp = (e: KeyboardEvent) => {
+      const action = actionForCode(e.code, this.bindings);
+      if (action) {
+        this.heldActions.delete(action);
+      }
+    };
+
+    const onBlur = () => this.clearInputs();
+
+    const onVisibilityChange = () => {
+      if (document.hidden) {
+        this.clearInputs();
+        this.acc = 0;
+      }
+    };
+
+    const onResize = () => {
       if (!this.container) return;
       this.camera.aspect = this.container.clientWidth / this.container.clientHeight;
       this.camera.updateProjectionMatrix();
       this.renderer.setSize(this.container.clientWidth, this.container.clientHeight);
-    });
+    };
 
-    // GTA-style Mouse orbit controls
-    const dom = this.renderer.domElement;
+    // Mouse drag camera controls (no pointer lock anywhere)
+    const onPointerDown = (e: PointerEvent) => {
+      // Rotate on left or right click drag
+      if (e.button === 0 || e.button === 2) {
+        this.isMouseDragging = true;
+        this.lastMouseX = e.clientX;
+        this.lastMouseY = e.clientY;
+        dom.focus();
+      }
+    };
 
-    dom.addEventListener('pointerdown', (e) => {
-      this.isMouseDragging = true;
-      this.lastMouseX = e.clientX;
-      this.lastMouseY = e.clientY;
-    });
-
-    window.addEventListener('pointermove', (e) => {
+    const onPointerMove = (e: PointerEvent) => {
       if (this.isMouseDragging) {
         const dx = e.clientX - this.lastMouseX;
         const dy = e.clientY - this.lastMouseY;
-        this.cameraYaw -= dx * 0.0055;
-        this.cameraPitch = THREE.MathUtils.clamp(this.cameraPitch - dy * 0.004, 0.08, 1.15);
+        const sens = (this.mouseSettings.mouseSensitivity || 1.0) * 0.0055;
+        const invertY = this.mouseSettings.invertY ? -1 : 1;
+        this.cameraYaw -= dx * sens;
+        this.cameraPitch = THREE.MathUtils.clamp(
+          this.cameraPitch - dy * sens * invertY,
+          0.08,
+          1.25
+        );
         this.mouseMovedRecently = 1.2;
         this.lastMouseX = e.clientX;
         this.lastMouseY = e.clientY;
       }
-    });
+    };
 
-    window.addEventListener('pointerup', () => {
+    const onPointerUp = () => {
       this.isMouseDragging = false;
-    });
+    };
 
-    dom.addEventListener('wheel', (e) => {
-      e.preventDefault();
-      this.cameraDistance = THREE.MathUtils.clamp(this.cameraDistance + e.deltaY * 0.008, 4.5, 18.0);
-    }, { passive: false });
+    const onWheel = (e: WheelEvent) => {
+      if (this.state && this.state.stage === 'playing' && !this.isMenuOrModalOpen) {
+        e.preventDefault();
+        this.cameraDistance = THREE.MathUtils.clamp(this.cameraDistance + e.deltaY * 0.008, 4.5, 26.0);
+      }
+    };
 
-    // Mobile touch controls
-    dom.addEventListener('touchstart', (e) => {
-      if (e.touches.length === 1) {
+    // Mobile touch drag controls
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 1 && this.state && this.state.stage === 'playing') {
         this.isMouseDragging = true;
         this.lastMouseX = e.touches[0].clientX;
         this.lastMouseY = e.touches[0].clientY;
       }
-    }, { passive: true });
+    };
 
-    dom.addEventListener('touchmove', (e) => {
-      if (e.touches.length === 1 && this.isMouseDragging) {
+    const onTouchMove = (e: TouchEvent) => {
+      if (e.touches.length === 1 && this.isMouseDragging && this.state && this.state.stage === 'playing') {
         const dx = e.touches[0].clientX - this.lastMouseX;
         const dy = e.touches[0].clientY - this.lastMouseY;
-        this.cameraYaw -= dx * 0.006;
-        this.cameraPitch = THREE.MathUtils.clamp(this.cameraPitch - dy * 0.005, 0.08, 1.15);
+        const sens = (this.mouseSettings.mouseSensitivity || 1.0) * 0.003;
+        const invertY = this.mouseSettings.invertY ? -1 : 1;
+        this.cameraYaw -= dx * sens;
+        this.cameraPitch = THREE.MathUtils.clamp(this.cameraPitch - dy * sens * invertY, 0.08, 1.25);
         this.mouseMovedRecently = 1.2;
         this.lastMouseX = e.touches[0].clientX;
         this.lastMouseY = e.touches[0].clientY;
       }
-    }, { passive: true });
+    };
 
-    dom.addEventListener('touchend', () => {
+    const onTouchEnd = () => {
       this.isMouseDragging = false;
-    });
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onBlur);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('resize', onResize);
+
+    dom.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+    dom.addEventListener('wheel', onWheel, { passive: false });
+    dom.addEventListener('touchstart', onTouchStart, { passive: true });
+    dom.addEventListener('touchmove', onTouchMove, { passive: true });
+    dom.addEventListener('touchend', onTouchEnd);
+
+    // Save cleanup hooks
+    this.cleanupListeners = [
+      () => window.removeEventListener('keydown', onKeyDown),
+      () => window.removeEventListener('keyup', onKeyUp),
+      () => window.removeEventListener('blur', onBlur),
+      () => document.removeEventListener('visibilitychange', onVisibilityChange),
+      () => window.removeEventListener('resize', onResize),
+      () => dom.removeEventListener('pointerdown', onPointerDown),
+      () => window.removeEventListener('pointermove', onPointerMove),
+      () => window.removeEventListener('pointerup', onPointerUp),
+      () => dom.removeEventListener('wheel', onWheel),
+      () => dom.removeEventListener('touchstart', onTouchStart),
+      () => dom.removeEventListener('touchmove', onTouchMove),
+      () => dom.removeEventListener('touchend', onTouchEnd)
+    ];
   }
 
   setMode(mode: GameState['mode']) {
     this.state = this.getInitialState(mode);
-    this.human.visible = mode === 'vendor' || mode === 'online_vendor';
+    const isVendor = mode === 'vendor' || mode === 'online_vendor';
+    this.human.visible = isVendor;
     this.officer.visible = true;
     this.npcVendor.visible = mode === 'police' || mode === 'online_police';
     this.human.position.set(0, 0, 7);
     this.officer.position.set(0, 0, -23);
     this.npcVendor.position.set(0, 0, -19);
+    this.state.heading = 0;
+    this.human.rotation.y = 0;
+    this.officer.rotation.y = 0;
+    this.npcVendor.rotation.y = 0;
     this.recoilVx = 0;
     this.recoilVz = 0;
     this.cameraShake = 0;
@@ -655,7 +815,11 @@ export class GameEngine {
     this.cameraDistance = 10.5;
     this.currentSpeed = 0;
     this.mouseMovedRecently = 0;
+    this.clearInputs();
+    this.acc = 0;
     this.playBeep(520, 0.2);
+    setTimeout(() => this.renderer.domElement.focus(), 15);
+    this.publishState(true);
   }
 
   vector2(a: { x: number; z: number }, b: { x: number; z: number }) {
@@ -672,7 +836,8 @@ export class GameEngine {
   }
 
   beginSale() {
-    if (this.state.mode !== 'vendor' || this.state.sale || this.state.stock <= 0 || this.state.cooldown > 0) return;
+    const isVendor = this.state.mode === 'vendor' || this.state.mode === 'online_vendor';
+    if (!isVendor || this.state.sale || this.state.stock <= 0 || this.state.cooldown > 0) return;
     const { nearest, d } = this.distanceToCustomer();
     if (d > 4.8 || !nearest) {
       this.onEvent('notify', 'Get closer to a pedestrian on the sidewalk to sell (ফুটপাতের ক্রেতার কাছে যান)');
@@ -681,7 +846,8 @@ export class GameEngine {
     nearest.isEngagedInSale = true;
     const dx = this.human.position.x - nearest.mesh.position.x;
     const dz = this.human.position.z - nearest.mesh.position.z;
-    nearest.mesh.rotation.y = Math.atan2(dx, -dz);
+    // Orientation fix: customer faces the vendor directly
+    nearest.mesh.rotation.y = -Math.atan2(dx, -dz);
 
     const productNames = ['আম', 'কলা', 'পেয়ারা', 'সবজি', 'চা', 'ফুচকা', 'পেয়াজ'];
     const seconds = 5 + Math.random() * 5;
@@ -690,6 +856,7 @@ export class GameEngine {
     this.state.sale = { seconds, start: this.state.time, price, product, customer: nearest };
     this.playBeep(600, 0.15);
     this.onEvent('notify', `${nearest.archetype.bnName} (${nearest.archetype.name}) · ${product} · selling for ${seconds.toFixed(1)}s · ৳${price}`);
+    this.publishState(true);
   }
 
   completeSale() {
@@ -706,10 +873,12 @@ export class GameEngine {
     this.state.sale = null;
     this.playBeep(880, 0.2, 'triangle');
     this.onEvent('notify', `Sold ${s.product} · +৳${s.price}! Police attention rising.`);
+    this.publishState(true);
   }
 
   upgradeCart() {
-    if (this.state.mode !== 'vendor') return;
+    const isVendor = this.state.mode === 'vendor' || this.state.mode === 'online_vendor';
+    if (!isVendor) return;
     if (this.state.level >= 12) {
       this.onEvent('notify', 'Maximum cart level reached.');
       return;
@@ -725,10 +894,12 @@ export class GameEngine {
     this.state.stock += 3;
     this.playBeep(750, 0.25);
     this.onEvent('notify', `Cart level ${this.state.level}! Capacity ${this.state.cap}.`);
+    this.publishState(true);
   }
 
   restockCart() {
-    if (this.state.mode !== 'vendor') return;
+    const isVendor = this.state.mode === 'vendor' || this.state.mode === 'online_vendor';
+    if (!isVendor) return;
     const needed = this.state.cap - this.state.stock;
     const cost = needed * 7;
     if (needed === 0) {
@@ -743,10 +914,12 @@ export class GameEngine {
     this.state.stock = this.state.cap;
     this.playBeep(450, 0.15);
     this.onEvent('notify', `Restocked ${needed} items for ৳${cost}.`);
+    this.publishState(true);
   }
 
   placeStall() {
-    if (this.state.mode !== 'vendor') return;
+    const isVendor = this.state.mode === 'vendor' || this.state.mode === 'online_vendor';
+    if (!isVendor) return;
     if (this.state.level < 10) {
       this.onEvent('notify', 'Unlock large food stall at cart level 10.');
       return;
@@ -756,13 +929,14 @@ export class GameEngine {
       return;
     }
     
-    // Create large stall 3D mesh
+    // Create large stall 3D mesh in front of the cart
     const stallX = this.human.position.x + Math.sin(this.state.heading) * 3.2;
     const stallZ = this.human.position.z - Math.cos(this.state.heading) * 3.2;
     
     const matte = (color: string, roughness = 0.92) => new THREE.MeshStandardMaterial({ color, roughness });
     const g = new THREE.Group();
     g.position.set(stallX, 0, stallZ);
+    g.rotation.y = -this.state.heading;
     const box = new THREE.Mesh(new THREE.BoxGeometry(4.5, 1.2, 3.0), matte('#a87843'));
     box.position.set(0, 0.9, 0);
     box.castShadow = true;
@@ -789,41 +963,64 @@ export class GameEngine {
 
     this.playBeep(300, 0.3, 'sawtooth');
     this.onEvent('notify', 'Large food stall opened! High enforcement risk.');
+    this.publishState(true);
   }
 
   arrestVendor() {
-    if (this.state.mode !== 'police') return;
-    const d = this.vector2(this.officer.position, this.npcVendor.position);
-    if (d > 3.2) {
+    const isPolice = this.state.mode === 'police' || this.state.mode === 'online_police';
+    if (!isPolice) return;
+    const targetVendor = this.state.mode === 'online_police' ? this.human : this.npcVendor;
+    const d = this.vector2(this.officer.position, targetVendor.position);
+    if (d > 3.4) {
       this.onEvent('notify', 'Move close to the vendor before arresting.');
       return;
     }
     this.onEvent('police_decision');
   }
 
-  handleAction(k: string) {
-    if (!this.state || this.state.stage !== 'playing') return;
-    if (k === 'e') {
-      if (this.state.mode === 'vendor') this.beginSale();
-      else if (this.state.mode === 'police') this.arrestVendor();
-    } else if (k === 'u') {
+  cycleCameraView() {
+    if (this.cameraDistance < 9.0) {
+      this.cameraDistance = 13.5;
+      this.cameraPitch = 0.46;
+      this.onEvent('notify', 'Camera: Far Chase (দূরে)');
+    } else if (this.cameraDistance < 18.0) {
+      this.cameraDistance = 22.0;
+      this.cameraPitch = 1.15;
+      this.onEvent('notify', 'Camera: High Top-Down (উপর থেকে)');
+    } else {
+      this.cameraDistance = 6.8;
+      this.cameraPitch = 0.32;
+      this.onEvent('notify', 'Camera: Close Chase (কাছে)');
+    }
+    this.mouseMovedRecently = 0;
+  }
+
+  handleAction(action: string) {
+    if (!this.state || this.state.stage !== 'playing' || this.isMenuOrModalOpen) return;
+    const isVendor = this.state.mode === 'vendor' || this.state.mode === 'online_vendor';
+    const isPolice = this.state.mode === 'police' || this.state.mode === 'online_police';
+
+    if (action === 'sell' || action === 'arrest' || action === 'interact') {
+      if (isVendor) this.beginSale();
+      else if (isPolice) this.arrestVendor();
+    } else if (action === 'upgrade') {
       this.upgradeCart();
-    } else if (k === 'r') {
+    } else if (action === 'restock') {
       this.restockCart();
-    } else if (k === 'b') {
+    } else if (action === 'placeStall' || action === 'place_stall') {
       this.placeStall();
-    } else if (k === 'c') {
-      if (this.cameraDistance < 7.5) {
-        this.cameraDistance = 10.5;
-        this.cameraPitch = 0.38;
-      } else if (this.cameraDistance < 12.5) {
-        this.cameraDistance = 15.5;
-        this.cameraPitch = 0.52;
-      } else {
-        this.cameraDistance = 6.0;
-        this.cameraPitch = 0.26;
-      }
-      this.onEvent('notify', 'Camera view changed (ক্যামেরা দূরত্ব পরিবর্তন)');
+    } else if (action === 'changeView' || action === 'change_view') {
+      this.cycleCameraView();
+    } else if (action === 'pause') {
+      this.onEvent('pause');
+    }
+  }
+
+  publishState(force = false) {
+    const now = performance.now();
+    if (force || now - this.lastHudPublishTime >= 95) {
+      this.lastHudPublishTime = now;
+      this.onUpdate({ ...this.state });
     }
   }
 
@@ -846,54 +1043,38 @@ export class GameEngine {
       this.cameraShake = Math.max(0, this.cameraShake - dt * 2.8);
     }
 
-    // GTA-style Camera-Relative Movement
-    const p = this.state.mode === 'vendor' ? this.human : this.officer;
+    // Vehicle (tank-style) movement relative to vehicle heading
     const isVendor = this.state.mode === 'vendor' || this.state.mode === 'online_vendor';
+    const p = isVendor ? this.human : this.officer;
 
-    const forwardInput = (this.keys.has('w') ? 1 : 0) - (this.keys.has('s') ? 1 : 0);
-    const strafeInput = (this.keys.has('d') ? 1 : 0) - (this.keys.has('a') ? 1 : 0);
+    // Steering: turnLeft / turnRight rotate heading (vendor ~2.2 rad/s, police ~3.2 rad/s)
+    const turnRate = isVendor ? 2.2 : 3.2;
+    let turnInput = (this.heldActions.has('turnRight') ? 1 : 0) - (this.heldActions.has('turnLeft') ? 1 : 0);
 
-    // Camera forward and right vectors projected onto the horizontal XZ ground plane
-    const camForwardX = Math.sin(this.cameraYaw);
-    const camForwardZ = -Math.cos(this.cameraYaw);
-    const camRightX = Math.cos(this.cameraYaw);
-    const camRightZ = Math.sin(this.cameraYaw);
+    // Natural steering when reversing a cart
+    const isMovingBackward = this.heldActions.has('backward') && !this.heldActions.has('forward');
+    if (isMovingBackward) {
+      turnInput = -turnInput;
+    }
 
-    const worldMoveX = camForwardX * forwardInput + camRightX * strafeInput;
-    const worldMoveZ = camForwardZ * forwardInput + camRightZ * strafeInput;
-    const inputMagnitude = Math.hypot(worldMoveX, worldMoveZ);
+    if (turnInput !== 0) {
+      this.state.heading += turnInput * turnRate * dt;
+      while (this.state.heading > Math.PI) this.state.heading -= Math.PI * 2;
+      while (this.state.heading < -Math.PI) this.state.heading += Math.PI * 2;
+    }
 
-    const sprint = this.keys.has(' ') || this.keys.has('shift');
+    // Speed along heading: forward (with 1.65x sprint multiplier) or backward (55% speed)
+    const sprint = this.heldActions.has('sprint');
     const baseSpeed = isVendor ? 4.85 : 5.85;
-    const targetMoveSpeed = inputMagnitude > 0.05 ? baseSpeed * (sprint ? 1.65 : 1.0) : 0;
 
-    this.currentSpeed = THREE.MathUtils.damp(this.currentSpeed, targetMoveSpeed, 10, dt);
-
-    if (inputMagnitude > 0.05) {
-      const dirX = worldMoveX / inputMagnitude;
-      const dirZ = worldMoveZ / inputMagnitude;
-      const targetHeading = Math.atan2(dirX, -dirZ);
-
-      // Smooth angular turning towards movement direction
-      let angleDiff = targetHeading - this.state.heading;
-      while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
-      while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
-
-      const turnRate = isVendor ? 10.5 : 18.0;
-      this.state.heading += angleDiff * Math.min(1, dt * turnRate);
-
-      // Smooth GTA auto-aligning camera when moving forward and not dragging mouse
-      if (this.mouseMovedRecently <= 0 && forwardInput > 0) {
-        let camAngleDiff = this.state.heading - this.cameraYaw;
-        while (camAngleDiff > Math.PI) camAngleDiff -= Math.PI * 2;
-        while (camAngleDiff < -Math.PI) camAngleDiff += Math.PI * 2;
-        this.cameraYaw += camAngleDiff * dt * 1.6;
-      }
+    let targetSpeed = 0;
+    if (this.heldActions.has('forward')) {
+      targetSpeed = baseSpeed * (sprint ? 1.65 : 1.0);
+    } else if (this.heldActions.has('backward')) {
+      targetSpeed = -baseSpeed * 0.55;
     }
 
-    if (this.mouseMovedRecently > 0) {
-      this.mouseMovedRecently -= dt;
-    }
+    this.currentSpeed = THREE.MathUtils.damp(this.currentSpeed, targetSpeed, 8, dt);
 
     // Forward motion vector along character's current heading
     const moveHeadingX = Math.sin(this.state.heading);
@@ -916,7 +1097,8 @@ export class GameEngine {
 
     p.position.x = moveRes.newX;
     p.position.z = moveRes.newZ;
-    p.rotation.y = this.state.heading;
+    // CRITICAL ORIENTATION FIX: Set rotation.y = -heading so the model faces (sin h, 0, -cos h)
+    p.rotation.y = -this.state.heading;
     this.state.speed = this.currentSpeed;
 
     // Wall / static obstacle collision response & sound
@@ -946,27 +1128,32 @@ export class GameEngine {
         }
         this.state.sale = null;
         this.onEvent('notify', 'রিকশায় ধাক্কা! বেচাকেনা বাতিল (Rickshaw collision cancelled sale!)');
+        this.publishState(true);
       } else {
         this.onEvent('notify', 'সাবধান! রিকশার সাথে সংঘর্ষ (Watch out! Rickshaw bump!)');
       }
     }
 
-    // AI Police pursuit & navigation with collision resolution
+    if (this.mouseMovedRecently > 0) {
+      this.mouseMovedRecently = Math.max(0, this.mouseMovedRecently - dt);
+    }
+
+    // AI Police pursuit & navigation with collision resolution (Solo Vendor Mode)
     if (this.state.mode === 'vendor') {
       if (this.state.heat > 27 && this.state.cooldown === 0 && this.vector2(this.human.position, this.officer.position) < 55) {
         this.state.alert = true;
       }
-      const toHuman = new THREE.Vector3().subVectors(this.human.position, this.officer.position);
-      const dist = toHuman.length();
+      _toHuman.subVectors(this.human.position, this.officer.position);
+      const dist = _toHuman.length();
       if (this.state.alert) {
-        const dir = toHuman.clone();
-        dir.y = 0;
-        dir.normalize();
+        _officerDir.copy(_toHuman);
+        _officerDir.y = 0;
+        _officerDir.normalize();
 
         const officerSpeed = Math.min(dist, 1) * 3.55;
-        const officerVx = dir.x * officerSpeed * dt;
-        const officerVz = dir.z * officerSpeed * dt;
-        const officerHeading = Math.atan2(dir.x, -dir.z);
+        const officerVx = _officerDir.x * officerSpeed * dt;
+        const officerVz = _officerDir.z * officerSpeed * dt;
+        const officerHeading = Math.atan2(_officerDir.x, -_officerDir.z);
 
         const aiMove = resolveMovement(
           this.officer.position.x,
@@ -980,7 +1167,8 @@ export class GameEngine {
         );
         this.officer.position.x = aiMove.newX;
         this.officer.position.z = aiMove.newZ;
-        this.officer.rotation.y = officerHeading;
+        // Orientation fix: Officer faces pursuit heading
+        this.officer.rotation.y = -officerHeading;
 
         if (dist < 2.1) {
           this.onEvent('bribe_prompt');
@@ -994,6 +1182,7 @@ export class GameEngine {
             this.state.cooldown = 11;
             this.state.escape = 0;
             this.onEvent('notify', 'Escaped police! Stay out of sight.');
+            this.publishState(true);
           }
         } else {
           this.state.escape = 0;
@@ -1002,20 +1191,23 @@ export class GameEngine {
         const angle = this.state.time * 0.3;
         const aiVx = Math.sin(angle) * dt * 1.1;
         const aiVz = Math.cos(angle * 0.7) * dt * 0.9;
+        const wanderHeading = Math.atan2(aiVx, -aiVz);
         const aiMove = resolveMovement(
           this.officer.position.x,
           this.officer.position.z,
           aiVx,
           aiVz,
-          Math.atan2(aiVx, -aiVz),
+          wanderHeading,
           false,
           this.obstacles,
           100
         );
         this.officer.position.x = aiMove.newX;
         this.officer.position.z = aiMove.newZ;
+        // Orientation fix: Wander officer facing
+        this.officer.rotation.y = -wanderHeading;
       }
-    } else {
+    } else if (this.state.mode === 'police') {
       // Police mode: AI Vendor movement with collision resolution
       const t = this.state.time;
       const d = this.vector2(this.officer.position, this.npcVendor.position);
@@ -1051,14 +1243,14 @@ export class GameEngine {
       );
       this.npcVendor.position.x = aiVendorMove.newX;
       this.npcVendor.position.z = aiVendorMove.newZ;
-      this.npcVendor.rotation.y = vendorHeading;
+      // Orientation fix: NPC vendor faces travel heading
+      this.npcVendor.rotation.y = -vendorHeading;
     }
 
     // Update A* Sidewalk Pedestrian crowd
     if (this.pedestrianManager) {
       this.pedestrianManager.update(dt);
 
-      // Soft push against player/cart so pedestrians don't walk directly through cart or avatar
       for (const ped of this.pedestrianManager.pedestrians) {
         const distToPlayer = this.vector2(p.position, ped.mesh.position);
         if (distToPlayer < 1.25 && distToPlayer > 0.01) {
@@ -1085,6 +1277,7 @@ export class GameEngine {
         this.state.sale = null;
         this.playBeep(220, 0.2, 'sawtooth');
         this.onEvent('notify', 'Sale interrupted — no payment.');
+        this.publishState(true);
       } else if (elapsed >= s.seconds) {
         this.completeSale();
       }
@@ -1097,6 +1290,7 @@ export class GameEngine {
       if (this.state.stall && Math.random() < dt * 0.08) {
         this.state.cash += 45;
         this.state.total += 45;
+        this.publishState(true);
       }
     }
 
@@ -1133,20 +1327,48 @@ export class GameEngine {
       }
     }
 
-    this.onUpdate({ ...this.state });
+    // Throttled publish to React HUD
+    this.publishState(false);
   }
 
   renderLoop() {
+    if (this.isDestroyed) return;
     this.animId = requestAnimationFrame(() => this.renderLoop());
-    const dt = Math.min(this.clock.getDelta(), 0.05);
-    this.acc += dt;
-    if (this.acc > 0.045) {
-      this.simulate(Math.min(this.acc, 0.05));
+
+    // Fixed 1/60s simulation timestep for perfectly smooth 60 FPS gameplay
+    const rawDt = this.clock.getDelta();
+    const dt = Math.min(rawDt, 0.1); // Guard against giant delta jumps when returning from tab switch
+
+    if (this.state && this.state.stage === 'playing') {
+      this.acc += dt;
+      const FIXED_STEP = 1 / 60; // 0.016667s
+      let steps = 0;
+      while (this.acc >= FIXED_STEP && steps < 4) {
+        this.simulate(FIXED_STEP);
+        this.acc -= FIXED_STEP;
+        steps++;
+      }
+      if (steps >= 4) {
+        this.acc = 0; // Prevent accumulator death-spiral if tab stalls
+      }
+    } else {
+      // Paused or in menu: freeze physics accumulator
       this.acc = 0;
     }
 
-    if (this.state && this.state.stage === 'playing') {
-      const p = this.state.mode === 'vendor' || this.state.mode === 'online_vendor' ? this.human : this.officer;
+    if (this.state && (this.state.stage === 'playing' || this.state.stage === 'paused')) {
+      const isVendor = this.state.mode === 'vendor' || this.state.mode === 'online_vendor';
+      const p = isVendor ? this.human : this.officer;
+
+      // Third-person auto-follow: after 1.2s without mouse drag, camera smoothly eases behind vehicle heading
+      if (this.state.stage === 'playing' && this.mouseMovedRecently <= 0 && !this.isMouseDragging) {
+        let diff = this.state.heading - this.cameraYaw;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        this.cameraYaw += diff * Math.min(1.0, 2.8 * dt);
+        while (this.cameraYaw > Math.PI) this.cameraYaw -= Math.PI * 2;
+        while (this.cameraYaw < -Math.PI) this.cameraYaw += Math.PI * 2;
+      }
 
       // Spherical coordinate offset based on camera yaw, pitch, and distance
       const horizontalDist = this.cameraDistance * Math.cos(this.cameraPitch);
@@ -1161,7 +1383,7 @@ export class GameEngine {
       this.camera.position.y = THREE.MathUtils.damp(this.camera.position.y, targetCamY, 12, dt);
       this.camera.position.z = THREE.MathUtils.damp(this.camera.position.z, targetCamZ, 12, dt);
 
-      const lookTarget = new THREE.Vector3(p.position.x, p.position.y + 1.7, p.position.z);
+      _lookTarget.set(p.position.x, p.position.y + 1.7, p.position.z);
 
       // Apply camera shake if present
       if (this.cameraShake > 0.001) {
@@ -1169,10 +1391,10 @@ export class GameEngine {
         const shakeY = (Math.random() - 0.5) * this.cameraShake * 1.5;
         this.camera.position.x += shakeX;
         this.camera.position.y += shakeY;
-        lookTarget.x += shakeX * 0.4;
+        _lookTarget.x += shakeX * 0.4;
       }
 
-      this.camera.lookAt(lookTarget);
+      this.camera.lookAt(_lookTarget);
     } else {
       const t = performance.now() * 0.00012;
       this.camera.position.set(Math.sin(t) * 42, 22, Math.cos(t) * 45);
@@ -1187,6 +1409,12 @@ export class GameEngine {
   }
 
   stop() {
+    this.isDestroyed = true;
     cancelAnimationFrame(this.animId);
+    for (const cleanup of this.cleanupListeners) {
+      cleanup();
+    }
+    this.cleanupListeners = [];
   }
 }
+

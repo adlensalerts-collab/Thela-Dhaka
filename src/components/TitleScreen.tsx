@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { ShoppingCart, Shield, Users, Play, Volume2, VolumeX, Sparkles, HelpCircle } from 'lucide-react';
+import { ShoppingCart, Shield, Users, Play, Volume2, VolumeX, Sparkles, HelpCircle, Sliders } from 'lucide-react';
+import { GameSettingsData, formatCode } from '../game/keybindings';
 
 interface TitleScreenProps {
   onStartSolo: (role: 'vendor' | 'police') => void;
@@ -7,6 +8,8 @@ interface TitleScreenProps {
   onJoinRoom: (roomCode: string, name: string) => void;
   muted: boolean;
   onToggleMute: () => void;
+  onOpenSettings: () => void;
+  settings?: GameSettingsData;
 }
 
 export const TitleScreen: React.FC<TitleScreenProps> = ({
@@ -14,13 +17,17 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
   onCreateRoom,
   onJoinRoom,
   muted,
-  onToggleMute
+  onToggleMute,
+  onOpenSettings,
+  settings
 }) => {
   const [role, setRole] = useState<'vendor' | 'police'>('vendor');
   const [mode, setMode] = useState<'solo' | 'online'>('solo');
   const [playerName, setPlayerName] = useState('');
   const [roomCodeInput, setRoomCodeInput] = useState('');
   const [showHelp, setShowHelp] = useState(false);
+
+  const interactLabel = formatCode(settings?.bindings?.sell?.[0] || 'Space');
 
   return (
     <div className="absolute inset-0 z-20 flex flex-col items-center justify-between p-6 bg-gradient-to-b from-[#122826]/90 via-[#0d1b1a]/95 to-[#091211] text-white overflow-y-auto">
@@ -35,13 +42,21 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
             <p className="text-xs text-gray-300">Gulistan & New Market District</p>
           </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2.5">
           <button
             onClick={() => setShowHelp(!showHelp)}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-teal-800/60 hover:bg-teal-700/80 border border-teal-600/40 text-xs font-medium transition"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-teal-800/60 hover:bg-teal-700/80 border border-teal-600/40 text-xs font-medium transition"
           >
             <HelpCircle className="w-4 h-4 text-amber-300" />
             <span>How to Play</span>
+          </button>
+          <button
+            onClick={onOpenSettings}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-teal-800/60 hover:bg-teal-700/80 border border-teal-600/40 text-xs font-medium text-amber-300 transition"
+            title="Configure Controls & Camera"
+          >
+            <Sliders className="w-4 h-4 text-amber-300" />
+            <span>Settings</span>
           </button>
           <button
             onClick={onToggleMute}
@@ -176,17 +191,21 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
         </button>
       </div>
 
-      {/* Footer controls hint */}
-      <div className="text-xs text-gray-400 text-center pb-2 flex flex-wrap items-center justify-center gap-4">
-        <span>WASD Move (Camera-Relative)</span>
+      {/* Footer controls hint with updated keys */}
+      <div className="text-xs text-gray-400 text-center pb-2 flex flex-wrap items-center justify-center gap-3">
+        <span>↑ / W Forward</span>
         <span>·</span>
-        <span>Mouse Drag to Look</span>
+        <span>↓ / S Reverse</span>
+        <span>·</span>
+        <span>← / A / → / D Steer</span>
+        <span>·</span>
+        <span>{interactLabel} Sell / Arrest</span>
+        <span>·</span>
+        <span>Hold Shift Sprint</span>
+        <span>·</span>
+        <span>Drag Mouse to Look</span>
         <span>·</span>
         <span>Scroll Zoom</span>
-        <span>·</span>
-        <span>Shift Sprint</span>
-        <span>·</span>
-        <span>E Action</span>
         <span>·</span>
         <span>U Upgrade</span>
         <span>·</span>
@@ -201,9 +220,23 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
           <div className="bg-[#162927] border border-teal-600/50 rounded-2xl p-6 max-w-lg w-full shadow-2xl text-left space-y-4">
             <h3 className="text-lg font-bold text-amber-400">How to Play Thela Dhaka</h3>
             <div className="text-xs text-gray-300 space-y-2">
-              <p><strong>As Vendor (ঠেলাগাড়িওয়ালা):</strong> Park near wandering customers, press <code className="bg-black/40 px-1.5 py-0.5 rounded text-amber-300">E</code> to start a 5–10s sale. Earn Taka, upgrade your cart (U), restock items (R), and dodge the police when wanted heat rises!</p>
-              <p><strong>As Police (পুলিশ কনস্টেবল):</strong> Patrol the streets, chase the vendor, and press <code className="bg-black/40 px-1.5 py-0.5 rounded text-amber-300">E</code> at close range to arrest or decide on illicit payment.</p>
-              <p><strong>Online 1v1:</strong> Create a room and send the 5-letter code to a friend to play opposing roles in real-time on the same map!</p>
+              <p>
+                <strong>Vehicle Controls:</strong> Steer left/right (<code className="bg-black/50 px-1.5 py-0.5 rounded text-amber-300">A / D / ← / →</code>) to rotate your heading. Drive forward (<code className="bg-black/50 px-1.5 py-0.5 rounded text-amber-300">W / ↑</code>) or reverse backward (<code className="bg-black/50 px-1.5 py-0.5 rounded text-amber-300">S / ↓</code>) with authentic cart handling. Hold <code className="bg-black/50 px-1.5 py-0.5 rounded text-amber-300">Shift</code> to sprint.
+              </p>
+              <p>
+                <strong>As Vendor (ঠেলাগাড়িওয়ালা):</strong> Park near wandering pedestrians on the sidewalk, press{' '}
+                <code className="bg-black/50 px-1.5 py-0.5 rounded text-amber-300">{interactLabel}</code> to start a sale. Earn Taka, upgrade your cart (U), restock items (R), and avoid police pursuit when heat rises!
+              </p>
+              <p>
+                <strong>As Police (পুলিশ কনস্টেবল):</strong> Patrol the streets, chase the vendor, and press{' '}
+                <code className="bg-black/50 px-1.5 py-0.5 rounded text-amber-300">{interactLabel}</code> at close range to arrest or negotiate.
+              </p>
+              <p>
+                <strong>Drag Camera:</strong> Click and drag anywhere on screen to look around freely in 360°. Release to let the camera smoothly align behind your cart after 1.2s. Scroll mouse wheel to zoom in/out, or press <code className="bg-black/50 px-1.5 py-0.5 rounded text-amber-300">C</code> to cycle camera presets.
+              </p>
+              <p>
+                <strong>Rebindable Keys:</strong> Rebind any key, adjust mouse sensitivity, and toggle inverted look in Settings.
+              </p>
             </div>
             <button
               onClick={() => setShowHelp(false)}

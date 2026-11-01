@@ -1,5 +1,5 @@
 import React from 'react';
-import { AlertTriangle, ShieldCheck, DollarSign, RefreshCw, Home } from 'lucide-react';
+import { AlertTriangle, ShieldCheck, DollarSign, RefreshCw, Home, Sliders } from 'lucide-react';
 import { GameState } from '../game/simulation';
 
 interface EventModalProps {
@@ -12,6 +12,7 @@ interface EventModalProps {
   onResume: () => void;
   onRestart: () => void;
   onMainMenu: () => void;
+  onOpenSettings?: () => void;
 }
 
 export const EventModal: React.FC<EventModalProps> = ({
@@ -23,7 +24,8 @@ export const EventModal: React.FC<EventModalProps> = ({
   onTakeIllicit,
   onResume,
   onRestart,
-  onMainMenu
+  onMainMenu,
+  onOpenSettings
 }) => {
   if (!type) return null;
 
@@ -102,6 +104,15 @@ export const EventModal: React.FC<EventModalProps> = ({
               >
                 Resume Game
               </button>
+              {onOpenSettings && (
+                <button
+                  onClick={onOpenSettings}
+                  className="w-full py-3 rounded-2xl bg-teal-800/80 hover:bg-teal-700 border border-teal-600/50 text-amber-300 font-bold text-sm shadow-lg transition flex items-center justify-center gap-2"
+                >
+                  <Sliders className="w-4 h-4" />
+                  Settings / সেটিংস
+                </button>
+              )}
               <button
                 onClick={onRestart}
                 className="w-full py-3 rounded-2xl bg-teal-900/60 hover:bg-teal-800 text-amber-300 font-bold text-sm shadow-lg transition flex items-center justify-center gap-2"
