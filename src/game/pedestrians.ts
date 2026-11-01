@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { SidewalkGraph } from './pathfinding';
+import { createHumanRig, outfitForArchetype } from './world/humans';
 
 export interface PedestrianArchetype {
   name: string;
@@ -66,97 +67,14 @@ export class PedestrianManager {
     rightArm: THREE.Object3D;
     body: THREE.Object3D;
   } {
-    const g = new THREE.Group();
-    const matte = (color: string, roughness = 0.9) => new THREE.MeshStandardMaterial({ color, roughness });
-    const shirtMat = matte(archetype.shirtColor);
-    const pantsMat = matte(archetype.pantsColor);
-    const skinMat = matte('#b87954');
-    const darkMat = matte('#24292c');
-
-    // Torso / Body
-    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.44, 1.15, 8), shirtMat);
-    body.position.set(0, 1.35, 0);
-    body.castShadow = true;
-    g.add(body);
-
-    // Head
-    const head = new THREE.Mesh(new THREE.IcosahedronGeometry(0.33, 0), skinMat);
-    head.position.set(0, 2.15, 0);
-    head.castShadow = true;
-    g.add(head);
-
-    // Hair or Cap
-    if (archetype.hasCap) {
-      const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.33, 0.35, 0.18, 8), matte('#f4f4f0'));
-      cap.position.set(0, 2.38, 0);
-      g.add(cap);
-    } else {
-      const hair = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.18, 0.38), darkMat);
-      hair.position.set(0, 2.45, 0.02);
-      g.add(hair);
-    }
-
-    // Shoulder Gamchha (towel scarf)
-    if (archetype.hasGamchha) {
-      const gamchha = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.8, 0.36), matte('#d13b3b'));
-      gamchha.position.set(0.36, 1.45, 0);
-      g.add(gamchha);
-    }
-
-    // Backpack
-    if (archetype.hasBag) {
-      const bag = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.65, 0.28), matte('#2d3845'));
-      bag.position.set(0, 1.4, -0.32);
-      g.add(bag);
-    }
-
-    // Left Arm Pivot
-    const leftArmPivot = new THREE.Group();
-    leftArmPivot.position.set(-0.45, 1.8, 0);
-    const leftArmMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.11, 0.85, 6), shirtMat);
-    leftArmMesh.position.set(0, -0.42, 0);
-    leftArmMesh.castShadow = true;
-    leftArmPivot.add(leftArmMesh);
-    g.add(leftArmPivot);
-
-    // Right Arm Pivot
-    const rightArmPivot = new THREE.Group();
-    rightArmPivot.position.set(0.45, 1.8, 0);
-    const rightArmMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.11, 0.85, 6), shirtMat);
-    rightArmMesh.position.set(0, -0.42, 0);
-    rightArmMesh.castShadow = true;
-    rightArmPivot.add(rightArmMesh);
-    g.add(rightArmPivot);
-
-    // Left Leg Pivot
-    const leftLegPivot = new THREE.Group();
-    leftLegPivot.position.set(-0.18, 0.85, 0);
-    const leftLegMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.13, 0.85, 6), pantsMat);
-    leftLegMesh.position.set(0, -0.42, 0);
-    leftLegMesh.castShadow = true;
-    leftLegPivot.add(leftLegMesh);
-    g.add(leftLegPivot);
-
-    // Right Leg Pivot
-    const rightLegPivot = new THREE.Group();
-    rightLegPivot.position.set(0.18, 0.85, 0);
-    const rightLegMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.13, 0.85, 6), pantsMat);
-    rightLegMesh.position.set(0, -0.42, 0);
-    rightLegMesh.castShadow = true;
-    rightLegPivot.add(rightLegMesh);
-    g.add(rightLegPivot);
-
-    // Scale variation (0.93 - 1.07)
-    const scale = 0.93 + Math.random() * 0.14;
-    g.scale.set(scale, scale, scale);
-
+    const rig = createHumanRig(outfitForArchetype(archetype));
     return {
-      group: g,
-      leftLeg: leftLegPivot,
-      rightLeg: rightLegPivot,
-      leftArm: leftArmPivot,
-      rightArm: rightArmPivot,
-      body
+      group: rig.group,
+      leftLeg: rig.leftLeg,
+      rightLeg: rig.rightLeg,
+      leftArm: rig.leftArm,
+      rightArm: rig.rightArm,
+      body: rig.body
     };
   }
 
@@ -214,7 +132,7 @@ export class PedestrianManager {
         p.idleTimer -= dt;
         // Subtle breathing animation during idle
         p.walkCycle += dt * 1.5;
-        p.body.position.y = 1.35 + Math.sin(p.walkCycle) * 0.015;
+        p.body.position.y = p.body.userData.baseY + Math.sin(p.walkCycle) * 0.015;
         p.leftLeg.rotation.x = 0;
         p.rightLeg.rotation.x = 0;
         p.leftArm.rotation.x = 0;
@@ -277,7 +195,7 @@ export class PedestrianManager {
         p.rightLeg.rotation.x = swing;
         p.leftArm.rotation.x = swing * 0.85;
         p.rightArm.rotation.x = -swing * 0.85;
-        p.body.position.y = 1.35 + Math.abs(Math.sin(p.walkCycle * 2)) * 0.04; // Torso step bob
+        p.body.position.y = p.body.userData.baseY + Math.abs(Math.sin(p.walkCycle * 2)) * 0.04; // Torso step bob
       }
     }
   }

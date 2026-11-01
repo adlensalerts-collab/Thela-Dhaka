@@ -16,6 +16,10 @@ import { spawnTraffic, updateTraffic, type TrafficItem } from './world/traffic';
 import { DamageSystem, checkVehicleImpact } from './damage';
 import { createPbrMaterials, applyWorldUV } from './render/pbr';
 import { setupRealisticLighting, type LightingRig } from './render/lighting';
+import { SaleIndicator } from './ui/saleIndicator';
+import { createHumanRig, setPushPose, animateHuman } from './world/humans';
+import { buildDhakaBuilding } from './world/buildings';
+import { loadDisplaySettings } from './render/display';
 
 export interface GameState {
   mode: 'vendor' | 'police' | 'online_vendor' | 'online_police';
@@ -72,6 +76,10 @@ export class GameEngine {
   traffic: TrafficItem[] = [];
   damage = new DamageSystem();
   lighting: LightingRig | null = null;
+  saleIndicator!: SaleIndicator;
+  vendorPhase: number = 0;
+  officerPhase: number = 0;
+  npcPhase: number = 0;
   animId: number = 0;
   acc: number = 0;
   lastHudPublishTime: number = 0;
@@ -123,6 +131,7 @@ export class GameEngine {
     this.clock = new THREE.Clock();
 
     this.scene = new THREE.Scene();
+    this.saleIndicator = new SaleIndicator(this.scene);
 
     this.camera = new THREE.PerspectiveCamera(66, container.clientWidth / container.clientHeight, 0.1, 470);
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -265,6 +274,11 @@ export class GameEngine {
 
   initLights() {
     this.lighting = setupRealisticLighting(this.renderer, this.scene);
+    this.lighting.setBrightness(loadDisplaySettings().brightness);
+  }
+
+  setBrightness(v: number) {
+    this.lighting?.setBrightness(v);
   }
 
   initWorld() {
@@ -361,30 +375,9 @@ export class GameEngine {
 
     const buildBuilding = (x: number, z: number) => {
       const h = rand(10, 31), width = rand(17, 23), depth = rand(17, 23);
-      const wallMat = Math.random() < 0.5 ? mat.plaster : mat.brick;
-      block(this.scene, width, h, depth, wallMat, x, h / 2, z);
-      block(this.scene, width + 1, 0.5, depth + 1, mat.concrete, x, h + 0.25, z);
-      const faces = Math.max(2, Math.floor(h / 3.4));
-      for (let f = 0; f < faces; f++) {
-        for (let j = -2; j <= 2; j++) {
-          if (f === 0) continue;
-          const win = block(this.scene, 1.8, 1.7, 0.05, mat.glass, x + j * (width / 6), f * 3 + 2, z + depth / 2 + 0.03, false);
-          win.castShadow = false;
-          block(this.scene, 1.8, 0.12, 0.2, mat.concrete, x + j * width / 6, f * 3 + 1.2, z + depth / 2 + 0.18, false);
-        }
-      }
-      block(this.scene, width * 0.74, 2.4, 0.9, matte(pick(['#368778', '#d78342', '#b3a647', '#c85b48'])), x, 1.6, z + depth / 2 + 0.55);
-      sign(this.scene, pick(shops), x, 3.7, z + depth / 2 + 0.65, Math.min(9, width * 0.75));
-
-      // Register building into collision obstacles
-      this.obstacles.push({
-        type: 'box',
-        x,
-        z,
-        hw: width / 2 + 0.65,
-        hd: depth / 2 + 0.65,
-        tag: 'building'
-      });
+      const color = pick(['#e0d4bc', '#d9cdb4', '#e8dfce', '#d4c7af', '#dfd7c5']);
+      const b = buildDhakaBuilding(this.scene, { x, z, width, depth, height: h, color, shopNames: shops });
+      this.obstacles.push(b.obstacle);
     };
 
     for (let i = 0; i < 4; i++) {
@@ -470,27 +463,12 @@ export class GameEngine {
 
     this.traffic = spawnTraffic(this.scene, street, 18);
 
-    const makeHuman = (police = false) => {
-      const g = new THREE.Group();
-      const shirt = matte(police ? '#284970' : pick(['#df8565', '#69a89b', '#d8bb70', '#a0a0aa']));
-      const pants = matte(police ? '#20314a' : '#414348');
-      cylinder(g, 0.37, 0.46, 1.2, shirt, 0, 1.36, 0, 8);
-      cylinder(g, 0.31, 0.35, 0.8, pants, -0.17, 0.39, 0, 8);
-      cylinder(g, 0.31, 0.35, 0.8, pants, 0.17, 0.39, 0, 8);
-      sphere(g, 0.34, matte('#b87954'), 0, 2.2, 0);
-      block(g, 0.38, 0.18, 0.32, matte('#24292c'), 0, 2.52, 0.01);
-      for (const xx of [-0.45, 0.45]) {
-        const arm = cylinder(g, 0.14, 0.13, 0.9, shirt, xx, 1.44, -0.05, 8);
-        arm.rotation.z = xx > 0 ? -0.3 : 0.3;
-      }
-      if (police) block(g, 0.65, 0.23, 0.65, matte('#203b65'), 0, 2.61, 0);
-      return g;
-    };
-
     const makeCart = (isVendor = true) => {
       const g = new THREE.Group();
-      const avatar = makeHuman(!isVendor);
-      g.add(avatar);
+      const rig = createHumanRig(isVendor ? { outfit: 'lungi', shirt: '#ebe5d6', bottom: '#2f6b8a', gamchha: true } : { outfit: 'police' });
+      if (isVendor) setPushPose(rig);
+      g.add(rig.group);
+      g.userData.rig = rig;
       if (isVendor) {
         const frame = new THREE.Group();
         frame.position.z = -1.35;
@@ -521,7 +499,7 @@ export class GameEngine {
 
     this.human = makeCart(true);
     this.scene.add(this.human);
-    this.officer = makeHuman(true);
+    this.officer = makeCart(false);
     this.scene.add(this.officer);
     this.npcVendor = makeCart(true);
     this.scene.add(this.npcVendor);
@@ -1225,6 +1203,41 @@ export class GameEngine {
       this.npcVendor.rotation.y = -vendorHeading;
     }
 
+    // Update walk cycles & limb poses for realistic human figures
+    const isVendorPlayer = this.state.mode === 'vendor' || this.state.mode === 'online_vendor';
+    const vendorSpeed = isVendorPlayer ? Math.abs(this.currentSpeed) : 0;
+    this.vendorPhase += vendorSpeed * dt * 2.2;
+    if (this.human.userData.rig) {
+      animateHuman(this.human.userData.rig, this.vendorPhase, Math.min(1, vendorSpeed / 5), true);
+    }
+
+    let officerSpeed = 0;
+    if (!isVendorPlayer) {
+      officerSpeed = Math.abs(this.currentSpeed);
+    } else if (this.state.mode === 'vendor') {
+      if (this.state.alert) {
+        _toHuman.subVectors(this.human.position, this.officer.position);
+        officerSpeed = Math.min(_toHuman.length(), 1) * 3.55;
+      } else {
+        const angle = this.state.time * 0.3;
+        officerSpeed = Math.hypot(Math.sin(angle) * 1.1, Math.cos(angle * 0.7) * 0.9);
+      }
+    }
+    this.officerPhase += officerSpeed * dt * 2.2;
+    if (this.officer.userData.rig) {
+      animateHuman(this.officer.userData.rig, this.officerPhase, Math.min(1, officerSpeed / 5), false);
+    }
+
+    let npcSpeed = 0;
+    if (this.state.mode === 'police') {
+      const d = this.vector2(this.officer.position, this.npcVendor.position);
+      npcSpeed = d < 13 ? 3.8 : 2.2;
+    }
+    this.npcPhase += npcSpeed * dt * 2.2;
+    if (this.npcVendor.userData.rig) {
+      animateHuman(this.npcVendor.userData.rig, this.npcPhase, Math.min(1, npcSpeed / 5), true);
+    }
+
     // Update A* Sidewalk Pedestrian crowd
     if (this.pedestrianManager) {
       this.pedestrianManager.update(dt);
@@ -1375,6 +1388,22 @@ export class GameEngine {
       this.lighting?.update(new THREE.Vector3(0, 0, 0), this.camera.position);
     }
 
+    // Update floating sale progress indicator
+    const s = this.state?.sale;
+    const isVendor = this.state && (this.state.mode === 'vendor' || this.state.mode === 'online_vendor');
+    this.saleIndicator.update(
+      this.human.position,
+      s && isVendor
+        ? {
+            progress: (this.state.time - s.start) / s.seconds,
+            secondsLeft: s.seconds - (this.state.time - s.start),
+            label: s.product,
+            price: s.price
+          }
+        : null,
+      dt
+    );
+
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -1385,6 +1414,7 @@ export class GameEngine {
   stop() {
     this.isDestroyed = true;
     cancelAnimationFrame(this.animId);
+    this.saleIndicator?.dispose();
     this.lighting?.dispose();
     for (const cleanup of this.cleanupListeners) {
       cleanup();

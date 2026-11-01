@@ -11,19 +11,24 @@ import {
   assignKey,
   GameSettingsData
 } from '../game/keybindings';
+import { BrightnessControl } from './BrightnessControl';
+import { loadDisplaySettings, saveDisplaySettings } from '../game/render/display';
 
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
   onBindingsUpdated: (settings: GameSettingsData) => void;
+  onBrightnessChange?: (v: number) => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
   onClose,
-  onBindingsUpdated
+  onBindingsUpdated,
+  onBrightnessChange
 }) => {
   const [settings, setSettings] = useState<GameSettingsData>(() => loadSettings());
+  const [brightness, setBrightness] = useState(() => loadDisplaySettings().brightness);
   const [rebinding, setRebinding] = useState<{ action: ActionName; slot: number } | null>(null);
   const [saveToast, setSaveToast] = useState(false);
 
@@ -31,6 +36,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     if (isOpen) {
       const current = loadSettings();
       setSettings(current);
+      setBrightness(loadDisplaySettings().brightness);
       setRebinding(null);
     }
   }, [isOpen]);
@@ -141,6 +147,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </span>
             </div>
           )}
+
+          {/* Display Settings */}
+          <div className="p-4 rounded-2xl bg-black/30 border border-teal-800/50 space-y-4">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-amber-400 flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-amber-400" />
+              Display (ডিসপ্লে)
+            </h3>
+            <BrightnessControl
+              value={brightness}
+              onChange={(v) => {
+                setBrightness(v);
+                saveDisplaySettings({ brightness: v });
+                onBrightnessChange?.(v);
+              }}
+            />
+          </div>
 
           {/* Mouse & Camera Settings */}
           <div className="p-4 rounded-2xl bg-black/30 border border-teal-800/50 space-y-4">

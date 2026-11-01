@@ -27,7 +27,11 @@ export interface BuildingOptions {
 const FLOOR_H = 3.2;
 
 function rng(seed: number) {
-  return () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+  let s = (Math.abs(Math.floor(seed)) % 2147483646) + 1;
+  return () => {
+    s = (s * 16807) % 2147483647;
+    return Math.max(0, Math.min(0.999999, (s - 1) / 2147483646));
+  };
 }
 
 // ---------- shared resources ----------
@@ -87,11 +91,12 @@ class Instancer {
 }
 
 function signMaterial(text: string, bg: string) {
+  const safeBg = bg || '#1f6b5a';
   const c = document.createElement('canvas');
   c.width = 512; c.height = 128;
   const g = c.getContext('2d')!;
   const grad = g.createLinearGradient(0, 0, 0, 128);
-  grad.addColorStop(0, bg); grad.addColorStop(1, '#0d1a18');
+  grad.addColorStop(0, safeBg); grad.addColorStop(1, '#0d1a18');
   g.fillStyle = grad; g.fillRect(0, 0, 512, 128);
   g.strokeStyle = 'rgba(255,255,255,0.6)'; g.lineWidth = 6; g.strokeRect(6, 6, 500, 116);
   g.fillStyle = '#fff6dc';
@@ -106,7 +111,8 @@ function signMaterial(text: string, bg: string) {
 }
 
 export function buildDhakaBuilding(scene: THREE.Scene, opts: BuildingOptions): { group: THREE.Group; obstacle: BoxObstacle } {
-  const r = rng(opts.seed ?? Math.floor(opts.x * 7919 + opts.z * 104729 + 99991) + 1);
+  const rawSeed = opts.seed ?? Math.abs(Math.floor(opts.x * 7919 + opts.z * 104729 + 99991)) + 1;
+  const r = rng(rawSeed);
   const S = shared();
   const width = opts.width ?? 17 + r() * 6;
   const depth = opts.depth ?? 17 + r() * 6;
@@ -197,8 +203,11 @@ export function buildDhakaBuilding(scene: THREE.Scene, opts: BuildingOptions): {
     }
     const names = opts.shopNames ?? [];
     if (names.length) {
-      const name = names[Math.floor(r() * names.length)];
-      const bg = ['#1f6b5a', '#8c2f2a', '#2a4f86', '#7a5a14'][Math.floor(r() * 4)];
+      const nameIdx = Math.abs(Math.floor(r() * names.length)) % names.length;
+      const name = names[nameIdx] || 'দোকান';
+      const bgPalette = ['#1f6b5a', '#8c2f2a', '#2a4f86', '#7a5a14'];
+      const bgIdx = Math.abs(Math.floor(r() * bgPalette.length)) % bgPalette.length;
+      const bg = bgPalette[bgIdx] || '#1f6b5a';
       const sign = new THREE.Mesh(S.box, signMaterial(name, bg));
       const signW = Math.min(side.half * 2 * 0.8, 10);
       sign.scale.set(signW, signW / 4.5, 0.18);

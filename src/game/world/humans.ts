@@ -44,7 +44,11 @@ const SKINS = ['#8d5a3b', '#9c6644', '#7a4b31', '#a8704a', '#6e432c'];
 const HAIR = ['#141110', '#1d1714', '#2a211b'];
 
 function rng(seed: number) {
-  return () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+  let s = (Math.abs(Math.floor(seed)) % 2147483646) + 1;
+  return () => {
+    s = (s * 16807) % 2147483647;
+    return Math.max(0, Math.min(0.999999, (s - 1) / 2147483646));
+  };
 }
 
 const matCache = new Map<string, THREE.Material>();
@@ -168,7 +172,7 @@ function buildLeg(group: THREE.Group, side: number, thighMat: THREE.Material, sh
 
 export function createHumanRig(opts: HumanOptions = {}): HumanRig {
   const r = rng(opts.seed ?? Math.floor(Math.random() * 1e9) + 1);
-  const pick = <T,>(a: T[]) => a[Math.floor(r() * a.length)];
+  const pick = <T,>(a: T[]) => a[Math.abs(Math.floor(r() * a.length)) % a.length];
   const outfit: Outfit = opts.outfit ?? 'shirt';
   const police = outfit === 'police';
   const skinC = opts.skin ?? pick(SKINS);

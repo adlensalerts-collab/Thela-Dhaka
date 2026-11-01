@@ -246,6 +246,7 @@ export default function App() {
         isOpen={showSettings}
         onClose={() => setShowSettings(false)}
         onBindingsUpdated={handleUpdateSettings}
+        onBrightnessChange={(v) => engineRef.current?.setBrightness(v)}
       />
     </div>
   );
