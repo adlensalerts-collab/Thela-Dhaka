@@ -17,6 +17,7 @@ import {
 import { GameState } from '../game/simulation';
 import { GameSettingsData, formatCode } from '../game/keybindings';
 import { GARAGE_SITES } from '../game/world/garages';
+import { AAROT_SITES } from '../game/world/aarots';
 
 interface GameHUDProps {
   state: GameState;
@@ -84,6 +85,22 @@ export const GameHUD: React.FC<GameHUDProps> = ({
         cx.textAlign = 'center';
         cx.textBaseline = 'middle';
         cx.fillText('G', gx, gz + 0.5);
+      }
+      // Aarot markers (green square with "A") at each AAROT_SITES position
+      for (const site of AAROT_SITES) {
+        const ax = ((site.x + 120) / 240) * size;
+        const az = ((site.z + 120) / 240) * size;
+        const boxSize = 13;
+        cx.fillStyle = '#22c55e';
+        cx.fillRect(ax - boxSize / 2, az - boxSize / 2, boxSize, boxSize);
+        cx.strokeStyle = '#0f291c';
+        cx.lineWidth = 1.5;
+        cx.strokeRect(ax - boxSize / 2, az - boxSize / 2, boxSize, boxSize);
+        cx.fillStyle = '#111827';
+        cx.font = 'bold 9px sans-serif';
+        cx.textAlign = 'center';
+        cx.textBaseline = 'middle';
+        cx.fillText('A', ax, az + 0.5);
       }
     }
     bgCanvasRef.current = bg;
@@ -305,13 +322,25 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                 <ArrowUp className="w-4 h-4" />
                 <span>Upgrade (৳{130 + state.level * 85}) [{upgradeKey}]</span>
               </button>
-              <button
-                onClick={() => onAction('restock')}
-                className="px-4 py-3 rounded-2xl bg-teal-800/80 hover:bg-teal-700 border border-teal-600/60 text-teal-200 font-bold text-xs shadow-lg flex items-center gap-2 transition active:scale-95"
-              >
-                <RefreshCw className="w-4 h-4" />
-                <span>Restock [{restockKey}]</span>
-              </button>
+              {state.nearAarot ? (
+                <button
+                  onClick={() => onAction('restock')}
+                  className="px-4 py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-500 border border-emerald-400 text-gray-950 font-bold text-xs shadow-lg shadow-emerald-500/20 flex items-center gap-2 transition active:scale-95 animate-pulse cursor-pointer"
+                  title="Restock inventory at wholesale aarot"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                  <span>Restock [{restockKey}]</span>
+                </button>
+              ) : (
+                <button
+                  onClick={() => onAction('restock')}
+                  className="px-4 py-3 rounded-2xl bg-teal-950/70 hover:bg-teal-900/80 border border-teal-700/50 text-gray-300 font-bold text-xs shadow-lg flex items-center gap-2 transition active:scale-95 cursor-pointer"
+                  title="Drive to nearest wholesale aarot to restock"
+                >
+                  <RefreshCw className="w-4 h-4 text-emerald-400/80" />
+                  <span>আড়ত {state.aarotDistance ?? 0}m [{restockKey}]</span>
+                </button>
+              )}
               {state.level >= 10 && (
                 <button
                   onClick={() => onAction('placeStall')}

@@ -21,7 +21,8 @@ import { createHumanRig, setPushPose, animateHuman } from './world/humans';
 import { buildDhakaBuilding } from './world/buildings';
 import { loadDisplaySettings } from './render/display';
 import { SpatialSoundManager } from './audio/ambient';
-import { GARAGE_SITES, buildGarage, nearestGarage } from './world/garages';
+import { GARAGE_SITES, buildGarage, entranceForSite, nearestGarage } from './world/garages';
+import { AAROT_SITES, buildAarot, entranceForAarot, nearestAarot } from './world/aarots';
 
 const STALL_POSITIONS: ReadonlyArray<readonly [number, number]> = [
   [-9, -27],
@@ -60,6 +61,9 @@ export interface GameState {
   nearGarage: boolean;
   garageDistance: number;
   repairing?: { seconds: number; start: number; cost: number; entrance: { x: number; z: number } } | null;
+  nearAarot: boolean;
+  aarotDistance: number;
+  restocking?: { seconds: number; start: number; cost: number; needed: number; entrance: { x: number; z: number } } | null;
   ambientZone?: string;
   ambientZoneBn?: string;
   trafficNoise?: number;
@@ -199,6 +203,9 @@ export class GameEngine {
       nearGarage: false,
       garageDistance: 20,
       repairing: null,
+      nearAarot: false,
+      aarotDistance: 20,
+      restocking: null,
       ambientZone: 'Main Road · Traffic',
       ambientZoneBn: 'মূল সড়ক · যানজট',
       trafficNoise: 0.25,
@@ -431,13 +438,22 @@ export class GameEngine {
       for (let j = 0; j < 4; j++) {
         const x = -60 + i * 40;
         const z = -60 + j * 40;
-        if (GARAGE_SITES.some((g) => g.x === x && g.z === z)) continue;
+        if (
+          GARAGE_SITES.some((g) => g.x === x && g.z === z) ||
+          AAROT_SITES.some((a) => a.x === x && a.z === z)
+        ) {
+          continue;
+        }
         buildBuilding(x, z);
       }
     }
     for (const site of GARAGE_SITES) {
       const g = buildGarage(this.scene, site);
       this.obstacles.push(...g.obstacles);
+    }
+    for (const site of AAROT_SITES) {
+      const a = buildAarot(this.scene, site);
+      this.obstacles.push(...a.obstacles);
     }
     for (const x of [-100, 100]) {
       for (const z of [-100, -60, -20, 20, 60, 100]) {
@@ -508,7 +524,11 @@ export class GameEngine {
 
     buildPavementTrees(this.scene, this.obstacles, {
       streets: street,
-      avoid: STALL_POSITIONS.map(([x, z]) => ({ x, z, r: 3.5 }))
+      avoid: [
+        ...STALL_POSITIONS.map(([x, z]) => ({ x, z, r: 3.5 })),
+        ...GARAGE_SITES.map((s) => ({ ...entranceForSite(s), r: 5 })),
+        ...AAROT_SITES.map((s) => ({ ...entranceForAarot(s), r: 5 }))
+      ]
     });
 
     this.traffic = spawnTraffic(this.scene, street, 18);
@@ -804,7 +824,16 @@ export class GameEngine {
 
   beginSale() {
     const isVendor = this.state.mode === 'vendor' || this.state.mode === 'online_vendor';
-    if (!isVendor || this.state.sale || this.state.stock <= 0 || this.state.cooldown > 0) return;
+    if (
+      !isVendor ||
+      this.state.sale ||
+      this.state.repairing ||
+      this.state.restocking ||
+      this.state.stock <= 0 ||
+      this.state.cooldown > 0
+    ) {
+      return;
+    }
     if (this.damage.broken) {
       this.onEvent('notify', 'Thela broken — press Repair');
       return;
@@ -870,21 +899,31 @@ export class GameEngine {
 
   restockCart() {
     const isVendor = this.state.mode === 'vendor' || this.state.mode === 'online_vendor';
-    if (!isVendor) return;
+    if (!isVendor || this.state.sale || this.state.repairing || this.state.restocking) return;
+    const { entrance, distance } = nearestAarot(this.human.position.x, this.human.position.z);
+    if (distance > 4.5) {
+      this.onEvent('notify', `আড়তে যান — ${Math.round(distance)}m দূরে`);
+      return;
+    }
     const needed = this.state.cap - this.state.stock;
     const cost = needed * 7;
     if (needed === 0) {
-      this.onEvent('notify', 'Inventory is full.');
+      this.onEvent('notify', 'মাল ভর্তি আছে');
       return;
     }
     if (cost > this.state.cash) {
-      this.onEvent('notify', `Restock costs ৳${cost}. Earn more.`);
+      this.onEvent('notify', `টাকা কম — রিস্টকে ৳${cost} লাগবে`);
       return;
     }
-    this.state.cash -= cost;
-    this.state.stock = this.state.cap;
-    this.playBeep(450, 0.15);
-    this.onEvent('notify', `Restocked ${needed} items for ৳${cost}.`);
+    this.state.restocking = {
+      seconds: 2.5,
+      start: this.state.time,
+      cost,
+      needed,
+      entrance
+    };
+    this.currentSpeed = 0;
+    this.playBeep(440, 0.12);
     this.publishState(true);
   }
 
@@ -983,7 +1022,7 @@ export class GameEngine {
     } else if (action === 'changeView' || action === 'change_view') {
       this.cycleCameraView();
     } else if (action === 'repair') {
-      if (this.state.repairing) return;
+      if (this.state.repairing || this.state.sale || this.state.restocking) return;
       const p = isVendor ? this.human : this.officer;
       const { entrance, distance } = nearestGarage(p.position.x, p.position.z);
       if (distance > 4.5) {
@@ -1047,13 +1086,14 @@ export class GameEngine {
     const p = isVendor ? this.human : this.officer;
 
     // Steering: turnLeft / turnRight rotate heading (vendor ~2.2 rad/s, police ~3.2 rad/s)
+    const isLocked = Boolean(this.state.repairing || this.state.restocking);
     const turnRate = isVendor ? 2.2 : 3.2;
-    let turnInput = this.state.repairing
+    let turnInput = isLocked
       ? 0
       : (this.heldActions.has('turnRight') ? 1 : 0) - (this.heldActions.has('turnLeft') ? 1 : 0);
 
     // Natural steering when reversing a cart
-    const isMovingBackward = !this.state.repairing && this.heldActions.has('backward') && !this.heldActions.has('forward');
+    const isMovingBackward = !isLocked && this.heldActions.has('backward') && !this.heldActions.has('forward');
     if (isMovingBackward) {
       turnInput = -turnInput;
     }
@@ -1069,7 +1109,7 @@ export class GameEngine {
     const baseSpeed = isVendor ? 4.85 : 5.85;
 
     let targetSpeed = 0;
-    if (!this.state.repairing) {
+    if (!isLocked) {
       if (this.heldActions.has('forward')) {
         targetSpeed = baseSpeed * (sprint ? 1.65 : 1.0);
       } else if (this.heldActions.has('backward')) {
@@ -1078,7 +1118,7 @@ export class GameEngine {
       targetSpeed *= this.damage.speedFactor;
     }
 
-    this.currentSpeed = this.state.repairing
+    this.currentSpeed = isLocked
       ? 0
       : THREE.MathUtils.damp(this.currentSpeed, targetSpeed, 8, dt);
 
@@ -1417,10 +1457,34 @@ export class GameEngine {
       }
     }
 
-    // Sync damage, garage proximity & ambient soundscape state
+    // Timed aarot restock check
+    if (this.state.restocking) {
+      const rs = this.state.restocking;
+      const elapsed = this.state.time - rs.start;
+      const distToEntrance = Math.hypot(p.position.x - rs.entrance.x, p.position.z - rs.entrance.z);
+      if (distToEntrance > 4.5) {
+        this.state.restocking = null;
+        this.playBeep(220, 0.2, 'sawtooth');
+        this.publishState(true);
+      } else if (elapsed >= rs.seconds) {
+        if (this.state.cash >= rs.cost) {
+          this.state.cash -= rs.cost;
+          this.state.stock = this.state.cap;
+          this.playBeep(450, 0.15);
+          this.onEvent('notify', `রিস্টক সম্পন্ন · ${rs.needed}টি পণ্য · ৳${rs.cost}`);
+        }
+        this.state.restocking = null;
+        this.publishState(true);
+      }
+    }
+
+    // Sync damage, garage & aarot proximity, and ambient soundscape state
     const gInfo = nearestGarage(p.position.x, p.position.z);
     this.state.nearGarage = gInfo.distance <= 4.5;
     this.state.garageDistance = Math.round(gInfo.distance);
+    const aInfo = nearestAarot(p.position.x, p.position.z);
+    this.state.nearAarot = aInfo.distance <= 4.5;
+    this.state.aarotDistance = Math.round(aInfo.distance);
     this.state.damage = this.damage.damage;
     this.state.repairCost = this.damage.repairCost(this.state.level);
     const snap = this.ambientAudio.getSnapshot();
@@ -1506,9 +1570,10 @@ export class GameEngine {
       this.lighting?.update(new THREE.Vector3(0, 0, 0), this.camera.position);
     }
 
-    // Update floating sale / garage repair progress indicator
+    // Update floating sale / garage repair / aarot restock progress indicator
     const s = this.state?.sale;
     const r = this.state?.repairing;
+    const rs = this.state?.restocking;
     const isVendor = this.state && (this.state.mode === 'vendor' || this.state.mode === 'online_vendor');
     const indicatorTarget = isVendor ? this.human.position : this.officer.position;
     this.saleIndicator.update(
@@ -1519,6 +1584,13 @@ export class GameEngine {
             secondsLeft: r.seconds - (this.state.time - r.start),
             label: 'মেরামত',
             price: r.cost
+          }
+        : rs && this.state
+        ? {
+            progress: (this.state.time - rs.start) / rs.seconds,
+            secondsLeft: rs.seconds - (this.state.time - rs.start),
+            label: 'রিস্টক',
+            price: rs.cost
           }
         : s && isVendor && this.state
         ? {
