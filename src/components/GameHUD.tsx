@@ -13,7 +13,10 @@ import {
   Wrench,
   Volume2,
   VolumeX,
-  Zap
+  Zap,
+  Sun,
+  CloudRain,
+  CloudFog
 } from 'lucide-react';
 import { GameState } from '../game/simulation';
 import { GameSettingsData, formatCode } from '../game/keybindings';
@@ -306,9 +309,31 @@ export const GameHUD: React.FC<GameHUDProps> = ({
           </div>
         </div>
 
-        {/* Top Right: Ambient Soundscape, Heat stars, Mute, Settings, Pause & FPS Counter */}
+        {/* Top Right: Weather, Ambient Soundscape, Heat stars, Mute, Settings, Pause & FPS Counter */}
         <div className="flex flex-col items-end gap-1.5 pointer-events-auto">
           <div className="flex items-center gap-2.5">
+            <button
+              onClick={() => onAction('cycleWeather')}
+              className="bg-black/60 backdrop-blur-md border border-teal-600/40 hover:bg-teal-900/50 rounded-2xl px-3.5 py-2 shadow-xl flex items-center gap-2 text-xs text-teal-100 transition cursor-pointer"
+              title="Dynamic Weather (Click to cycle Sunny / Rainy / Foggy)"
+            >
+              {state.weather === 'rainy' ? (
+                <CloudRain className="w-4 h-4 text-sky-400" />
+              ) : state.weather === 'foggy' ? (
+                <CloudFog className="w-4 h-4 text-slate-300" />
+              ) : (
+                <Sun className="w-4 h-4 text-amber-400" />
+              )}
+              <div className="flex flex-col items-start leading-tight">
+                <span className="font-semibold text-white text-[11px]">
+                  {state.weatherLabel || 'Sunny · রোদেলা'}
+                </span>
+                <span className="text-[10px] text-teal-300/90 font-mono">
+                  Grip {state.weatherTraction ?? 100}% · Vis {state.weatherVisibility ?? 100}%
+                </span>
+              </div>
+            </button>
+
             {state.ambientZone && (
               <div
                 className="hidden lg:flex bg-black/60 backdrop-blur-md border border-teal-600/40 rounded-2xl px-3.5 py-2 shadow-xl items-center gap-2 text-xs text-teal-200"

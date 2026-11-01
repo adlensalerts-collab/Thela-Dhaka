@@ -32,6 +32,7 @@ import { GARAGE_SITES, buildGarage, entranceForSite, nearestGarage } from './wor
 import { AAROT_SITES, buildAarot, entranceForAarot, nearestAarot } from './world/aarots';
 import { nearJunction, auditObstacles } from './world/layout';
 import { StaminaSystem } from './stamina';
+import { WeatherSystem, type WeatherType } from './world/weather';
 
 const STALL_POSITIONS = [
   [-20, 10.5, 'x'],
@@ -90,6 +91,10 @@ export interface GameState {
   staminaLevel: number;
   staminaUpgradeCost: number | null;
   exhausted: boolean;
+  weather: WeatherType;
+  weatherLabel: string;
+  weatherTraction: number;
+  weatherVisibility: number;
 }
 
 // Module-level reusable math objects for zero garbage collection during 60 FPS loop
@@ -121,6 +126,7 @@ export class GameEngine {
   traffic: TrafficItem[] = [];
   damage = new DamageSystem();
   stamina = new StaminaSystem();
+  weather!: WeatherSystem;
   lighting: LightingRig | null = null;
   saleIndicator!: SaleIndicator;
   vendorPhase: number = 0;
@@ -155,6 +161,8 @@ export class GameEngine {
   // Collision & Physics Feedback
   recoilVx: number = 0;
   recoilVz: number = 0;
+  driftVx: number = 0;
+  driftVz: number = 0;
   cameraShake: number = 0;
   trafficHitCooldown: number = 0;
   wallBumpCooldown: number = 0;
@@ -202,6 +210,7 @@ export class GameEngine {
     container.replaceChildren(this.renderer.domElement);
 
     this.initLights();
+    this.weather = new WeatherSystem(this.scene, this.lighting);
     this.initWorld();
 
     this.state = this.getInitialState('vendor');
@@ -258,7 +267,11 @@ export class GameEngine {
       stamina: 100,
       staminaLevel: isVendor ? 1 : 3,
       staminaUpgradeCost: isVendor ? 150 : null,
-      exhausted: false
+      exhausted: false,
+      weather: 'sunny',
+      weatherLabel: 'Sunny · রোদেলা',
+      weatherTraction: 100,
+      weatherVisibility: 100
     };
   }
 
@@ -949,6 +962,8 @@ export class GameEngine {
     this.npcVendor.rotation.y = 0;
     this.recoilVx = 0;
     this.recoilVz = 0;
+    this.driftVx = 0;
+    this.driftVz = 0;
     this.cameraShake = 0;
     this.trafficHitCooldown = 0;
     this.wallBumpCooldown = 0;
@@ -959,6 +974,7 @@ export class GameEngine {
     this.mouseMovedRecently = 0;
     this.damage.reset();
     this.stamina.reset(isVendor ? 1 : 3);
+    this.weather?.reset();
     this.clearInputs();
     this.acc = 0;
     this.playBeep(520, 0.2);
@@ -1232,6 +1248,12 @@ export class GameEngine {
       this.currentSpeed = 0;
       this.playBeep(420, 0.12);
       this.publishState(true);
+    } else if (action === 'cycleWeather' || action === 'weather') {
+      if (this.weather) {
+        const nextProfile = this.weather.cycleNext();
+        this.onEvent('notify', nextProfile.bnNotice);
+        this.publishState(true);
+      }
     } else if (action === 'pause') {
       this.onEvent('pause');
     }
@@ -1269,9 +1291,23 @@ export class GameEngine {
     const isVendor = this.state.mode === 'vendor' || this.state.mode === 'online_vendor';
     const p = isVendor ? this.human : this.officer;
 
-    // Steering: turnLeft / turnRight rotate heading (vendor ~2.2 rad/s, police ~3.2 rad/s)
+    // Update dynamic weather (sunny <-> rainy <-> foggy) & notify on transition
+    if (this.weather) {
+      const changedProfile = this.weather.update(dt, p.position.x, p.position.z);
+      if (changedProfile) {
+        this.onEvent('notify', changedProfile.bnNotice);
+        this.publishState(true);
+      }
+    }
+
+    const accelGrip = this.weather ? this.weather.accelGrip : 1;
+    const turnGrip = this.weather ? this.weather.turnGrip : 1;
+    const weatherSpeedMult = this.weather ? this.weather.speedMultiplier : 1;
+    const traction = this.weather ? this.weather.traction : 1;
+
+    // Steering: turnLeft / turnRight rotate heading (affected by surface turnGrip)
     const isLocked = Boolean(this.state.repairing || this.state.restocking);
-    const turnRate = isVendor ? 2.2 : 3.2;
+    const turnRate = (isVendor ? 2.2 : 3.2) * turnGrip;
     let turnInput = isLocked
       ? 0
       : (this.heldActions.has('turnRight') ? 1 : 0) - (this.heldActions.has('turnLeft') ? 1 : 0);
@@ -1283,10 +1319,23 @@ export class GameEngine {
     }
 
     if (turnInput !== 0) {
+      // Wet/slippery road lateral drift when turning at speed
+      if (traction < 0.92 && Math.abs(this.currentSpeed) > 1.8) {
+        const slip = (1 - traction) * Math.abs(this.currentSpeed) * 0.42;
+        const sideX = Math.cos(this.state.heading) * turnInput;
+        const sideZ = Math.sin(this.state.heading) * turnInput;
+        this.driftVx = THREE.MathUtils.damp(this.driftVx, sideX * slip, 4, dt);
+        this.driftVz = THREE.MathUtils.damp(this.driftVz, sideZ * slip, 4, dt);
+      }
       this.state.heading += turnInput * turnRate * dt;
       while (this.state.heading > Math.PI) this.state.heading -= Math.PI * 2;
       while (this.state.heading < -Math.PI) this.state.heading += Math.PI * 2;
     }
+
+    // Dampen lateral drift based on road traction
+    const driftDamp = 3.2 + traction * 5.5;
+    this.driftVx = THREE.MathUtils.damp(this.driftVx, 0, driftDamp, dt);
+    this.driftVz = THREE.MathUtils.damp(this.driftVz, 0, driftDamp, dt);
 
     // Speed along heading: forward (with 1.65x sprint multiplier) or backward (55% speed)
     const wasExhausted = this.stamina.exhausted;
@@ -1311,19 +1360,20 @@ export class GameEngine {
       } else if (this.heldActions.has('backward')) {
         targetSpeed = -baseSpeed * 0.55 * this.stamina.speedFactor;
       }
-      targetSpeed *= this.damage.speedFactor;
+      targetSpeed *= this.damage.speedFactor * weatherSpeedMult;
     }
 
+    // Road traction controls how quickly the vehicle accelerates and brakes
     this.currentSpeed = isLocked
       ? 0
-      : THREE.MathUtils.damp(this.currentSpeed, targetSpeed, 8, dt);
+      : THREE.MathUtils.damp(this.currentSpeed, targetSpeed, 8 * accelGrip, dt);
 
-    // Forward motion vector along character's current heading
+    // Forward motion vector along character's current heading + wet-road lateral drift
     const moveHeadingX = Math.sin(this.state.heading);
     const moveHeadingZ = -Math.cos(this.state.heading);
 
-    const vx = (moveHeadingX * this.currentSpeed + this.recoilVx) * dt;
-    const vz = (moveHeadingZ * this.currentSpeed + this.recoilVz) * dt;
+    const vx = (moveHeadingX * this.currentSpeed + this.recoilVx + this.driftVx) * dt;
+    const vz = (moveHeadingZ * this.currentSpeed + this.recoilVz + this.driftVz) * dt;
 
     // Advanced collision resolution with wall-sliding and dual-collider thela rig
     const moveRes = resolveMovement(
@@ -1395,8 +1445,12 @@ export class GameEngine {
     }
 
     // AI Police pursuit & navigation with collision resolution (Solo Vendor Mode)
+    const visibilityFactor = this.weather ? this.weather.visibilityFactor : 1;
+    const policeSightRange = 55 * visibilityFactor;
+    const policeEscapeDist = 30 * visibilityFactor;
+
     if (this.state.mode === 'vendor') {
-      if (this.state.heat > 27 && this.state.cooldown === 0 && this.vector2(this.human.position, this.officer.position) < 55) {
+      if (this.state.heat > 27 && this.state.cooldown === 0 && this.vector2(this.human.position, this.officer.position) < policeSightRange) {
         this.state.alert = true;
       }
       _toHuman.subVectors(this.human.position, this.officer.position);
@@ -1406,7 +1460,7 @@ export class GameEngine {
         _officerDir.y = 0;
         _officerDir.normalize();
 
-        const officerSpeed = Math.min(dist, 1) * 3.55;
+        const officerSpeed = Math.min(dist, 1) * 3.55 * weatherSpeedMult;
         const officerVx = _officerDir.x * officerSpeed * dt;
         const officerVz = _officerDir.z * officerSpeed * dt;
         const officerHeading = Math.atan2(_officerDir.x, -_officerDir.z);
@@ -1430,7 +1484,7 @@ export class GameEngine {
           this.onEvent('bribe_prompt');
           return;
         }
-        if (dist > 30) {
+        if (dist > policeEscapeDist) {
           this.state.escape += dt;
           if (this.state.escape > 5) {
             this.state.alert = false;
@@ -1702,6 +1756,12 @@ export class GameEngine {
     this.state.staminaLevel = this.stamina.level;
     this.state.staminaUpgradeCost = isVendor ? this.stamina.nextUpgradeCost : null;
     this.state.exhausted = this.stamina.exhausted;
+    if (this.weather) {
+      this.state.weather = this.weather.current;
+      this.state.weatherLabel = this.weather.profile.label;
+      this.state.weatherTraction = Math.round(this.weather.traction * 100);
+      this.state.weatherVisibility = Math.round(this.weather.visibilityFactor * 100);
+    }
 
     // Throttled publish to React HUD
     this.publishState(false);
@@ -1904,6 +1964,7 @@ export class GameEngine {
     cancelAnimationFrame(this.animId);
     this.ambientAudio?.dispose();
     this.saleIndicator?.dispose();
+    this.weather?.dispose();
     this.lighting?.dispose();
     for (const cleanup of this.cleanupListeners) {
       cleanup();
