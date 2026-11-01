@@ -178,7 +178,7 @@ export function generatePbrSet(surface: Surface): PbrSet {
 /** Swap in real CC0 textures from public/assets/textures/<surface>/ if they exist. */
 function tryRealTextures(surface: Surface, mat: THREE.MeshStandardMaterial) {
   const loader = new THREE.TextureLoader();
-  const base = `/assets/textures/${surface}/`;
+  const base = `${import.meta.env.BASE_URL}assets/textures/${surface}/`;
   const slots: Array<[keyof PbrSet, string, boolean]> = [
     ['map', 'color.jpg', true], ['normalMap', 'normal.jpg', false], ['roughnessMap', 'roughness.jpg', false]
   ];

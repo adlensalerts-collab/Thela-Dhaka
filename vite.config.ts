@@ -5,6 +5,8 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
+    // GitHub Pages serves the site from /Thela-Dhaka/; AI Studio and local dev use /.
+    base: process.env.GITHUB_PAGES === 'true' ? '/Thela-Dhaka/' : '/',
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {

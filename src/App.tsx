@@ -7,6 +7,10 @@ import { SettingsModal } from './components/SettingsModal';
 import { loadSettings, GameSettingsData } from './game/keybindings';
 import { io, Socket } from 'socket.io-client';
 
+const SERVER_URL = import.meta.env.VITE_SERVER_URL as string | undefined;
+const ONLINE_AVAILABLE = import.meta.env.VITE_STATIC_HOST !== 'true' || !!SERVER_URL;
+const OFFLINE_MESSAGE = 'Online multiplayer is not available on this website yet — please play Solo.\nঅনলাইন মাল্টিপ্লেয়ার এই সাইটে এখনো চালু নেই — সোলো খেলুন।';
+
 export default function App() {
   const containerRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<GameEngine | null>(null);
@@ -52,8 +56,11 @@ export default function App() {
     engine.start();
 
     // Socket.io connection for online multiplayer
-    const socket = io();
+    const socket = ONLINE_AVAILABLE ? (SERVER_URL ? io(SERVER_URL) : io()) : null;
     socketRef.current = socket;
+    if (!socket) {
+      return () => { engine.stop(); };
+    }
 
     socket.on('room_created', ({ roomCode, role }) => {
       setRoomCode(roomCode);
@@ -107,12 +114,19 @@ export default function App() {
   };
 
   const handleCreateRoom = (role: 'vendor' | 'police', name: string) => {
-    if (!socketRef.current) return;
+    if (!socketRef.current) {
+      alert(OFFLINE_MESSAGE);
+      return;
+    }
     socketRef.current.emit('create_room', { role, playerName: name });
   };
 
   const handleJoinRoom = (code: string, name: string) => {
-    if (!socketRef.current || !engineRef.current) return;
+    if (!socketRef.current) {
+      alert(OFFLINE_MESSAGE);
+      return;
+    }
+    if (!engineRef.current) return;
     setRoomCode(code);
     socketRef.current.emit('join_room', { roomCode: code, playerName: name });
     engineRef.current.setMode('online_police');
