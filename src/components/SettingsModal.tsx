@@ -13,7 +13,7 @@ import {
 } from '../game/keybindings';
 import { BrightnessControl } from './BrightnessControl';
 import { loadDisplaySettings, saveDisplaySettings } from '../game/render/display';
-import { loadAmbientVolume, saveAmbientVolume } from '../game/audio/ambientAudio';
+import { loadAmbientVolume, saveAmbientVolume } from '../game/audio/ambient';
 
 interface SettingsModalProps {
   isOpen: boolean;

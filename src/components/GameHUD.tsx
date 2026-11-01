@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { GameState } from '../game/simulation';
 import { GameSettingsData, formatCode } from '../game/keybindings';
+import { GARAGE_SITES } from '../game/world/garages';
 
 interface GameHUDProps {
   state: GameState;
@@ -67,6 +68,22 @@ export const GameHUD: React.FC<GameHUDProps> = ({
         cx.moveTo(0, t);
         cx.lineTo(size, t);
         cx.stroke();
+      }
+      // Garage markers (amber square with "G") at each GARAGE_SITES position
+      for (const site of GARAGE_SITES) {
+        const gx = ((site.x + 120) / 240) * size;
+        const gz = ((site.z + 120) / 240) * size;
+        const boxSize = 13;
+        cx.fillStyle = '#f59e0b';
+        cx.fillRect(gx - boxSize / 2, gz - boxSize / 2, boxSize, boxSize);
+        cx.strokeStyle = '#142e29';
+        cx.lineWidth = 1.5;
+        cx.strokeRect(gx - boxSize / 2, gz - boxSize / 2, boxSize, boxSize);
+        cx.fillStyle = '#111827';
+        cx.font = 'bold 9px sans-serif';
+        cx.textAlign = 'center';
+        cx.textBaseline = 'middle';
+        cx.fillText('G', gx, gz + 0.5);
       }
     }
     bgCanvasRef.current = bg;
@@ -249,9 +266,15 @@ export const GameHUD: React.FC<GameHUDProps> = ({
         </div>
       </div>
 
-      {/* Center Notice Popup */}
+      {/* Top-Centre Notice Popup */}
       {notice && (
-        <div className="self-center bg-teal-950/95 border border-teal-500/60 rounded-2xl px-6 py-2.5 shadow-2xl backdrop-blur-md text-amber-300 font-bold text-sm tracking-wide text-center animate-bounce">
+        <div className="
+          absolute top-[104px] left-1/2 -translate-x-1/2 max-w-[560px] w-max
+          pointer-events-none bg-teal-950/95 border border-teal-500/60
+          rounded-2xl px-6 py-2.5 shadow-2xl backdrop-blur-md
+          text-amber-300 font-bold text-sm tracking-wide text-center
+          transition-all duration-200 ease-out
+        ">
           {notice}
         </div>
       )}
@@ -298,19 +321,30 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                   <span>Big Stall [{stallKey}]</span>
                 </button>
               )}
-              <button
-                onClick={() => onAction('repair')}
-                disabled={damage <= 0}
-                className={`px-4 py-3 rounded-2xl font-bold text-xs shadow-lg flex items-center gap-2 transition active:scale-95 ${
-                  damage > 0
-                    ? 'bg-amber-600 hover:bg-amber-500 text-gray-950 border border-amber-400 shadow-amber-500/20 animate-pulse cursor-pointer'
-                    : 'bg-teal-950/50 border border-teal-800/30 text-gray-500 cursor-not-allowed opacity-50'
-                }`}
-                title={damage > 0 ? `Repair damage for ৳${repairCost}` : 'No repair needed'}
-              >
-                <Wrench className="w-4 h-4" />
-                <span>Repair ৳{repairCost} [{repairKey}]</span>
-              </button>
+              {state.nearGarage ? (
+                <button
+                  onClick={() => onAction('repair')}
+                  disabled={damage <= 0}
+                  className={`px-4 py-3 rounded-2xl font-bold text-xs shadow-lg flex items-center gap-2 transition active:scale-95 ${
+                    damage > 0
+                      ? 'bg-amber-600 hover:bg-amber-500 text-gray-950 border border-amber-400 shadow-amber-500/20 animate-pulse cursor-pointer'
+                      : 'bg-teal-950/50 border border-teal-800/30 text-gray-500 cursor-not-allowed opacity-50'
+                  }`}
+                  title={damage > 0 ? `Repair damage for ৳${repairCost}` : 'No repair needed'}
+                >
+                  <Wrench className="w-4 h-4" />
+                  <span>Repair ৳{repairCost} [{repairKey}]</span>
+                </button>
+              ) : (
+                <button
+                  onClick={() => onAction('repair')}
+                  className="px-4 py-3 rounded-2xl font-bold text-xs shadow-lg flex items-center gap-2 transition active:scale-95 bg-teal-950/70 hover:bg-teal-900/80 border border-teal-700/50 text-gray-300 cursor-pointer"
+                  title="Drive to nearest garage to repair"
+                >
+                  <Wrench className="w-4 h-4 text-amber-400/80" />
+                  <span>গ্যারেজ {state.garageDistance ?? 0}m [{repairKey}]</span>
+                </button>
+              )}
             </>
           ) : (
             <>
@@ -321,19 +355,30 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                 <Shield className="w-4 h-4" />
                 <span>Attempt Arrest [{sellKey}]</span>
               </button>
-              <button
-                onClick={() => onAction('repair')}
-                disabled={damage <= 0}
-                className={`px-4 py-3 rounded-2xl font-bold text-xs shadow-lg flex items-center gap-2 transition active:scale-95 ${
-                  damage > 0
-                    ? 'bg-amber-600 hover:bg-amber-500 text-gray-950 border border-amber-400 shadow-amber-500/20 animate-pulse cursor-pointer'
-                    : 'bg-teal-950/50 border border-teal-800/30 text-gray-500 cursor-not-allowed opacity-50'
-                }`}
-                title={damage > 0 ? `Repair damage for ৳${repairCost}` : 'No repair needed'}
-              >
-                <Wrench className="w-4 h-4" />
-                <span>Repair ৳{repairCost} [{repairKey}]</span>
-              </button>
+              {state.nearGarage ? (
+                <button
+                  onClick={() => onAction('repair')}
+                  disabled={damage <= 0}
+                  className={`px-4 py-3 rounded-2xl font-bold text-xs shadow-lg flex items-center gap-2 transition active:scale-95 ${
+                    damage > 0
+                      ? 'bg-amber-600 hover:bg-amber-500 text-gray-950 border border-amber-400 shadow-amber-500/20 animate-pulse cursor-pointer'
+                      : 'bg-teal-950/50 border border-teal-800/30 text-gray-500 cursor-not-allowed opacity-50'
+                  }`}
+                  title={damage > 0 ? `Repair damage for ৳${repairCost}` : 'No repair needed'}
+                >
+                  <Wrench className="w-4 h-4" />
+                  <span>Repair ৳{repairCost} [{repairKey}]</span>
+                </button>
+              ) : (
+                <button
+                  onClick={() => onAction('repair')}
+                  className="px-4 py-3 rounded-2xl font-bold text-xs shadow-lg flex items-center gap-2 transition active:scale-95 bg-teal-950/70 hover:bg-teal-900/80 border border-teal-700/50 text-gray-300 cursor-pointer"
+                  title="Drive to nearest garage to repair"
+                >
+                  <Wrench className="w-4 h-4 text-amber-400/80" />
+                  <span>গ্যারেজ {state.garageDistance ?? 0}m [{repairKey}]</span>
+                </button>
+              )}
             </>
           )}
         </div>

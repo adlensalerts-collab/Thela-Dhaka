@@ -20,7 +20,8 @@ import { SaleIndicator } from './ui/saleIndicator';
 import { createHumanRig, setPushPose, animateHuman } from './world/humans';
 import { buildDhakaBuilding } from './world/buildings';
 import { loadDisplaySettings } from './render/display';
-import { AmbientAudioManager } from './audio/ambientAudio';
+import { SpatialSoundManager } from './audio/ambient';
+import { GARAGE_SITES, buildGarage, nearestGarage } from './world/garages';
 
 const STALL_POSITIONS: ReadonlyArray<readonly [number, number]> = [
   [-9, -27],
@@ -56,10 +57,14 @@ export interface GameState {
   score: number;
   damage: number;
   repairCost: number;
+  nearGarage: boolean;
+  garageDistance: number;
+  repairing?: { seconds: number; start: number; cost: number; entrance: { x: number; z: number } } | null;
   ambientZone?: string;
   ambientZoneBn?: string;
   trafficNoise?: number;
   crowdNoise?: number;
+  marketNoise?: number;
 }
 
 // Module-level reusable math objects for zero garbage collection during 60 FPS loop
@@ -80,7 +85,7 @@ export class GameEngine {
   onUpdate: (state: GameState) => void;
   onEvent: (type: string, data?: any) => void;
   audioCtx: AudioContext | null = null;
-  ambientAudio: AmbientAudioManager = new AmbientAudioManager();
+  ambientAudio: SpatialSoundManager = new SpatialSoundManager();
   muted: boolean = false;
   human!: THREE.Group;
   officer!: THREE.Group;
@@ -191,6 +196,9 @@ export class GameEngine {
       score: 0,
       damage: 0,
       repairCost: 0,
+      nearGarage: false,
+      garageDistance: 20,
+      repairing: null,
       ambientZone: 'Main Road · Traffic',
       ambientZoneBn: 'মূল সড়ক · যানজট',
       trafficNoise: 0.25,
@@ -423,9 +431,13 @@ export class GameEngine {
       for (let j = 0; j < 4; j++) {
         const x = -60 + i * 40;
         const z = -60 + j * 40;
-        if (x === 20 && z === 20) continue;
+        if (GARAGE_SITES.some((g) => g.x === x && g.z === z)) continue;
         buildBuilding(x, z);
       }
+    }
+    for (const site of GARAGE_SITES) {
+      const g = buildGarage(this.scene, site);
+      this.obstacles.push(...g.obstacles);
     }
     for (const x of [-100, 100]) {
       for (const z of [-100, -60, -20, 20, 60, 100]) {
@@ -814,7 +826,7 @@ export class GameEngine {
     const price = Math.max(20, Math.round((23 + seconds * 9 + (Math.random() * 31 - 14)) * (1 + (this.state.level - 1) * 0.28)));
     this.state.sale = { seconds, start: this.state.time, price, product, customer: nearest };
     this.playBeep(600, 0.15);
-    this.onEvent('notify', `${nearest.archetype.bnName} (${nearest.archetype.name}) · ${product} · selling for ${seconds.toFixed(1)}s · ৳${price}`);
+    this.onEvent('notify', `${nearest.archetype.bnName} কিনছেন · ${product} · ৳${price}`);
     this.publishState(true);
   }
 
@@ -971,28 +983,32 @@ export class GameEngine {
     } else if (action === 'changeView' || action === 'change_view') {
       this.cycleCameraView();
     } else if (action === 'repair') {
-      if (this.state.alert) {
-        this.onEvent('notify', "Can't repair during a chase");
+      if (this.state.repairing) return;
+      const p = isVendor ? this.human : this.officer;
+      const { entrance, distance } = nearestGarage(p.position.x, p.position.z);
+      if (distance > 4.5) {
+        this.onEvent('notify', `গ্যারেজে যান — ${Math.round(distance)}m দূরে`);
         return;
       }
-      const currentCash = isVendor ? this.state.cash : this.state.policeCash;
-      const costPaid = this.damage.repair(currentCash, this.state.level);
-      if (costPaid > 0) {
-        if (isVendor) {
-          this.state.cash -= costPaid;
-        } else {
-          this.state.policeCash -= costPaid;
-        }
-        this.state.damage = 0;
-        this.state.repairCost = 0;
-        this.playBeep(480, 0.2);
-        this.onEvent('notify', `Repaired for ৳${costPaid}`);
-        this.publishState(true);
-      } else if (this.damage.damage <= 0) {
+      if (this.damage.damage <= 0) {
         this.onEvent('notify', 'No damage — vehicle in good shape');
-      } else {
-        this.onEvent('notify', 'Not enough cash to repair');
+        return;
       }
+      const cost = this.damage.repairCost(this.state.level);
+      const currentCash = isVendor ? this.state.cash : this.state.policeCash;
+      if (currentCash < cost) {
+        this.onEvent('notify', `টাকা কম — মেরামতে ৳${cost} লাগবে`);
+        return;
+      }
+      this.state.repairing = {
+        seconds: 3,
+        start: this.state.time,
+        cost,
+        entrance
+      };
+      this.currentSpeed = 0;
+      this.playBeep(420, 0.12);
+      this.publishState(true);
     } else if (action === 'pause') {
       this.onEvent('pause');
     }
@@ -1032,10 +1048,12 @@ export class GameEngine {
 
     // Steering: turnLeft / turnRight rotate heading (vendor ~2.2 rad/s, police ~3.2 rad/s)
     const turnRate = isVendor ? 2.2 : 3.2;
-    let turnInput = (this.heldActions.has('turnRight') ? 1 : 0) - (this.heldActions.has('turnLeft') ? 1 : 0);
+    let turnInput = this.state.repairing
+      ? 0
+      : (this.heldActions.has('turnRight') ? 1 : 0) - (this.heldActions.has('turnLeft') ? 1 : 0);
 
     // Natural steering when reversing a cart
-    const isMovingBackward = this.heldActions.has('backward') && !this.heldActions.has('forward');
+    const isMovingBackward = !this.state.repairing && this.heldActions.has('backward') && !this.heldActions.has('forward');
     if (isMovingBackward) {
       turnInput = -turnInput;
     }
@@ -1051,14 +1069,18 @@ export class GameEngine {
     const baseSpeed = isVendor ? 4.85 : 5.85;
 
     let targetSpeed = 0;
-    if (this.heldActions.has('forward')) {
-      targetSpeed = baseSpeed * (sprint ? 1.65 : 1.0);
-    } else if (this.heldActions.has('backward')) {
-      targetSpeed = -baseSpeed * 0.55;
+    if (!this.state.repairing) {
+      if (this.heldActions.has('forward')) {
+        targetSpeed = baseSpeed * (sprint ? 1.65 : 1.0);
+      } else if (this.heldActions.has('backward')) {
+        targetSpeed = -baseSpeed * 0.55;
+      }
+      targetSpeed *= this.damage.speedFactor;
     }
-    targetSpeed *= this.damage.speedFactor;
 
-    this.currentSpeed = THREE.MathUtils.damp(this.currentSpeed, targetSpeed, 8, dt);
+    this.currentSpeed = this.state.repairing
+      ? 0
+      : THREE.MathUtils.damp(this.currentSpeed, targetSpeed, 8, dt);
 
     // Forward motion vector along character's current heading
     const moveHeadingX = Math.sin(this.state.heading);
@@ -1350,7 +1372,55 @@ export class GameEngine {
       }
     }
 
-    // Sync damage & ambient soundscape state
+    // Update spatial ambient audio tracks (traffic, crowd, streetMarket) on every tick
+    this.ambientAudio.update(dt, {
+      playerX: p.position.x,
+      playerZ: p.position.z,
+      cameraYaw: this.cameraYaw,
+      isPlaying: this.state.stage === 'playing' && !this.isMenuOrModalOpen,
+      isPaused: this.state.stage !== 'playing' || this.isMenuOrModalOpen,
+      isAlert: this.state.alert,
+      isSelling: !!this.state.sale,
+      muted: this.muted,
+      traffic: this.traffic,
+      pedestrians: this.customers,
+      playerStall: this.state.stall
+        ? { x: this.state.stall.position.x, z: this.state.stall.position.z }
+        : null
+    });
+
+    // Timed garage repair check
+    if (this.state.repairing) {
+      const r = this.state.repairing;
+      const elapsed = this.state.time - r.start;
+      const distToEntrance = Math.hypot(p.position.x - r.entrance.x, p.position.z - r.entrance.z);
+      if (distToEntrance > 4.5) {
+        this.state.repairing = null;
+        this.playBeep(220, 0.2, 'sawtooth');
+        this.publishState(true);
+      } else if (elapsed >= r.seconds) {
+        const currentCash = isVendor ? this.state.cash : this.state.policeCash;
+        const costPaid = this.damage.repair(currentCash, this.state.level);
+        if (costPaid > 0) {
+          if (isVendor) {
+            this.state.cash -= costPaid;
+          } else {
+            this.state.policeCash -= costPaid;
+          }
+          this.state.damage = 0;
+          this.state.repairCost = 0;
+          this.playBeep(480, 0.2);
+          this.onEvent('notify', `মেরামত সম্পন্ন · ৳${costPaid}`);
+        }
+        this.state.repairing = null;
+        this.publishState(true);
+      }
+    }
+
+    // Sync damage, garage proximity & ambient soundscape state
+    const gInfo = nearestGarage(p.position.x, p.position.z);
+    this.state.nearGarage = gInfo.distance <= 4.5;
+    this.state.garageDistance = Math.round(gInfo.distance);
     this.state.damage = this.damage.damage;
     this.state.repairCost = this.damage.repairCost(this.state.level);
     const snap = this.ambientAudio.getSnapshot();
@@ -1358,6 +1428,7 @@ export class GameEngine {
     this.state.ambientZoneBn = snap.zoneBnLabel;
     this.state.trafficNoise = snap.trafficLevel;
     this.state.crowdNoise = snap.crowdLevel;
+    this.state.marketNoise = snap.marketLevel;
 
     // Throttled publish to React HUD
     this.publishState(false);
@@ -1435,12 +1506,21 @@ export class GameEngine {
       this.lighting?.update(new THREE.Vector3(0, 0, 0), this.camera.position);
     }
 
-    // Update floating sale progress indicator
+    // Update floating sale / garage repair progress indicator
     const s = this.state?.sale;
+    const r = this.state?.repairing;
     const isVendor = this.state && (this.state.mode === 'vendor' || this.state.mode === 'online_vendor');
+    const indicatorTarget = isVendor ? this.human.position : this.officer.position;
     this.saleIndicator.update(
-      this.human.position,
-      s && isVendor
+      indicatorTarget,
+      r && this.state
+        ? {
+            progress: (this.state.time - r.start) / r.seconds,
+            secondsLeft: r.seconds - (this.state.time - r.start),
+            label: 'মেরামত',
+            price: r.cost
+          }
+        : s && isVendor && this.state
         ? {
             progress: (this.state.time - s.start) / s.seconds,
             secondsLeft: s.seconds - (this.state.time - s.start),
@@ -1451,27 +1531,28 @@ export class GameEngine {
       dt
     );
 
-    // Update location-aware layered ambient soundscape
-    const activeActor =
-      this.state && (this.state.mode === 'police' || this.state.mode === 'online_police')
-        ? this.officer
-        : this.human;
-    this.ambientAudio.update(dt, {
-      playerX: activeActor ? activeActor.position.x : 0,
-      playerZ: activeActor ? activeActor.position.z : 0,
-      cameraYaw: this.cameraYaw,
-      isPlaying: !!this.state && this.state.stage === 'playing' && !this.isMenuOrModalOpen,
-      isPaused: !this.state || this.state.stage !== 'playing' || this.isMenuOrModalOpen,
-      isAlert: !!this.state?.alert,
-      isSelling: !!this.state?.sale,
-      muted: this.muted,
-      traffic: this.traffic,
-      pedestrians: this.customers,
-      stalls: STALL_POSITIONS,
-      playerStall: this.state?.stall
-        ? { x: this.state.stall.position.x, z: this.state.stall.position.z }
-        : null
-    });
+    // Keep ambient soundscape attenuated while paused or in menus
+    if (!this.state || this.state.stage !== 'playing' || this.isMenuOrModalOpen) {
+      const activeActor =
+        this.state && (this.state.mode === 'police' || this.state.mode === 'online_police')
+          ? this.officer
+          : this.human;
+      this.ambientAudio.update(dt, {
+        playerX: activeActor ? activeActor.position.x : 0,
+        playerZ: activeActor ? activeActor.position.z : 0,
+        cameraYaw: this.cameraYaw,
+        isPlaying: false,
+        isPaused: true,
+        isAlert: !!this.state?.alert,
+        isSelling: !!this.state?.sale,
+        muted: this.muted,
+        traffic: this.traffic,
+        pedestrians: this.customers,
+        playerStall: this.state?.stall
+          ? { x: this.state.stall.position.x, z: this.state.stall.position.z }
+          : null
+      });
+    }
 
     this.renderer.render(this.scene, this.camera);
   }
