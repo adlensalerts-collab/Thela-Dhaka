@@ -5,6 +5,7 @@ import { GameHUD } from './components/GameHUD';
 import { EventModal } from './components/EventModal';
 import { SettingsModal } from './components/SettingsModal';
 import { loadSettings, GameSettingsData } from './game/keybindings';
+import { RunStats } from './game/stats';
 import { io, Socket } from 'socket.io-client';
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL as string | undefined;
@@ -22,6 +23,7 @@ export default function App() {
   const [view, setView] = useState<'menu' | 'playing'>('menu');
   const [modalType, setModalType] = useState<'bribe' | 'arrest_decision' | 'paused' | 'over' | 'victory' | null>(null);
   const [gameState, setGameState] = useState<GameState | null>(null);
+  const [runStats, setRunStats] = useState<RunStats | null>(null);
   const [notice, setNotice] = useState('Welcome to Thela Dhaka · ঢাকার ঠেলা');
   const [muted, setMuted] = useState(false);
   const [roomCode, setRoomCode] = useState<string>('');
@@ -43,6 +45,9 @@ export default function App() {
         } else if (type === 'pause') {
           engineRef.current?.pauseGame();
           setModalType('paused');
+        } else if (type === 'game_over') {
+          setRunStats(data ?? engineRef.current?.lastRunStats ?? null);
+          setModalType('over');
         }
       },
       initialSettings.bindings,
@@ -212,53 +217,35 @@ export default function App() {
       <EventModal
         type={modalType}
         state={gameState}
+        stats={runStats ?? engineRef.current?.lastRunStats ?? null}
         onPayBribe={() => {
-          if (!engineRef.current || !gameState) return;
-          const cost = 90 + gameState.level * 45;
-          if (gameState.cash < cost) {
-            setModalType('over');
-            return;
+          if (!engineRef.current) return;
+          if (engineRef.current.payBribe()) {
+            setModalType(null);
           }
-          gameState.cash -= cost;
-          gameState.heat = 0;
-          gameState.cooldown = 10;
-          gameState.sale = null;
-          engineRef.current.officer.position.set(
-            engineRef.current.human.position.x + 26,
-            0,
-            engineRef.current.human.position.z - 22
-          );
-          engineRef.current.resumeGame();
-          setModalType(null);
-          setNotice('Released on bribe. Watch out for cooling countdown.');
         }}
-        onGoToJail={() => setModalType('over')}
+        onGoToJail={() => {
+          engineRef.current?.goToJail();
+        }}
         onRecordArrest={() => {
-          if (!engineRef.current || !gameState) return;
-          gameState.arrests++;
-          gameState.integrity = Math.min(100, gameState.integrity + 2);
-          engineRef.current.npcVendor.position.set(-36, 0, 36);
-          gameState.rank = Math.min(4, 1 + Math.floor(gameState.arrests / 2));
-          engineRef.current.resumeGame();
+          if (!engineRef.current) return;
+          engineRef.current.recordArrest();
           setModalType(null);
-          setNotice('Lawful arrest recorded. Promotion progress updated.');
         }}
         onTakeIllicit={() => {
-          if (!engineRef.current || !gameState) return;
-          gameState.policeCash += 150;
-          gameState.integrity = Math.max(0, gameState.integrity - 20);
-          engineRef.current.npcVendor.position.set(-36, 0, 36);
-          engineRef.current.resumeGame();
+          if (!engineRef.current) return;
+          engineRef.current.takeIllicit();
           setModalType(null);
-          setNotice('Illicit payment received. Integrity decreased.');
         }}
         onResume={handleResume}
         onRestart={() => {
           if (!engineRef.current || !gameState) return;
+          setRunStats(null);
           engineRef.current.setMode(gameState.mode);
           setModalType(null);
         }}
         onMainMenu={() => {
+          setRunStats(null);
           setView('menu');
           setModalType(null);
           setRoomCode('');

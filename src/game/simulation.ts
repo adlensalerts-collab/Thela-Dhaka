@@ -33,6 +33,7 @@ import { AAROT_SITES, buildAarot, entranceForAarot, nearestAarot } from './world
 import { nearJunction, auditObstacles } from './world/layout';
 import { StaminaSystem } from './stamina';
 import { WeatherSystem, type WeatherType } from './world/weather';
+import { StatsTracker, type RunStats } from './stats';
 
 const STALL_POSITIONS = [
   [-20, 10.5, 'x'],
@@ -126,6 +127,8 @@ export class GameEngine {
   traffic: TrafficItem[] = [];
   damage = new DamageSystem();
   stamina = new StaminaSystem();
+  stats = new StatsTracker();
+  lastRunStats: RunStats | null = null;
   weather!: WeatherSystem;
   lighting: LightingRig | null = null;
   saleIndicator!: SaleIndicator;
@@ -974,6 +977,8 @@ export class GameEngine {
     this.mouseMovedRecently = 0;
     this.damage.reset();
     this.stamina.reset(isVendor ? 1 : 3);
+    this.stats.reset(mode);
+    this.lastRunStats = null;
     this.weather?.reset();
     this.clearInputs();
     this.acc = 0;
@@ -1019,8 +1024,9 @@ export class GameEngine {
     nearest.isEngagedInSale = true;
     const dx = this.human.position.x - nearest.mesh.position.x;
     const dz = this.human.position.z - nearest.mesh.position.z;
-    // Orientation fix: customer faces the vendor directly
-    nearest.mesh.rotation.y = -Math.atan2(dx, -dz);
+    // Orientation fix: customer faces the vendor directly and keeps heading synced
+    nearest.heading = Math.atan2(dx, -dz);
+    nearest.mesh.rotation.y = -nearest.heading;
 
     const productNames = ['আম', 'কলা', 'পেয়ারা', 'সবজি', 'চা', 'ফুচকা', 'পেয়াজ'];
     const seconds = 5 + Math.random() * 5;
@@ -1042,6 +1048,7 @@ export class GameEngine {
     this.state.total += s.price;
     this.state.stock--;
     this.state.sales++;
+    this.stats.recordSale(s.product, s.price);
     this.state.heat = Math.min(100, this.state.heat + 18 + this.state.level * 3.7);
     this.state.sale = null;
     this.playBeep(880, 0.2, 'triangle');
@@ -1065,6 +1072,8 @@ export class GameEngine {
     this.state.level++;
     this.state.cap += 3;
     this.state.stock += 3;
+    this.stats.spentCartUpgrades += cost;
+    this.stats.cartLevel = this.state.level;
     this.playBeep(750, 0.25);
     this.onEvent('notify', `Cart level ${this.state.level}! Capacity ${this.state.cap}.`);
     this.publishState(true);
@@ -1085,6 +1094,8 @@ export class GameEngine {
     const paid = this.stamina.upgrade(this.state.cash);
     if (paid > 0) {
       this.state.cash -= paid;
+      this.stats.spentStaminaUpgrades += paid;
+      this.stats.staminaLevel = this.stamina.level;
       this.state.stamina = Math.round(this.stamina.stamina);
       this.state.staminaLevel = this.stamina.level;
       this.state.staminaUpgradeCost = this.stamina.nextUpgradeCost;
@@ -1184,6 +1195,83 @@ export class GameEngine {
       return;
     }
     this.onEvent('police_decision');
+  }
+
+  endRun(result: 'jailed' | 'bribe_unaffordable' | 'destroyed' | 'victory') {
+    if (this.state.sale) {
+      if (this.state.sale.customer) {
+        this.state.sale.customer.isEngagedInSale = false;
+      }
+      this.state.sale = null;
+    }
+    this.state.repairing = null;
+    this.state.restocking = null;
+    this.state.damage = this.damage.damage;
+    this.state.stage = 'over';
+    this.clearInputs();
+    const snapshot = this.stats.snapshot({
+      cartLevel: this.state.level,
+      staminaLevel: this.state.staminaLevel,
+      mode: this.state.mode,
+      result,
+      arrests: this.state.arrests
+    });
+    this.lastRunStats = snapshot;
+    this.publishState(true);
+    this.onEvent('game_over', snapshot);
+  }
+
+  payBribe(): boolean {
+    const cost = 90 + this.state.level * 45;
+    if (this.state.cash < cost) {
+      this.endRun('bribe_unaffordable');
+      return false;
+    }
+    this.state.cash -= cost;
+    this.state.heat = 0;
+    this.state.alert = false;
+    this.state.escape = 0;
+    this.state.cooldown = 10;
+    if (this.state.sale) {
+      if (this.state.sale.customer) {
+        this.state.sale.customer.isEngagedInSale = false;
+      }
+      this.state.sale = null;
+    }
+    this.officer.position.set(
+      this.human.position.x + 26,
+      0,
+      this.human.position.z - 22
+    );
+    this.state.officerX = this.officer.position.x;
+    this.state.officerZ = this.officer.position.z;
+    this.stats.spentBribes += cost;
+    this.stats.bribesPaid++;
+    this.resumeGame();
+    this.onEvent('notify', 'ঘুষ দিয়ে ছাড়া পেলেন · ৳' + cost);
+    return true;
+  }
+
+  goToJail() {
+    this.endRun('jailed');
+  }
+
+  recordArrest() {
+    this.state.arrests++;
+    this.state.integrity = Math.min(100, this.state.integrity + 2);
+    this.npcVendor.position.set(-36, 0, 36);
+    this.state.rank = Math.min(4, 1 + Math.floor(this.state.arrests / 2));
+    this.stats.arrests = this.state.arrests;
+    this.resumeGame();
+    this.onEvent('notify', 'Lawful arrest recorded. Promotion progress updated.');
+  }
+
+  takeIllicit() {
+    this.state.policeCash += 150;
+    this.state.integrity = Math.max(0, this.state.integrity - 20);
+    this.npcVendor.position.set(-36, 0, 36);
+    this.resumeGame();
+    this.onEvent('notify', 'Illicit payment received. Integrity decreased.');
   }
 
   cycleCameraView() {
@@ -1375,6 +1463,9 @@ export class GameEngine {
     const vx = (moveHeadingX * this.currentSpeed + this.recoilVx + this.driftVx) * dt;
     const vz = (moveHeadingZ * this.currentSpeed + this.recoilVz + this.driftVz) * dt;
 
+    const prevX = p.position.x;
+    const prevZ = p.position.z;
+
     // Advanced collision resolution with wall-sliding and dual-collider thela rig
     const moveRes = resolveMovement(
       p.position.x,
@@ -1392,6 +1483,12 @@ export class GameEngine {
     // CRITICAL ORIENTATION FIX: Set rotation.y = -heading so the model faces (sin h, 0, -cos h)
     p.rotation.y = -this.state.heading;
     this.state.speed = this.currentSpeed;
+
+    this.stats.distanceMetres += Math.hypot(p.position.x - prevX, p.position.z - prevZ);
+    if (canSprint) {
+      this.stats.sprintSeconds += dt;
+    }
+    this.stats.timePlayedSeconds += dt;
 
     // Wall / static obstacle collision response & sound
     if (moveRes.collided && Math.abs(this.currentSpeed) > 2.2 && this.wallBumpCooldown <= 0) {
@@ -1430,11 +1527,24 @@ export class GameEngine {
       }
 
       const added = this.damage.applyImpact(trafficHit);
+      this.state.damage = this.damage.damage;
       if (added > 0) {
+        this.stats.collisions++;
+        this.stats.damageTaken += added;
+        if (isVendor && this.damage.broken) {
+          this.onEvent('notify', 'ঠেলা সম্পূর্ণ ভেঙে গেছে! · Cart completely destroyed!');
+          this.endRun('destroyed');
+          return;
+        }
         const kind = trafficHit.vehicle?.kind || 'vehicle';
         const cost = this.damage.repairCost(this.state.level);
         this.onEvent('notify', `Hit by ${kind}! Damage +${added}% · Repair ৳${cost}`);
       } else {
+        if (isVendor && this.damage.broken) {
+          this.onEvent('notify', 'ঠেলা সম্পূর্ণ ভেঙে গেছে! · Cart completely destroyed!');
+          this.endRun('destroyed');
+          return;
+        }
         this.onEvent('notify', 'Watch out! Traffic collision!');
       }
       this.publishState(true);
@@ -1450,8 +1560,9 @@ export class GameEngine {
     const policeEscapeDist = 30 * visibilityFactor;
 
     if (this.state.mode === 'vendor') {
-      if (this.state.heat > 27 && this.state.cooldown === 0 && this.vector2(this.human.position, this.officer.position) < policeSightRange) {
+      if (!this.state.alert && this.state.heat > 27 && this.state.cooldown === 0 && this.vector2(this.human.position, this.officer.position) < policeSightRange) {
         this.state.alert = true;
+        this.stats.chasesStarted++;
       }
       _toHuman.subVectors(this.human.position, this.officer.position);
       const dist = _toHuman.length();
@@ -1481,7 +1592,12 @@ export class GameEngine {
         this.officer.rotation.y = -officerHeading;
 
         if (dist < 2.1) {
-          this.onEvent('bribe_prompt');
+          if (!this.isMenuOrModalOpen) {
+            this.stats.timesCaught++;
+            this.isMenuOrModalOpen = true;
+            this.clearInputs();
+            this.onEvent('bribe_prompt');
+          }
           return;
         }
         if (dist > policeEscapeDist) {
@@ -1491,6 +1607,7 @@ export class GameEngine {
             this.state.heat = Math.max(0, this.state.heat - 30);
             this.state.cooldown = 11;
             this.state.escape = 0;
+            this.stats.chasesEscaped++;
             this.onEvent('notify', 'Escaped police! Stay out of sight.');
             this.publishState(true);
           }
@@ -1624,6 +1741,7 @@ export class GameEngine {
           s.customer.isEngagedInSale = false;
         }
         this.state.sale = null;
+        this.stats.salesInterrupted++;
         this.playBeep(220, 0.2, 'sawtooth');
         this.onEvent('notify', 'Sale interrupted — no payment.');
         this.publishState(true);
@@ -1701,6 +1819,7 @@ export class GameEngine {
           } else {
             this.state.policeCash -= costPaid;
           }
+          this.stats.spentRepair += costPaid;
           this.state.damage = 0;
           this.state.repairCost = 0;
           this.playBeep(480, 0.2);
@@ -1723,6 +1842,7 @@ export class GameEngine {
       } else if (elapsed >= rs.seconds) {
         if (this.state.cash >= rs.cost) {
           this.state.cash -= rs.cost;
+          this.stats.spentRestock += rs.cost;
           this.state.stock = this.state.cap;
           this.playBeep(450, 0.15);
           this.onEvent('notify', `রিস্টক সম্পন্ন · ${rs.needed}টি পণ্য · ৳${rs.cost}`);

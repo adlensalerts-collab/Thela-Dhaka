@@ -1,0 +1,344 @@
+import React from 'react';
+import {
+  Wallet,
+  ShoppingBag,
+  ShieldAlert,
+  Navigation,
+  ShieldCheck,
+  RefreshCw,
+  Home
+} from 'lucide-react';
+import { RunStats } from '../game/stats';
+
+interface StatsScreenProps {
+  stats: RunStats | null;
+  onRestart: () => void;
+  onMainMenu: () => void;
+}
+
+function formatDuration(totalSeconds: number): string {
+  const sec = Math.max(0, Math.floor(totalSeconds));
+  const mins = Math.floor(sec / 60);
+  const rem = sec % 60;
+  return `${String(mins).padStart(2, '0')}:${String(rem).padStart(2, '0')}`;
+}
+
+export const StatsScreen: React.FC<StatsScreenProps> = ({
+  stats,
+  onRestart,
+  onMainMenu
+}) => {
+  const result = stats?.result ?? 'jailed';
+  const isPolice =
+    stats?.mode === 'police' || stats?.mode === 'online_police';
+
+  const headerText =
+    result === 'bribe_unaffordable'
+      ? "ঘুষের টাকা ছিল না · Couldn't pay the bribe"
+      : result === 'destroyed'
+      ? 'ঠেলা ভেঙে গেছে · Cart Destroyed'
+      : result === 'victory'
+      ? 'জয়! · Victory'
+      : 'জেলে গেলেন · Jailed';
+
+  const headerAccent =
+    result === 'victory'
+      ? 'text-emerald-300 border-emerald-500/40 bg-emerald-950/50'
+      : 'text-amber-300 border-red-500/40 bg-red-950/50';
+
+  const earned = stats?.earned ?? 0;
+  const spentRestock = stats?.spentRestock ?? 0;
+  const spentRepair = stats?.spentRepair ?? 0;
+  const spentBribes = stats?.spentBribes ?? 0;
+  const spentCartUpgrades = stats?.spentCartUpgrades ?? 0;
+  const spentStaminaUpgrades = stats?.spentStaminaUpgrades ?? 0;
+  const profit =
+    stats?.profit ??
+    earned -
+      (spentRestock +
+        spentRepair +
+        spentBribes +
+        spentCartUpgrades +
+        spentStaminaUpgrades);
+
+  const productEntries = Object.entries(stats?.salesByProduct ?? {}) as Array<[string, number]>;
+  const maxProductCount = Math.max(
+    1,
+    ...productEntries.map(([, count]) => count)
+  );
+
+  const distanceKm = ((stats?.distanceMetres ?? 0) / 1000).toFixed(2);
+  const sprintSecs = `${(stats?.sprintSeconds ?? 0).toFixed(1)}s`;
+  const timePlayed = formatDuration(stats?.timePlayedSeconds ?? 0);
+
+  return (
+    <div className="bg-[#0f2422]/95 border border-teal-500/40 rounded-3xl p-5 sm:p-7 max-w-3xl w-full shadow-2xl text-left space-y-5 max-h-[92vh] overflow-y-auto backdrop-blur-md">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-teal-800/60 pb-4">
+        <div>
+          <span className="text-[11px] uppercase tracking-widest text-teal-300/80 font-semibold">
+            খেলার পরিসংখ্যান · Run Statistics
+          </span>
+          <h2 className="text-xl sm:text-2xl font-extrabold text-white mt-0.5">
+            {headerText}
+          </h2>
+        </div>
+        <div
+          className={`px-3.5 py-1.5 rounded-xl border text-xs font-bold self-start sm:self-auto ${headerAccent}`}
+        >
+          {isPolice ? 'পুলিশ টহল · Police Patrol' : 'ঠেলা বিক্রেতা · Street Vendor'}
+        </div>
+      </div>
+
+      {/* 4-Card Responsive Grid (2 columns desktop, 1 on mobile) */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Card 1: Money */}
+        <div className="bg-teal-950/60 border border-teal-700/40 rounded-2xl p-4 space-y-2.5 flex flex-col justify-between">
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 text-amber-400 font-bold text-sm border-b border-teal-800/50 pb-2">
+              <Wallet className="w-4 h-4 shrink-0" />
+              <span>হিসাব-নিকাশ · Money</span>
+            </div>
+
+            <div className="space-y-1.5 text-xs">
+              <div className="flex justify-between text-gray-200">
+                <span>মোট আয় · Earned</span>
+                <span className="font-mono font-bold text-emerald-300">৳{earned}</span>
+              </div>
+              <div className="flex justify-between text-gray-300">
+                <span>মাল ক্রয় · Restock</span>
+                <span className="font-mono text-gray-200">-৳{spentRestock}</span>
+              </div>
+              <div className="flex justify-between text-gray-300">
+                <span>মেরামত · Repair</span>
+                <span className="font-mono text-gray-200">-৳{spentRepair}</span>
+              </div>
+              <div className="flex justify-between text-gray-300">
+                <span>ঘুষ · Bribes</span>
+                <span className="font-mono text-gray-200">-৳{spentBribes}</span>
+              </div>
+              <div className="flex justify-between text-gray-300">
+                <span>ঠেলা আপগ্রেড · Cart Upgrades</span>
+                <span className="font-mono text-gray-200">-৳{spentCartUpgrades}</span>
+              </div>
+              <div className="flex justify-between text-gray-300">
+                <span>স্ট্যামিনা আপগ্রেড · Stamina Upgrades</span>
+                <span className="font-mono text-gray-200">-৳{spentStaminaUpgrades}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="pt-2.5 border-t border-teal-800/60 flex items-baseline justify-between">
+            <span className="text-xs font-bold text-amber-300">
+              নিট লাভ · Profit
+            </span>
+            <span
+              className={`text-xl sm:text-2xl font-extrabold font-mono text-amber-400 ${
+                profit > 0
+                  ? '!text-emerald-400'
+                  : profit < 0
+                  ? '!text-red-400'
+                  : 'text-amber-400'
+              }`}
+            >
+              {profit >= 0 ? `৳${profit}` : `-৳${Math.abs(profit)}`}
+            </span>
+          </div>
+        </div>
+
+        {/* Card 2: Selling (Vendor) OR Arrests (Police) */}
+        {!isPolice ? (
+          <div className="bg-teal-950/60 border border-teal-700/40 rounded-2xl p-4 space-y-2.5 flex flex-col justify-between">
+            <div className="space-y-2.5">
+              <div className="flex items-center gap-2 text-amber-400 font-bold text-sm border-b border-teal-800/50 pb-2">
+                <ShoppingBag className="w-4 h-4 shrink-0" />
+                <span>বেচাকেনা · Selling</span>
+              </div>
+
+              <div className="flex justify-between text-xs text-gray-200">
+                <span>বিক্রিত পণ্য · Items Sold</span>
+                <span className="font-mono font-bold text-white">
+                  {stats?.itemsSold ?? 0}
+                </span>
+              </div>
+
+              {/* Small bar per product */}
+              <div className="space-y-1.5 py-1">
+                <div className="text-[11px] text-teal-300/80 font-semibold">
+                  পণ্যভিত্তিক বিক্রি · By Product
+                </div>
+                {productEntries.length === 0 ? (
+                  <div className="text-[11px] text-gray-400 italic py-1">
+                    কোনো পণ্য বিক্রি হয়নি · No sales recorded
+                  </div>
+                ) : (
+                  <div className="space-y-1.5 max-h-28 overflow-y-auto pr-1">
+                    {productEntries.map(([product, count]) => {
+                      const pct = Math.max(8, Math.round((count / maxProductCount) * 100));
+                      return (
+                        <div key={product} className="space-y-0.5">
+                          <div className="flex justify-between text-[11px] text-gray-200">
+                            <span>{product}</span>
+                            <span className="font-mono text-amber-300">{count}</span>
+                          </div>
+                          <div className="w-full h-1.5 bg-teal-900/80 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-amber-400 rounded-full"
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="pt-2 border-t border-teal-800/60 space-y-1 text-xs">
+              <div className="flex justify-between text-gray-200">
+                <span>সেরা বিক্রি · Best Sale</span>
+                <span className="font-mono font-bold text-amber-300">
+                  {stats?.bestSale
+                    ? `${stats.bestSale.product} · ৳${stats.bestSale.price}`
+                    : '—'}
+                </span>
+              </div>
+              <div className="flex justify-between text-gray-300">
+                <span>বাধাগ্রস্ত বিক্রি · Interrupted</span>
+                <span className="font-mono text-red-300">
+                  {stats?.salesInterrupted ?? 0}
+                </span>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="bg-teal-950/60 border border-teal-700/40 rounded-2xl p-4 space-y-3 flex flex-col justify-between">
+            <div className="space-y-2.5">
+              <div className="flex items-center gap-2 text-amber-400 font-bold text-sm border-b border-teal-800/50 pb-2">
+                <ShieldCheck className="w-4 h-4 shrink-0" />
+                <span>গ্রেপ্তার · Arrests</span>
+              </div>
+              <div className="py-4 text-center space-y-1">
+                <div className="text-3xl font-extrabold font-mono text-amber-400">
+                  {stats?.arrests ?? 0}
+                </div>
+                <div className="text-xs text-gray-300">
+                  আইনানুগ গ্রেপ্তার · Lawful Arrests Recorded
+                </div>
+              </div>
+            </div>
+            <div className="pt-2 border-t border-teal-800/60 flex justify-between text-xs text-gray-300">
+              <span>পদমর্যাদা · Rank Level</span>
+              <span className="font-mono font-bold text-teal-300">
+                {Math.min(4, 1 + Math.floor((stats?.arrests ?? 0) / 2))}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Card 3: Trouble */}
+        <div className="bg-teal-950/60 border border-teal-700/40 rounded-2xl p-4 space-y-2">
+          <div className="flex items-center gap-2 text-amber-400 font-bold text-sm border-b border-teal-800/50 pb-2">
+            <ShieldAlert className="w-4 h-4 shrink-0" />
+            <span>ঝামেলা ও সংঘর্ষ · Trouble</span>
+          </div>
+
+          <div className="space-y-1.5 text-xs pt-0.5">
+            <div className="flex justify-between text-gray-200">
+              <span>পুলিশের তাড়া · Chases Started</span>
+              <span className="font-mono font-bold text-amber-300">
+                {stats?.chasesStarted ?? 0}
+              </span>
+            </div>
+            <div className="flex justify-between text-gray-200">
+              <span>তাড়া থেকে মুক্তি · Chases Escaped</span>
+              <span className="font-mono font-bold text-emerald-300">
+                {stats?.chasesEscaped ?? 0}
+              </span>
+            </div>
+            <div className="flex justify-between text-gray-200">
+              <span>ধরা পড়া · Times Caught</span>
+              <span className="font-mono font-bold text-red-300">
+                {stats?.timesCaught ?? 0}
+              </span>
+            </div>
+            <div className="flex justify-between text-gray-300">
+              <span>ঘুষ প্রদান · Bribes Paid</span>
+              <span className="font-mono text-gray-100">
+                {stats?.bribesPaid ?? 0}
+              </span>
+            </div>
+            <div className="flex justify-between text-gray-300">
+              <span>দুর্ঘটনা · Collisions</span>
+              <span className="font-mono text-gray-100">
+                {stats?.collisions ?? 0}
+              </span>
+            </div>
+            <div className="flex justify-between text-gray-300">
+              <span>মোট ক্ষতি · Damage Taken</span>
+              <span className="font-mono text-red-300">
+                {stats?.damageTaken ?? 0}%
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Card 4: Movement & Run */}
+        <div className="bg-teal-950/60 border border-teal-700/40 rounded-2xl p-4 space-y-2">
+          <div className="flex items-center gap-2 text-amber-400 font-bold text-sm border-b border-teal-800/50 pb-2">
+            <Navigation className="w-4 h-4 shrink-0" />
+            <span>চলাচল ও রান · Movement & Run</span>
+          </div>
+
+          <div className="space-y-1.5 text-xs pt-0.5">
+            <div className="flex justify-between text-gray-200">
+              <span>অতিক্রান্ত দূরত্ব · Distance</span>
+              <span className="font-mono font-bold text-teal-300">
+                {distanceKm} km
+              </span>
+            </div>
+            <div className="flex justify-between text-gray-200">
+              <span>দৌড়ের সময় · Sprint Time</span>
+              <span className="font-mono text-amber-300">{sprintSecs}</span>
+            </div>
+            <div className="flex justify-between text-gray-200">
+              <span>খেলার সময় · Time Played</span>
+              <span className="font-mono text-white">{timePlayed}</span>
+            </div>
+            <div className="flex justify-between text-gray-300">
+              <span>ঠেলা লেভেল · Cart Level</span>
+              <span className="font-mono font-bold text-amber-300">
+                Lv. {stats?.cartLevel ?? 1}
+              </span>
+            </div>
+            <div className="flex justify-between text-gray-300">
+              <span>স্ট্যামিনা লেভেল · Stamina Level</span>
+              <span className="font-mono font-bold text-teal-300">
+                Lv. {stats?.staminaLevel ?? 1}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Action Buttons */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+        <button
+          onClick={onRestart}
+          className="py-3 px-4 rounded-2xl bg-amber-500 hover:bg-amber-400 text-gray-950 font-extrabold text-xs sm:text-sm shadow-lg transition flex items-center justify-center gap-2"
+        >
+          <RefreshCw className="w-4 h-4" />
+          Play Again / আবার খেলুন
+        </button>
+        <button
+          onClick={onMainMenu}
+          className="py-3 px-4 rounded-2xl bg-teal-800 hover:bg-teal-700 border border-teal-600/50 text-white font-bold text-xs sm:text-sm shadow-lg transition flex items-center justify-center gap-2"
+        >
+          <Home className="w-4 h-4" />
+          Main Menu / মেনু
+        </button>
+      </div>
+    </div>
+  );
+};

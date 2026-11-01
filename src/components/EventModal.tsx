@@ -1,10 +1,13 @@
 import React from 'react';
 import { AlertTriangle, ShieldCheck, DollarSign, RefreshCw, Home, Sliders } from 'lucide-react';
 import { GameState } from '../game/simulation';
+import { RunStats } from '../game/stats';
+import { StatsScreen } from './StatsScreen';
 
 interface EventModalProps {
   type: 'bribe' | 'arrest_decision' | 'paused' | 'over' | 'victory' | null;
   state: GameState | null;
+  stats?: RunStats | null;
   onPayBribe: () => void;
   onGoToJail: () => void;
   onRecordArrest: () => void;
@@ -18,6 +21,7 @@ interface EventModalProps {
 export const EventModal: React.FC<EventModalProps> = ({
   type,
   state,
+  stats,
   onPayBribe,
   onGoToJail,
   onRecordArrest,
@@ -30,6 +34,18 @@ export const EventModal: React.FC<EventModalProps> = ({
   if (!type) return null;
 
   const bribeCost = state ? 90 + state.level * 45 : 150;
+
+  if (type === 'over' || type === 'victory') {
+    return (
+      <div className="absolute inset-0 z-40 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 sm:p-6">
+        <StatsScreen
+          stats={stats ?? null}
+          onRestart={onRestart}
+          onMainMenu={onMainMenu}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="absolute inset-0 z-40 bg-black/80 backdrop-blur-md flex items-center justify-center p-6">
@@ -123,48 +139,6 @@ export const EventModal: React.FC<EventModalProps> = ({
               <button
                 onClick={onMainMenu}
                 className="w-full py-3 rounded-2xl bg-red-950/60 hover:bg-red-900 text-red-300 font-bold text-sm shadow-lg transition flex items-center justify-center gap-2"
-              >
-                <Home className="w-4 h-4" />
-                Main Menu
-              </button>
-            </div>
-          </>
-        )}
-
-        {type === 'over' && (
-          <>
-            <div className="w-14 h-14 rounded-2xl bg-red-500/20 border border-red-500/40 flex items-center justify-center mx-auto text-red-400 font-bold text-2xl">
-              ৳
-            </div>
-            <div>
-              <span className="text-[10px] text-red-400 uppercase tracking-widest font-bold">Newspaper Summary</span>
-              <h2 className="text-2xl font-bold text-white mt-1">Run Summary / খেলার সারসংক্ষেপ</h2>
-            </div>
-            <div className="bg-black/40 rounded-2xl p-4 text-left text-xs space-y-2 text-gray-300 border border-teal-800/40">
-              <div className="flex justify-between">
-                <span>Total Earned:</span>
-                <strong className="text-amber-400 font-mono">৳{state?.total || 0}</strong>
-              </div>
-              <div className="flex justify-between">
-                <span>Items Sold:</span>
-                <strong className="text-white">{state?.sales || 0}</strong>
-              </div>
-              <div className="flex justify-between">
-                <span>Cart Level Reached:</span>
-                <strong className="text-teal-300">{state?.level || 1}</strong>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3 pt-2">
-              <button
-                onClick={onRestart}
-                className="py-3 px-4 rounded-2xl bg-amber-500 hover:bg-amber-400 text-gray-950 font-bold text-xs shadow-lg transition flex items-center justify-center gap-2"
-              >
-                <RefreshCw className="w-4 h-4" />
-                Play Again
-              </button>
-              <button
-                onClick={onMainMenu}
-                className="py-3 px-4 rounded-2xl bg-teal-800 hover:bg-teal-700 text-white font-bold text-xs shadow-lg transition flex items-center justify-center gap-2"
               >
                 <Home className="w-4 h-4" />
                 Main Menu

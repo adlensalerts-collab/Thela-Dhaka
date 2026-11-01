@@ -91,6 +91,14 @@ export class PedestrianManager {
 
       const targetNodeId = this.graph.getRandomDestination(startNodeId, 30);
       const path = this.graph.findAStarPath(startNodeId, targetNodeId);
+      const firstStep = path.length > 1 ? path[1] : path[0] ?? startNode;
+      const initDx = firstStep.x - startNode.x;
+      const initDz = firstStep.z - startNode.z;
+      const initialHeading =
+        Math.hypot(initDx, initDz) > 0.01
+          ? Math.atan2(initDx, -initDz)
+          : Math.random() * Math.PI * 2;
+      rig.group.rotation.y = -initialHeading;
 
       this.pedestrians.push({
         id: i,
@@ -103,10 +111,10 @@ export class PedestrianManager {
         body: rig.body,
         currentNodeId: startNodeId,
         targetNodeId,
-        path,
+        path: path.length > 1 ? path.slice(1) : path,
         pathIndex: 0,
         speed: archetype.speed * (0.9 + Math.random() * 0.25),
-        heading: Math.random() * Math.PI * 2,
+        heading: initialHeading,
         state: 'walking',
         idleTimer: 0,
         walkCycle: Math.random() * 10,
@@ -142,7 +150,8 @@ export class PedestrianManager {
           // Select new distant destination node and run A* search
           const newTargetId = this.graph.getRandomDestination(p.currentNodeId, 35);
           p.targetNodeId = newTargetId;
-          p.path = this.graph.findAStarPath(p.currentNodeId, newTargetId);
+          const fullPath = this.graph.findAStarPath(p.currentNodeId, newTargetId);
+          p.path = fullPath.length > 1 ? fullPath.slice(1) : fullPath;
           p.pathIndex = 0;
           p.state = 'walking';
         }
@@ -174,22 +183,27 @@ export class PedestrianManager {
         // Move towards target waypoint
         const dirX = dx / dist;
         const dirZ = dz / dist;
-        const moveDist = Math.min(dist, p.speed * dt);
 
-        p.mesh.position.x += dirX * moveDist;
-        p.mesh.position.z += dirZ * moveDist;
-
-        // Smoothly rotate towards heading
+        // Smoothly rotate towards heading (human model faces local -Z, so rotation.y = -heading)
         const targetHeading = Math.atan2(dirX, -dirZ);
         let angleDiff = targetHeading - p.heading;
         // Normalize angle diff to [-PI, PI]
         while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
         while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
-        p.heading += angleDiff * Math.min(1, dt * 6.5);
-        p.mesh.rotation.y = p.heading;
+        p.heading += angleDiff * Math.min(1, dt * 8.5);
+        while (p.heading > Math.PI) p.heading -= Math.PI * 2;
+        while (p.heading < -Math.PI) p.heading += Math.PI * 2;
+        p.mesh.rotation.y = -p.heading;
+
+        // Scale forward step by alignment so NPCs pivot before walking after a 180° turn
+        const alignment = Math.max(0, Math.cos(angleDiff));
+        const moveDist = Math.min(dist, p.speed * alignment * dt);
+
+        p.mesh.position.x += dirX * moveDist;
+        p.mesh.position.z += dirZ * moveDist;
 
         // Animate natural limb swings during walking
-        p.walkCycle += p.speed * dt * 5.2;
+        p.walkCycle += p.speed * Math.max(0.35, alignment) * dt * 5.2;
         const swing = Math.sin(p.walkCycle) * 0.45;
         p.leftLeg.rotation.x = -swing;
         p.rightLeg.rotation.x = swing;
