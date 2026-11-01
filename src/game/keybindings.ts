@@ -58,7 +58,7 @@ export const ACTION_METADATA: Record<ActionName, { label: string; bnLabel: strin
   upgrade: { label: 'Upgrade Cart', bnLabel: 'গাড়ি আপগ্রেড', isHold: false },
   changeView: { label: 'Change Camera View', bnLabel: 'ক্যামেরা পরিবর্তন', isHold: false },
   placeStall: { label: 'Place Food Stall', bnLabel: 'বড় দোকান বসান', isHold: false },
-  repair: { label: 'Repair Vehicle', bnLabel: 'গাড়ি মেরামত', isHold: false },
+  repair: { label: 'Repair Vehicle', bnLabel: 'মেরামত করুন', isHold: false },
   pause: { label: 'Pause Game', bnLabel: 'খেলা থামান', isHold: false }
 };
 

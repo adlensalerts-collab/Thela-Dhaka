@@ -92,13 +92,13 @@ export const GameHUD: React.FC<GameHUDProps> = ({
   const damage = state.damage || 0;
   const repairCost = state.repairCost || 0;
 
-  // Damage bar color (green → amber → red)
+  // Damage bar color (green < 40, amber < 75, red otherwise)
   let damageBarColor = 'bg-emerald-500';
   let damageTextColor = 'text-emerald-400';
-  if (damage >= 70) {
+  if (damage >= 75) {
     damageBarColor = 'bg-rose-500';
     damageTextColor = 'text-rose-400';
-  } else if (damage >= 30) {
+  } else if (damage >= 40) {
     damageBarColor = 'bg-amber-500';
     damageTextColor = 'text-amber-400';
   }

@@ -496,6 +496,9 @@ export class GameEngine {
         frame.position.z = -1.35;
         g.add(frame);
         block(frame, 1.75, 0.2, 1.75, mat.wood, 0, 0.85, 0);
+        block(frame, 1.72, 0.08, 1.72, mat.metal, 0, 0.72, 0);
+        const axle = cylinder(frame, 0.045, 0.045, 1.9, mat.metal, 0, 0.43, 0, 8);
+        axle.rotation.z = Math.PI / 2;
         block(frame, 1.9, 0.33, 0.12, mat.red, 0, 1.35, -0.75);
         block(frame, 1.9, 0.33, 0.12, mat.yellow, 0, 1.35, 0.75);
         for (const xx of [-0.92, 0.92]) {
@@ -963,7 +966,7 @@ export class GameEngine {
         this.state.damage = 0;
         this.state.repairCost = 0;
         this.playBeep(480, 0.2);
-        this.onEvent('notify', `Vehicle repaired! Cost ৳${costPaid}`);
+        this.onEvent('notify', `Repaired for ৳${costPaid}`);
         this.publishState(true);
       } else if (this.damage.damage <= 0) {
         this.onEvent('notify', 'No damage — vehicle in good shape');
@@ -1369,6 +1372,7 @@ export class GameEngine {
       const t = performance.now() * 0.00012;
       this.camera.position.set(Math.sin(t) * 42, 22, Math.cos(t) * 45);
       this.camera.lookAt(0, 1, 0);
+      this.lighting?.update(new THREE.Vector3(0, 0, 0), this.camera.position);
     }
 
     this.renderer.render(this.scene, this.camera);
