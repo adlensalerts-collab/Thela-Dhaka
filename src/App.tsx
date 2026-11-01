@@ -108,6 +108,7 @@ export default function App() {
 
   const handleStartSolo = (role: 'vendor' | 'police') => {
     if (!engineRef.current) return;
+    engineRef.current.resumeAudio();
     engineRef.current.setMode(role);
     setView('playing');
     setNotice(role === 'vendor' ? 'Sell products, then escape police!' : 'Patrol streets and catch the vendor!');
@@ -118,6 +119,7 @@ export default function App() {
       alert(OFFLINE_MESSAGE);
       return;
     }
+    engineRef.current?.resumeAudio();
     socketRef.current.emit('create_room', { role, playerName: name });
   };
 
@@ -127,6 +129,7 @@ export default function App() {
       return;
     }
     if (!engineRef.current) return;
+    engineRef.current.resumeAudio();
     setRoomCode(code);
     socketRef.current.emit('join_room', { roomCode: code, playerName: name });
     engineRef.current.setMode('online_police');
@@ -135,13 +138,18 @@ export default function App() {
 
   const handleAction = (actionKey: string) => {
     if (!engineRef.current) return;
+    engineRef.current.resumeAudio();
     engineRef.current.handleAction(actionKey);
   };
 
   const handleToggleMute = () => {
     if (!engineRef.current) return;
-    engineRef.current.muted = !muted;
-    setMuted(!muted);
+    const nextMuted = !muted;
+    if (!nextMuted) {
+      engineRef.current.resumeAudio();
+    }
+    engineRef.current.setMuted(nextMuted);
+    setMuted(nextMuted);
   };
 
   const handleOpenSettings = () => {
@@ -162,6 +170,7 @@ export default function App() {
   };
 
   const handleResume = () => {
+    engineRef.current?.resumeAudio();
     engineRef.current?.resumeGame();
     setModalType(null);
   };
@@ -194,6 +203,8 @@ export default function App() {
           onOpenSettings={handleOpenSettings}
           settings={settings}
           roomCode={roomCode}
+          muted={muted}
+          onToggleMute={handleToggleMute}
         />
       )}
 
@@ -261,6 +272,7 @@ export default function App() {
         onClose={() => setShowSettings(false)}
         onBindingsUpdated={handleUpdateSettings}
         onBrightnessChange={(v) => engineRef.current?.setBrightness(v)}
+        onAmbientVolumeChange={(v) => engineRef.current?.setAmbientVolume(v)}
       />
     </div>
   );

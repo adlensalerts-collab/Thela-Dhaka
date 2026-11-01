@@ -13,22 +13,26 @@ import {
 } from '../game/keybindings';
 import { BrightnessControl } from './BrightnessControl';
 import { loadDisplaySettings, saveDisplaySettings } from '../game/render/display';
+import { loadAmbientVolume, saveAmbientVolume } from '../game/audio/ambientAudio';
 
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
   onBindingsUpdated: (settings: GameSettingsData) => void;
   onBrightnessChange?: (v: number) => void;
+  onAmbientVolumeChange?: (v: number) => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
   onClose,
   onBindingsUpdated,
-  onBrightnessChange
+  onBrightnessChange,
+  onAmbientVolumeChange
 }) => {
   const [settings, setSettings] = useState<GameSettingsData>(() => loadSettings());
   const [brightness, setBrightness] = useState(() => loadDisplaySettings().brightness);
+  const [ambientVolume, setAmbientVolume] = useState(() => loadAmbientVolume());
   const [rebinding, setRebinding] = useState<{ action: ActionName; slot: number } | null>(null);
   const [saveToast, setSaveToast] = useState(false);
 
@@ -37,6 +41,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       const current = loadSettings();
       setSettings(current);
       setBrightness(loadDisplaySettings().brightness);
+      setAmbientVolume(loadAmbientVolume());
       setRebinding(null);
     }
   }, [isOpen]);
@@ -148,11 +153,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           )}
 
-          {/* Display Settings */}
+          {/* Display & Audio Settings */}
           <div className="p-4 rounded-2xl bg-black/30 border border-teal-800/50 space-y-4">
             <h3 className="text-xs font-bold uppercase tracking-wider text-amber-400 flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-amber-400" />
-              Display (ডিসপ্লে)
+              Display & Soundscape (ডিসপ্লে ও পরিবেশের শব্দ)
             </h3>
             <BrightnessControl
               value={brightness}
@@ -162,6 +167,36 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 onBrightnessChange?.(v);
               }}
             />
+
+            <div className="space-y-2.5 pt-3 border-t border-teal-900/50">
+              <div className="flex items-center justify-between text-xs">
+                <div>
+                  <span className="font-semibold text-white">Dhaka Ambient Soundscape</span>
+                  <span className="text-gray-400 ml-1.5">(যানজট ও বাজারের শব্দ)</span>
+                </div>
+                <span className="font-mono text-amber-400 font-bold px-2 py-0.5 rounded bg-black/40 border border-teal-700/40">
+                  {Math.round(ambientVolume * 100)}%
+                </span>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-[11px] text-gray-500 font-mono">0%</span>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={ambientVolume}
+                  onChange={(e) => {
+                    const val = parseFloat(e.target.value);
+                    setAmbientVolume(val);
+                    saveAmbientVolume(val);
+                    onAmbientVolumeChange?.(val);
+                  }}
+                  className="flex-1 accent-amber-400 cursor-pointer h-2 rounded-lg bg-teal-950 border border-teal-700/50"
+                />
+                <span className="text-[11px] text-gray-500 font-mono">100%</span>
+              </div>
+            </div>
           </div>
 
           {/* Mouse & Camera Settings */}

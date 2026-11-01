@@ -10,7 +10,9 @@ import {
   RefreshCw,
   Store,
   Sliders,
-  Wrench
+  Wrench,
+  Volume2,
+  VolumeX
 } from 'lucide-react';
 import { GameState } from '../game/simulation';
 import { GameSettingsData, formatCode } from '../game/keybindings';
@@ -23,6 +25,8 @@ interface GameHUDProps {
   onOpenSettings: () => void;
   settings: GameSettingsData;
   roomCode?: string;
+  muted?: boolean;
+  onToggleMute?: () => void;
 }
 
 export const GameHUD: React.FC<GameHUDProps> = ({
@@ -32,7 +36,9 @@ export const GameHUD: React.FC<GameHUDProps> = ({
   onPause,
   onOpenSettings,
   settings,
-  roomCode
+  roomCode,
+  muted = false,
+  onToggleMute
 }) => {
   const minimapRef = useRef<HTMLCanvasElement>(null);
   const bgCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -179,8 +185,27 @@ export const GameHUD: React.FC<GameHUDProps> = ({
           </div>
         </div>
 
-        {/* Top Right: Settings, Pause & Heat stars */}
+        {/* Top Right: Ambient Soundscape, Heat stars, Mute, Settings & Pause */}
         <div className="flex items-center gap-2.5 pointer-events-auto">
+          {state.ambientZone && (
+            <div
+              className="hidden lg:flex bg-black/60 backdrop-blur-md border border-teal-600/40 rounded-2xl px-3.5 py-2 shadow-xl items-center gap-2 text-xs text-teal-200"
+              title="Location Ambient Soundscape"
+            >
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  muted ? 'bg-gray-500' : 'bg-emerald-400 animate-pulse'
+                }`}
+              />
+              <div className="flex flex-col leading-tight">
+                <span className="font-semibold text-white text-[11px]">{state.ambientZone}</span>
+                {state.ambientZoneBn && (
+                  <span className="text-[10px] text-teal-300/90">{state.ambientZoneBn}</span>
+                )}
+              </div>
+            </div>
+          )}
+
           {isVendor && (
             <div className="bg-black/60 backdrop-blur-md border border-amber-500/40 rounded-2xl px-4 py-2.5 shadow-xl flex items-center gap-1.5 text-amber-400 text-sm font-bold">
               <Star className="w-4 h-4 fill-amber-400 text-amber-400" />
@@ -190,6 +215,20 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                 {'☆'.repeat(5 - stars)}
               </span>
             </div>
+          )}
+
+          {onToggleMute && (
+            <button
+              onClick={onToggleMute}
+              className="p-3 rounded-2xl bg-black/60 backdrop-blur-md border border-teal-600/40 hover:bg-teal-900/60 text-gray-200 hover:text-white shadow-xl transition"
+              title={muted ? 'Unmute Dhaka Soundscape' : 'Mute Dhaka Soundscape'}
+            >
+              {muted ? (
+                <VolumeX className="w-5 h-5 text-rose-400" />
+              ) : (
+                <Volume2 className="w-5 h-5 text-amber-300" />
+              )}
+            </button>
           )}
 
           <button

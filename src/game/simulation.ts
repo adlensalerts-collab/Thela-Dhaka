@@ -20,6 +20,16 @@ import { SaleIndicator } from './ui/saleIndicator';
 import { createHumanRig, setPushPose, animateHuman } from './world/humans';
 import { buildDhakaBuilding } from './world/buildings';
 import { loadDisplaySettings } from './render/display';
+import { AmbientAudioManager } from './audio/ambientAudio';
+
+const STALL_POSITIONS: ReadonlyArray<readonly [number, number]> = [
+  [-9, -27],
+  [11, 25],
+  [-49, -8],
+  [71, 51],
+  [-35, 70],
+  [35, -42]
+];
 
 export interface GameState {
   mode: 'vendor' | 'police' | 'online_vendor' | 'online_police';
@@ -46,6 +56,10 @@ export interface GameState {
   score: number;
   damage: number;
   repairCost: number;
+  ambientZone?: string;
+  ambientZoneBn?: string;
+  trafficNoise?: number;
+  crowdNoise?: number;
 }
 
 // Module-level reusable math objects for zero garbage collection during 60 FPS loop
@@ -66,6 +80,7 @@ export class GameEngine {
   onUpdate: (state: GameState) => void;
   onEvent: (type: string, data?: any) => void;
   audioCtx: AudioContext | null = null;
+  ambientAudio: AmbientAudioManager = new AmbientAudioManager();
   muted: boolean = false;
   human!: THREE.Group;
   officer!: THREE.Group;
@@ -175,7 +190,11 @@ export class GameEngine {
       speed: 0,
       score: 0,
       damage: 0,
-      repairCost: 0
+      repairCost: 0,
+      ambientZone: 'Main Road · Traffic',
+      ambientZoneBn: 'মূল সড়ক · যানজট',
+      trafficNoise: 0.25,
+      crowdNoise: 0.15
     };
   }
 
@@ -184,10 +203,30 @@ export class GameEngine {
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
       if (AudioCtx) {
         this.audioCtx = new AudioCtx();
+        this.ambientAudio.attachContext(this.audioCtx);
       }
     } catch (e) {
       console.warn('AudioContext not started', e);
     }
+  }
+
+  resumeAudio() {
+    if (!this.audioCtx) {
+      this.startAudio();
+    }
+    if (this.audioCtx && this.audioCtx.state === 'suspended') {
+      this.audioCtx.resume().catch(() => {});
+    }
+    this.ambientAudio.attachContext(this.audioCtx);
+  }
+
+  setMuted(muted: boolean) {
+    this.muted = muted;
+    this.ambientAudio.setMuted(muted);
+  }
+
+  setAmbientVolume(v: number) {
+    this.ambientAudio.setVolume(v);
   }
 
   playBeep(freq = 440, duration = 0.1, type: OscillatorType = 'sine') {
@@ -451,7 +490,6 @@ export class GameEngine {
       });
       return g;
     };
-    const STALL_POSITIONS: Array<[number, number]> = [[-9, -27], [11, 25], [-49, -8], [71, 51], [-35, 70], [35, -42]];
     for (const [x, z] of STALL_POSITIONS) {
       makeStall(x, z);
     }
@@ -566,13 +604,15 @@ export class GameEngine {
         return;
       }
 
+      this.resumeAudio();
+
       const action = actionForCode(e.code, this.bindings);
       if (action) {
         // Prevent scrolling on arrows, space, etc.
         e.preventDefault();
 
         // One-shot actions trigger once on initial physical keydown
-        if (['sell', 'restock', 'upgrade', 'changeView', 'placeStall', 'pause'].includes(action)) {
+        if (['sell', 'restock', 'upgrade', 'changeView', 'placeStall', 'repair', 'pause'].includes(action)) {
           if (!e.repeat) {
             this.handleAction(action);
           }
@@ -608,6 +648,7 @@ export class GameEngine {
 
     // Mouse drag camera controls (no pointer lock anywhere)
     const onPointerDown = (e: PointerEvent) => {
+      this.resumeAudio();
       // Rotate on left or right click drag
       if (e.button === 0 || e.button === 2) {
         this.isMouseDragging = true;
@@ -648,6 +689,7 @@ export class GameEngine {
 
     // Mobile touch drag controls
     const onTouchStart = (e: TouchEvent) => {
+      this.resumeAudio();
       if (e.touches.length === 1 && this.state && this.state.stage === 'playing') {
         this.isMouseDragging = true;
         this.lastMouseX = e.touches[0].clientX;
@@ -1308,9 +1350,14 @@ export class GameEngine {
       }
     }
 
-    // Sync damage state
+    // Sync damage & ambient soundscape state
     this.state.damage = this.damage.damage;
     this.state.repairCost = this.damage.repairCost(this.state.level);
+    const snap = this.ambientAudio.getSnapshot();
+    this.state.ambientZone = snap.zoneLabel;
+    this.state.ambientZoneBn = snap.zoneBnLabel;
+    this.state.trafficNoise = snap.trafficLevel;
+    this.state.crowdNoise = snap.crowdLevel;
 
     // Throttled publish to React HUD
     this.publishState(false);
@@ -1404,6 +1451,28 @@ export class GameEngine {
       dt
     );
 
+    // Update location-aware layered ambient soundscape
+    const activeActor =
+      this.state && (this.state.mode === 'police' || this.state.mode === 'online_police')
+        ? this.officer
+        : this.human;
+    this.ambientAudio.update(dt, {
+      playerX: activeActor ? activeActor.position.x : 0,
+      playerZ: activeActor ? activeActor.position.z : 0,
+      cameraYaw: this.cameraYaw,
+      isPlaying: !!this.state && this.state.stage === 'playing' && !this.isMenuOrModalOpen,
+      isPaused: !this.state || this.state.stage !== 'playing' || this.isMenuOrModalOpen,
+      isAlert: !!this.state?.alert,
+      isSelling: !!this.state?.sale,
+      muted: this.muted,
+      traffic: this.traffic,
+      pedestrians: this.customers,
+      stalls: STALL_POSITIONS,
+      playerStall: this.state?.stall
+        ? { x: this.state.stall.position.x, z: this.state.stall.position.z }
+        : null
+    });
+
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -1414,6 +1483,7 @@ export class GameEngine {
   stop() {
     this.isDestroyed = true;
     cancelAnimationFrame(this.animId);
+    this.ambientAudio?.dispose();
     this.saleIndicator?.dispose();
     this.lighting?.dispose();
     for (const cleanup of this.cleanupListeners) {
