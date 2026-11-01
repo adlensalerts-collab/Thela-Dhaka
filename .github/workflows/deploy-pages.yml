@@ -38,5 +38,13 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      # One-off: clears the stuck deployment from the old "Deploy from a branch" setup.
+      # Safe to delete this step once the site is live.
+      - name: Cancel stuck Pages deployment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -X POST "repos/${{ github.repository }}/pages/deployments/be28e48ad7b78d4b1ed106240097ab9bbb3ddbe6/cancel" || true
+          sleep 10
       - id: deployment
         uses: actions/deploy-pages@v4
