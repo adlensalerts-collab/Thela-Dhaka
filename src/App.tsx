@@ -1,6 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { GameEngine, GameState } from './game/simulation';
-import { TitleScreen } from './components/TitleScreen';
+import {
+  TitleScreen,
+  OnlineConnectionStatus,
+  PendingRoomAction,
+  WaitingRoomInfo
+} from './components/TitleScreen';
 import { GameHUD } from './components/GameHUD';
 import { EventModal } from './components/EventModal';
 import { SettingsModal } from './components/SettingsModal';
@@ -11,7 +16,8 @@ import { io, Socket } from 'socket.io-client';
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL as string | undefined;
 const ONLINE_AVAILABLE = import.meta.env.VITE_STATIC_HOST !== 'true' || !!SERVER_URL;
-const OFFLINE_MESSAGE = 'Online multiplayer is not available on this website yet — please play Solo.\nঅনলাইন মাল্টিপ্লেয়ার এই সাইটে এখনো চালু নেই — সোলো খেলুন।';
+const OFFLINE_MESSAGE =
+  'Online multiplayer is not available on this host — please play Solo vs AI. · অনলাইন মাল্টিপ্লেয়ার এই সাইটে চালু নেই — সোলো খেলুন।';
 
 export default function App() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -29,12 +35,33 @@ export default function App() {
   const [notice, setNotice] = useState('Welcome to Thela Dhaka · ঢাকার ঠেলা');
   const [muted, setMuted] = useState(false);
   const [roomCode, setRoomCode] = useState<string>('');
+  const [rematchPending, setRematchPending] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<OnlineConnectionStatus>(() =>
+    ONLINE_AVAILABLE ? 'connecting' : 'unavailable'
+  );
+  const [pendingRoomAction, setPendingRoomAction] = useState<PendingRoomAction>(null);
+  const [waitingRoom, setWaitingRoom] = useState<WaitingRoomInfo | null>(null);
+  const [onlineError, setOnlineError] = useState<string | null>(null);
+
   const roomCodeRef = useRef<string>('');
   const opponentIdRef = useRef<string | null>(null);
+  const roundRef = useRef<number>(1);
+  const pendingRoomActionRef = useRef<PendingRoomAction>(null);
+  const waitingRoomRef = useRef<WaitingRoomInfo | null>(null);
 
   const updateRoomCode = (code: string) => {
     roomCodeRef.current = code;
     setRoomCode(code);
+  };
+
+  const updatePendingRoomAction = (action: PendingRoomAction) => {
+    pendingRoomActionRef.current = action;
+    setPendingRoomAction(action);
+  };
+
+  const updateWaitingRoom = (info: WaitingRoomInfo | null) => {
+    waitingRoomRef.current = info;
+    setWaitingRoom(info);
   };
 
   const leaveCurrentRoom = (pauseAbandoned = true) => {
@@ -43,6 +70,10 @@ export default function App() {
       socketRef.current.emit('leave_room', { roomCode: activeCode });
     }
     opponentIdRef.current = null;
+    roundRef.current = 1;
+    setRematchPending(false);
+    updatePendingRoomAction(null);
+    updateWaitingRoom(null);
     updateRoomCode('');
     setRunStats(null);
     setModalType(null);
@@ -112,10 +143,16 @@ export default function App() {
     const socket = ONLINE_AVAILABLE ? (SERVER_URL ? io(SERVER_URL) : io()) : null;
     socketRef.current = socket;
     if (!socket) {
-      return () => { engine.stop(); };
+      setConnectionStatus('unavailable');
+      return () => {
+        engine.stop();
+      };
     }
 
     let disposed = false;
+    if (socket.connected) {
+      setConnectionStatus('connected');
+    }
 
     const isOnlineMode = () => {
       const mode = engine.state?.mode;
@@ -130,17 +167,43 @@ export default function App() {
       return true;
     };
 
+    socket.on('connect', () => {
+      if (disposed) return;
+      setConnectionStatus('connected');
+      setOnlineError(null);
+    });
+
+    socket.on('connect_error', () => {
+      if (disposed) return;
+      setConnectionStatus('unavailable');
+      updatePendingRoomAction(null);
+      updateWaitingRoom(null);
+      setRematchPending(false);
+      updateRoomCode('');
+      engine.pauseGame();
+    });
+
     socket.on('room_created', (data) => {
-      const createdCode = typeof data?.roomCode === 'string' ? data.roomCode : '';
-      if (!createdCode) return;
-      const role = data?.role === 'vendor' ? 'vendor' : 'police';
+      const createdCode = typeof data?.roomCode === 'string' ? data.roomCode.trim().toUpperCase() : '';
+      if (!createdCode) {
+        updatePendingRoomAction(null);
+        return;
+      }
+      const role: 'vendor' | 'police' = data?.role === 'vendor' ? 'vendor' : 'police';
       opponentIdRef.current = null;
+      roundRef.current =
+        typeof data?.round === 'number' && Number.isFinite(data.round) ? data.round : 1;
+      setRematchPending(false);
+      updatePendingRoomAction(null);
+      setOnlineError(null);
       updateRoomCode(createdCode);
+      updateWaitingRoom({ roomCode: createdCode, role });
       setRunStats(null);
       setModalType(null);
-      setNotice(`Room created: ${createdCode}. Waiting for friend...`);
-      engine.setMode(role === 'vendor' ? 'online_vendor' : 'online_police');
-      setView('playing');
+      // Keep gameplay strictly paused on the title screen waiting panel until start_multiplayer arrives
+      engine.pauseGame();
+      setView('menu');
+      setNotice(`Room created: ${createdCode}. Waiting for opponent...`);
     });
 
     socket.on('start_multiplayer', (room) => {
@@ -149,12 +212,30 @@ export default function App() {
       if (!me) return;
       const opponent = room.players.find((p: any) => p.id !== socket.id);
       opponentIdRef.current = opponent?.id ?? null;
+      const nextRound =
+        typeof room.round === 'number' && Number.isFinite(room.round) ? room.round : 1;
+      roundRef.current = nextRound;
+      setRematchPending(false);
+      updatePendingRoomAction(null);
+      updateWaitingRoom(null);
+      setOnlineError(null);
       updateRoomCode(room.code);
       engine.setMode(me.role === 'vendor' ? 'online_vendor' : 'online_police');
       setRunStats(null);
       setModalType(null);
-      showToast('Match started! Both players connected.');
+      showToast(
+        nextRound > 1
+          ? 'Rematch started! · পুনরায় খেলা শুরু!'
+          : 'Match started! Both players connected.'
+      );
       setView('playing');
+    });
+
+    socket.on('rematch_requested', (msg) => {
+      if (!msg || !isCurrentSessionEvent({ roomCode: msg.roomCode })) return;
+      if (msg.requesterId && msg.requesterId !== socket.id) {
+        showToast('প্রতিপক্ষ পুনরায় খেলতে চায় · Opponent requested a rematch');
+      }
     });
 
     socket.on('opponent_update', (msg) => {
@@ -186,6 +267,10 @@ export default function App() {
       if (msg?.roomCode && msg.roomCode !== roomCodeRef.current) return;
       if (msg?.id && opponentIdRef.current && msg.id !== opponentIdRef.current) return;
       opponentIdRef.current = null;
+      roundRef.current = 1;
+      setRematchPending(false);
+      updatePendingRoomAction(null);
+      updateWaitingRoom(null);
       updateRoomCode('');
       setRunStats(null);
       setModalType(null);
@@ -196,18 +281,32 @@ export default function App() {
 
     socket.on('disconnect', () => {
       if (disposed) return;
-      if (!roomCodeRef.current && !isOnlineMode()) return;
+      setConnectionStatus('unavailable');
+      const hadOnlineContext =
+        Boolean(roomCodeRef.current) ||
+        Boolean(waitingRoomRef.current) ||
+        Boolean(pendingRoomActionRef.current) ||
+        isOnlineMode();
       opponentIdRef.current = null;
+      roundRef.current = 1;
+      setRematchPending(false);
+      updatePendingRoomAction(null);
+      updateWaitingRoom(null);
       updateRoomCode('');
       setRunStats(null);
       setModalType(null);
       engine.pauseGame();
-      setView('menu');
-      showToast('সংযোগ বিচ্ছিন্ন · Disconnected from server');
+      if (hadOnlineContext) {
+        setView('menu');
+        showToast('সংযোগ বিচ্ছিন্ন · Disconnected from server');
+      }
     });
 
     socket.on('error_message', (msg) => {
-      showToast(String(msg));
+      const errorText = String(msg || 'Multiplayer error');
+      updatePendingRoomAction(null);
+      setOnlineError(errorText);
+      showToast(errorText);
     });
 
     return () => {
@@ -270,6 +369,7 @@ export default function App() {
 
   const handleStartSolo = (role: 'vendor' | 'police') => {
     if (!engineRef.current) return;
+    setOnlineError(null);
     leaveCurrentRoom(false);
     engineRef.current.resumeAudio();
     engineRef.current.setMode(role);
@@ -278,23 +378,33 @@ export default function App() {
   };
 
   const handleCreateRoom = (role: 'vendor' | 'police', name: string) => {
-    if (!socketRef.current) {
-      alert(OFFLINE_MESSAGE);
+    if (pendingRoomActionRef.current || waitingRoomRef.current) return;
+    if (!ONLINE_AVAILABLE || !socketRef.current || !socketRef.current.connected) {
+      setConnectionStatus('unavailable');
+      setOnlineError(OFFLINE_MESSAGE);
+      showToast(OFFLINE_MESSAGE);
       return;
     }
     leaveCurrentRoom(true);
+    setOnlineError(null);
+    updatePendingRoomAction('creating');
+    engineRef.current?.pauseGame();
     engineRef.current?.resumeAudio();
     socketRef.current.emit('create_room', { role, playerName: name });
   };
 
   const handleJoinRoom = (code: string, name: string) => {
-    if (!socketRef.current) {
-      alert(OFFLINE_MESSAGE);
+    if (pendingRoomActionRef.current || waitingRoomRef.current) return;
+    if (!ONLINE_AVAILABLE || !socketRef.current || !socketRef.current.connected) {
+      setConnectionStatus('unavailable');
+      setOnlineError(OFFLINE_MESSAGE);
+      showToast(OFFLINE_MESSAGE);
       return;
     }
     if (!engineRef.current) return;
     const normalizedCode = code.trim().toUpperCase();
     if (!normalizedCode) {
+      setOnlineError('Room not found. Check code.');
       showToast('Room not found. Check code.');
       return;
     }
@@ -302,11 +412,23 @@ export default function App() {
       leaveCurrentRoom(true);
       setView('menu');
     } else {
+      setRematchPending(false);
+      roundRef.current = 1;
       setRunStats(null);
       setModalType(null);
     }
+    setOnlineError(null);
+    updatePendingRoomAction('joining');
+    engineRef.current.pauseGame();
     engineRef.current.resumeAudio();
     socketRef.current.emit('join_room', { roomCode: normalizedCode, playerName: name });
+  };
+
+  const handleCancelWaitingRoom = () => {
+    setOnlineError(null);
+    leaveCurrentRoom(true);
+    setView('menu');
+    showToast('Room cancelled · রুম বাতিল করা হয়েছে');
   };
 
   const handleAction = (actionKey: string) => {
@@ -363,6 +485,7 @@ export default function App() {
   };
 
   const handleResume = () => {
+    if (rematchPending) return;
     engineRef.current?.resumeAudio();
     engineRef.current?.resumeGame();
     setModalType(null);
@@ -375,6 +498,8 @@ export default function App() {
     gameState?.displayHz ?? engineRef.current?.state?.displayHz ?? 60;
   const showFps = displaySettings.showFps || Boolean(gameState?.showFps);
   const uiBrightness = 0.25 + 0.75 * displaySettings.brightness;
+  const isOnlineSession =
+    currentMode === 'online_vendor' || currentMode === 'online_police';
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-black select-none">
@@ -396,6 +521,12 @@ export default function App() {
             onStartSolo={handleStartSolo}
             onCreateRoom={handleCreateRoom}
             onJoinRoom={handleJoinRoom}
+            onCancelWaiting={handleCancelWaitingRoom}
+            onClearOnlineError={() => setOnlineError(null)}
+            connectionStatus={connectionStatus}
+            pendingAction={pendingRoomAction}
+            waitingRoom={waitingRoom}
+            onlineError={onlineError}
             muted={muted}
             onToggleMute={handleToggleMute}
             onOpenSettings={handleOpenSettings}
@@ -444,6 +575,8 @@ export default function App() {
           type={modalType}
           state={gameState}
           stats={runStats ?? engineRef.current?.lastRunStats ?? null}
+          isOnline={isOnlineSession}
+          rematchPending={rematchPending}
           onPayBribe={() => {
             if (!engineRef.current) return;
             const isOnlineVendor = engineRef.current.state.mode === 'online_vendor';
@@ -489,9 +622,26 @@ export default function App() {
           }}
           onResume={handleResume}
           onRestart={() => {
-            if (!engineRef.current || !gameState) return;
+            const engine = engineRef.current;
+            if (!engine) return;
+            const mode = engine.state?.mode ?? gameState?.mode;
+            if (!mode) return;
+            const online = mode === 'online_vendor' || mode === 'online_police';
+            if (online) {
+              if (rematchPending) return;
+              const activeCode = roomCodeRef.current;
+              if (!socketRef.current || !activeCode) return;
+              engine.pauseGame();
+              setRematchPending(true);
+              socketRef.current.emit('request_rematch', {
+                roomCode: activeCode,
+                round: roundRef.current
+              });
+              return;
+            }
+            setRematchPending(false);
             setRunStats(null);
-            engineRef.current.setMode(gameState.mode);
+            engine.setMode(mode);
             setModalType(null);
           }}
           onMainMenu={() => {

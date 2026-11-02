@@ -1,6 +1,6 @@
 # Sprint 9A — skeletal animation foundation
 
-Built against `f38c133` on 2026-11-02. Ready for manual upload. Sprint 8 was verified at that commit and is archived in this package; Sprint 9 remains in progress.
+Uploaded and verified at `10f27ca` (built against `f38c133` on 2026-11-02). Sprint 8 was verified and archived; Sprint 9 remains in progress.
 
 ## Delivered
 

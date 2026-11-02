@@ -32,6 +32,8 @@ async function startServer() {
     code: string;
     players: RoomPlayer[];
     state: 'waiting' | 'playing';
+    round: number;
+    rematchRequests: string[];
   }
 
   // In-memory 1v1 rooms and single active room per socket
@@ -70,6 +72,8 @@ async function startServer() {
         continue;
       }
 
+      room.rematchRequests = [];
+
       for (const participant of room.players) {
         if (activeRoomBySocket.get(participant.id) === code) {
           activeRoomBySocket.delete(participant.id);
@@ -85,6 +89,60 @@ async function startServer() {
       io.in(code).socketsLeave(code);
       rooms.delete(code);
     }
+  };
+
+  const handleRematchRequest = (socketId: string, data: unknown) => {
+    if (!data || typeof data !== 'object') return;
+    const payload = data as { roomCode?: unknown; round?: unknown };
+    const normalizedCode =
+      typeof payload.roomCode === 'string' ? payload.roomCode.trim().toUpperCase() : '';
+    const activeCode = activeRoomBySocket.get(socketId);
+    if (!activeCode || !normalizedCode || activeCode !== normalizedCode) return;
+
+    const room = rooms.get(activeCode);
+    if (!room || room.state !== 'playing' || room.players.length !== 2) return;
+    if (!room.players.some((p) => p.id === socketId)) return;
+
+    if (
+      typeof payload.round !== 'number' ||
+      !Number.isFinite(payload.round) ||
+      payload.round !== room.round
+    ) {
+      return;
+    }
+
+    if (room.rematchRequests.includes(socketId)) {
+      return;
+    }
+
+    room.rematchRequests.push(socketId);
+
+    const bothAgreed =
+      room.players.length === 2 &&
+      room.players.every((p) => room.rematchRequests.includes(p.id));
+
+    if (!bothAgreed) {
+      io.to(activeCode).emit('rematch_requested', {
+        roomCode: activeCode,
+        round: room.round,
+        requesterId: socketId
+      });
+      return;
+    }
+
+    room.round += 1;
+    room.rematchRequests = [];
+    room.state = 'playing';
+    for (const participant of room.players) {
+      participant.pos = { x: 0, z: participant.role === 'vendor' ? 7 : -23 };
+      participant.hasValidPos = false;
+      participant.heading = 0;
+      participant.cash = 250;
+      participant.stock = 10;
+      participant.heat = 0;
+    }
+
+    io.to(activeCode).emit('start_multiplayer', room);
   };
 
   io.on('connection', (socket) => {
@@ -118,11 +176,13 @@ async function startServer() {
             heat: 0
           }
         ],
-        state: 'waiting'
+        state: 'waiting',
+        round: 1,
+        rematchRequests: []
       });
       activeRoomBySocket.set(socket.id, roomCode);
       socket.join(roomCode);
-      socket.emit('room_created', { roomCode, role: assignedRole });
+      socket.emit('room_created', { roomCode, role: assignedRole, round: 1 });
     });
 
     socket.on('join_room', (data) => {
@@ -178,6 +238,8 @@ async function startServer() {
         heat: 0
       });
       room.state = 'playing';
+      room.round = 1;
+      room.rematchRequests = [];
       activeRoomBySocket.set(socket.id, normalizedCode);
       socket.join(normalizedCode);
       io.to(normalizedCode).emit('start_multiplayer', room);
@@ -195,10 +257,26 @@ async function startServer() {
       cleanupSocketRoom(socket.id, requestedCode);
     });
 
+    socket.on('request_rematch', (data) => {
+      handleRematchRequest(socket.id, data);
+    });
+
+    socket.on('rematch_request', (data) => {
+      handleRematchRequest(socket.id, data);
+    });
+
     socket.on('player_action', (data) => {
       if (!data || typeof data !== 'object') return;
       const { roomCode, type, amount, payload } = data;
       if (typeof type !== 'string' || !type) return;
+
+      if (type === 'request_rematch' || type === 'rematch_request') {
+        handleRematchRequest(socket.id, {
+          roomCode,
+          round: typeof data.round === 'number' ? data.round : payload?.round
+        });
+        return;
+      }
 
       const activeCode = activeRoomBySocket.get(socket.id);
       const normalizedCode =

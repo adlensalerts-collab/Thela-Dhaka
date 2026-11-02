@@ -12,6 +12,8 @@ import { RunStats } from '../game/stats';
 
 interface StatsScreenProps {
   stats: RunStats | null;
+  isOnline?: boolean;
+  rematchPending?: boolean;
   onRestart: () => void;
   onMainMenu: () => void;
 }
@@ -25,12 +27,16 @@ function formatDuration(totalSeconds: number): string {
 
 export const StatsScreen: React.FC<StatsScreenProps> = ({
   stats,
+  isOnline,
+  rematchPending = false,
   onRestart,
   onMainMenu
 }) => {
   const result = stats?.result ?? 'jailed';
   const isPolice =
     stats?.mode === 'police' || stats?.mode === 'online_police';
+  const online =
+    isOnline ?? (stats?.mode === 'online_vendor' || stats?.mode === 'online_police');
 
   const headerText =
     result === 'bribe_unaffordable'
@@ -334,10 +340,19 @@ export const StatsScreen: React.FC<StatsScreenProps> = ({
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
         <button
           onClick={onRestart}
-          className="py-3 px-4 rounded-2xl bg-amber-500 hover:bg-amber-400 text-gray-950 font-extrabold text-xs sm:text-sm shadow-lg transition flex items-center justify-center gap-2"
+          disabled={online && rematchPending}
+          className={`py-3 px-4 rounded-2xl font-extrabold text-xs sm:text-sm shadow-lg transition flex items-center justify-center gap-2 ${
+            online && rematchPending
+              ? 'bg-amber-500/40 text-gray-900/70 cursor-not-allowed'
+              : 'bg-amber-500 hover:bg-amber-400 text-gray-950'
+          }`}
         >
-          <RefreshCw className="w-4 h-4" />
-          Play Again / আবার খেলুন
+          <RefreshCw className={`w-4 h-4 ${online && rematchPending ? 'animate-spin' : ''}`} />
+          {online
+            ? rematchPending
+              ? 'Waiting for opponent... / প্রতিপক্ষের অপেক্ষায়...'
+              : 'Request rematch / পুনরায় খেলার অনুরোধ'
+            : 'Play Again / আবার খেলুন'}
         </button>
         <button
           onClick={onMainMenu}

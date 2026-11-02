@@ -8,6 +8,8 @@ interface EventModalProps {
   type: 'bribe' | 'arrest_decision' | 'paused' | 'over' | 'victory' | null;
   state: GameState | null;
   stats?: RunStats | null;
+  isOnline?: boolean;
+  rematchPending?: boolean;
   onPayBribe: () => void;
   onGoToJail: () => void;
   onRecordArrest: () => void;
@@ -22,6 +24,8 @@ export const EventModal: React.FC<EventModalProps> = ({
   type,
   state,
   stats,
+  isOnline,
+  rematchPending = false,
   onPayBribe,
   onGoToJail,
   onRecordArrest,
@@ -34,12 +38,16 @@ export const EventModal: React.FC<EventModalProps> = ({
   if (!type) return null;
 
   const bribeCost = state ? 90 + state.level * 45 : 150;
+  const online =
+    isOnline ?? (state?.mode === 'online_vendor' || state?.mode === 'online_police');
 
   if (type === 'over' || type === 'victory') {
     return (
       <div className="absolute inset-0 z-40 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 sm:p-6">
         <StatsScreen
           stats={stats ?? null}
+          isOnline={online}
+          rematchPending={rematchPending}
           onRestart={onRestart}
           onMainMenu={onMainMenu}
         />
@@ -116,7 +124,12 @@ export const EventModal: React.FC<EventModalProps> = ({
             <div className="space-y-3 pt-4">
               <button
                 onClick={onResume}
-                className="w-full py-3 rounded-2xl bg-teal-700 hover:bg-teal-600 text-white font-bold text-sm shadow-lg transition"
+                disabled={online && rematchPending}
+                className={`w-full py-3 rounded-2xl font-bold text-sm shadow-lg transition ${
+                  online && rematchPending
+                    ? 'bg-teal-900/40 text-teal-400/50 cursor-not-allowed'
+                    : 'bg-teal-700 hover:bg-teal-600 text-white'
+                }`}
               >
                 Resume Game
               </button>
@@ -131,10 +144,19 @@ export const EventModal: React.FC<EventModalProps> = ({
               )}
               <button
                 onClick={onRestart}
-                className="w-full py-3 rounded-2xl bg-teal-900/60 hover:bg-teal-800 text-amber-300 font-bold text-sm shadow-lg transition flex items-center justify-center gap-2"
+                disabled={online && rematchPending}
+                className={`w-full py-3 rounded-2xl font-bold text-sm shadow-lg transition flex items-center justify-center gap-2 ${
+                  online && rematchPending
+                    ? 'bg-teal-950/60 text-teal-400/60 cursor-not-allowed'
+                    : 'bg-teal-900/60 hover:bg-teal-800 text-amber-300'
+                }`}
               >
-                <RefreshCw className="w-4 h-4" />
-                Restart Run
+                <RefreshCw className={`w-4 h-4 ${online && rematchPending ? 'animate-spin' : ''}`} />
+                {online
+                  ? rematchPending
+                    ? 'Waiting for opponent... / প্রতিপক্ষের অপেক্ষায়...'
+                    : 'Request rematch / পুনরায় খেলার অনুরোধ'
+                  : 'Restart Run'}
               </button>
               <button
                 onClick={onMainMenu}
