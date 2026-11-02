@@ -79,7 +79,7 @@ async function startServer() {
   }
 
   const parsedPort = Number.parseInt(process.env.PORT ?? '', 10);
-  const PORT = Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : 3000;
+  const PORT = Number(process.env.PORT) || 3000;
   const allowedOrigins = buildAllowedOrigins(PORT, isProduction);
 
   const isOriginAllowed = (origin: string | undefined, req?: IncomingMessage): boolean => {
