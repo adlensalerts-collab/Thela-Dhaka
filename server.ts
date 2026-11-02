@@ -40,22 +40,21 @@ async function startServer() {
 
   const cleanupSocketRoom = (socketId: string, explicitRoomCode?: string) => {
     const trackedCode = activeRoomBySocket.get(socketId);
-    const candidateCode =
-      typeof explicitRoomCode === 'string' && explicitRoomCode.trim()
-        ? explicitRoomCode.trim().toUpperCase()
-        : trackedCode;
-
     const codesToClose = new Set<string>();
-    if (trackedCode) codesToClose.add(trackedCode);
-    if (candidateCode) {
-      const candidateRoom = rooms.get(candidateCode);
-      if (candidateRoom && candidateRoom.players.some((p) => p.id === socketId)) {
-        codesToClose.add(candidateCode);
+
+    if (explicitRoomCode !== undefined) {
+      const normalizedCode =
+        typeof explicitRoomCode === 'string' ? explicitRoomCode.trim().toUpperCase() : '';
+      if (!normalizedCode || !trackedCode || normalizedCode !== trackedCode) {
+        return;
       }
-    }
-    for (const [code, room] of rooms.entries()) {
-      if (room.players.some((p) => p.id === socketId)) {
-        codesToClose.add(code);
+      codesToClose.add(trackedCode);
+    } else {
+      if (trackedCode) codesToClose.add(trackedCode);
+      for (const [code, room] of rooms.entries()) {
+        if (room.players.some((p) => p.id === socketId)) {
+          codesToClose.add(code);
+        }
       }
     }
 
@@ -185,10 +184,14 @@ async function startServer() {
     });
 
     socket.on('leave_room', (data) => {
-      const requestedCode =
-        data && typeof data === 'object' && typeof data.roomCode === 'string'
-          ? data.roomCode
-          : undefined;
+      if (!data || typeof data !== 'object' || typeof data.roomCode !== 'string') {
+        return;
+      }
+      const requestedCode = data.roomCode.trim().toUpperCase();
+      const activeCode = activeRoomBySocket.get(socket.id);
+      if (!requestedCode || !activeCode || requestedCode !== activeCode) {
+        return;
+      }
       cleanupSocketRoom(socket.id, requestedCode);
     });
 
