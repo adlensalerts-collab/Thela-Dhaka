@@ -34,8 +34,11 @@ Which file owns which feature. Sizes as of Hotfix 8.1. Files over ~20 KB: read v
 ## World models (shared by both maps)
 | Area | File | Key exports |
 |---|---|---|
-| People (vendor, police, compact crowd rig) | `src/game/world/humans.ts` | `createHumanRig`, `animateHuman`, `setPushPose`, `outfitForArchetype` |
-| Cached skeletal character prototype (not wired into gameplay) | `src/game/world/animatedCharacter.ts` | `loadAnimatedCharacter`, `CHARACTER_MOTIONS` |
+| People (procedural fallback, compact crowd controls, skeletal visual attachment) | `src/game/world/humans.ts` | `createHumanRig`, `animateHuman`, `setPushPose`, `outfitForArchetype` |
+| Cached skeletal clips, dressed character loader and actor lifecycle | `src/game/world/animatedCharacter.ts` | `loadAnimatedCharacter`, `CHARACTER_MOTIONS` |
+| Clothed vendor/police/civilian mesh, bound to the CC0 rig | `src/game/world/characterAppearance.ts` | `buildCharacterAppearance`, `CharacterAppearance` |
+| Cart grip arm solver | `src/game/world/characterIK.ts` | `fitCharacterHands` |
+| Procedural fallback switching, hero visuals and near-crowd budgets | `src/game/world/characterVisual.ts` | `CharacterVisual`, `CrowdCharacterLOD` |
 | Vehicle models | `src/game/world/traffic.ts` | `buildVehicle`, `SPECS` (`spawnTraffic` = old grid only) |
 | Trees | `src/game/world/trees.ts` | `buildTreesAt` (`buildPavementTrees` = old grid) |
 | Garage / aarot models | `src/game/world/garages.ts`, `aarots.ts` | `buildGarage`, `buildAarot` (`*_SITES`, `nearest*` = old grid) |

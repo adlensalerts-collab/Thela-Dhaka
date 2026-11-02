@@ -53,6 +53,7 @@ import { StaminaSystem } from './stamina';
 import { WeatherSystem, type WeatherType } from './world/weather';
 import { StatsTracker, type RunStats } from './stats';
 import { RemoteActor } from './net/remoteActor';
+import { CrowdCharacterLOD } from './world/characterVisual';
 
 const STALL_POSITIONS = [
   [-20, 10.5, 'x'],
@@ -164,6 +165,7 @@ export class GameEngine {
   stats = new StatsTracker();
   lastRunStats: RunStats | null = null;
   remote = new RemoteActor();
+  crowdCharacters = new CrowdCharacterLOD();
   remoteActive = false;
   remoteSpeed = 0;
   weather!: WeatherSystem;
@@ -2020,7 +2022,7 @@ export class GameEngine {
       const vendorIntensity =
         Math.min(1, vendorSpeed / 5) *
         (isVendorPlayer ? (this.stamina.exhausted ? 0.55 : this.stamina.speedFactor) : 1);
-      animateHuman(this.human.userData.rig, this.vendorPhase, vendorIntensity, true);
+      animateHuman(this.human.userData.rig, this.vendorPhase, vendorIntensity, true, dt);
       if (isVendorPlayer && (this.stamina.exhausted || this.stamina.stamina < 35)) {
         this.human.userData.rig.body.rotation.x -= this.stamina.exhausted ? 0.12 : 0.06;
       }
@@ -2045,7 +2047,7 @@ export class GameEngine {
       const officerIntensity =
         Math.min(1, officerSpeed / 5) *
         (!isVendorPlayer ? (this.stamina.exhausted ? 0.55 : this.stamina.speedFactor) : 1);
-      animateHuman(this.officer.userData.rig, this.officerPhase, officerIntensity, false);
+      animateHuman(this.officer.userData.rig, this.officerPhase, officerIntensity, false, dt);
       if (!isVendorPlayer && (this.stamina.exhausted || this.stamina.stamina < 35)) {
         this.officer.userData.rig.body.rotation.x -= this.stamina.exhausted ? 0.12 : 0.06;
       }
@@ -2058,7 +2060,7 @@ export class GameEngine {
     }
     this.npcPhase += npcSpeed * dt * 2.2;
     if (this.npcVendor.userData.rig) {
-      animateHuman(this.npcVendor.userData.rig, this.npcPhase, Math.min(1, npcSpeed / 5), true);
+      animateHuman(this.npcVendor.userData.rig, this.npcPhase, Math.min(1, npcSpeed / 5), true, dt);
     }
 
     // Update A* Sidewalk Pedestrian crowd
@@ -2070,6 +2072,8 @@ export class GameEngine {
       for (const ped of this.pedestrianManager.pedestrians) {
         ped.mesh.visible = Math.hypot(ped.mesh.position.x - cam.x, ped.mesh.position.z - cam.z) < PEDESTRIAN_VIEW_DISTANCE;
       }
+
+      this.crowdCharacters.update(this.customers, this.camera.position, this.qualityLevel, dt);
 
       for (const ped of this.pedestrianManager.pedestrians) {
         const distToPlayer = this.vector2(p.position, ped.mesh.position);
@@ -2438,6 +2442,8 @@ export class GameEngine {
 
   stop() {
     this.isDestroyed = true;
+    this.crowdCharacters.dispose();
+    for (const actor of [this.human, this.officer, this.npcVendor]) actor?.userData.rig?.visual?.dispose();
     cancelAnimationFrame(this.animId);
     this.ambientAudio?.dispose();
     this.saleIndicator?.dispose();

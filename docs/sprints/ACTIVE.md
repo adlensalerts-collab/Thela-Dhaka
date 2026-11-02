@@ -53,7 +53,7 @@ Built and tested by Claude. Wiring (M-W) done by Claude: maps are bundled into t
 
 | # | Sprint | Status | Deliverable |
 |---|---|---|---|
-| 9 | Realistic characters | 🔄 | 9A uploaded and verified at `10f27ca`: isolated CC0 mannequin + five skeletal clips, cached loader, independent clone lifecycle and Pages preview; see `SPRINT-9A.md`. Remaining: Bangladeshi outfits, cart-hand alignment, hero integration, crowd LOD/performance and gameplay verification. |
+| 9 | Realistic characters | 🔄 | 9A verified at `10f27ca`. Remaining implementation now built against `52ffdf7`: clothed skeletal heroes, cart-grip IK, bounded near-crowd LOD, fallback/lifecycle and expanded preview. Local checks pass; see `SPRINT-9.md`. Ready for upload; close/archive after verifying the uploaded files. |
 | 10 | More NPCs + behaviour | ⏳ | Remove the 10–15 pedestrian cap; 60–120 people with distance-based detail; groups chatting, phones, browsing stalls, crossing at junctions, reacting to horns/accidents, haggling; density by time and hotspots |
 
 **Sound**

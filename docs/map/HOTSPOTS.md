@@ -20,6 +20,9 @@ Find the region with `grep -n "<anchor>" <file>`, then read a slice (`sed -n 'ST
 | Arrest, bribe, jail, run end | `  arrestVendor() {` · `  payBribe()` · `  goToJail()` · `  endRun(` |
 | Action dispatch (incl. repair/treatment) | `  handleAction(action` |
 | Per-frame simulation | `  simulate(dt` — regions inside by comment: `// Vehicle (tank-style) movement` · `// Dynamic Traffic collision` · `// AI Police pursuit` · `// Update A* Sidewalk Pedestrian crowd` · `// Sale timer check` · `// Traffic motion` · `// Timed garage repair check` · `// Timed aarot restock check` · `// Sync damage, garage & aarot proximity` |
+| Skeletal gait hooks (vendor, officer, NPC vendor) | `// Update walk cycles & limb poses` |
+| Near-crowd skeletal detail budget | `this.crowdCharacters.update(` |
+| Character resource cleanup | `  stop() {` |
 | Render loop, frame limiter, chunk update | `  renderLoop() {` |
 
 ## `src/components/GameHUD.tsx` (~31 KB)
@@ -69,7 +72,11 @@ Find the region with `grep -n "<anchor>" <file>`, then read a slice (`sed -n 'ST
 - `src/game/render/pbr.ts`: `export function pbrMaterial(` calls `applySurfaceWear` for asphalt, pavement and plaster.
 - `src/game/render/surfaceWear.ts`: `export function applySurfaceWear(`; masks are `ROAD`, `PAVEMENT`, `PLASTER`.
 
-## Character prototype (Sprint 9A)
+## Skeletal characters (Sprint 9)
 - `src/game/world/animatedCharacter.ts`: `export async function loadAnimatedCharacter(` loads/clones the local GLB; `setMotion`, `update`, `dispose` control each independent actor.
-- `src/dev/characterPreview.ts`: `async function start()` owns the separate preview; no game-engine integration.
-- `src/game/world/humans.ts`: `export function createHumanRig(` and `export function animateHuman(` are the existing gameplay rig; unchanged in 9A.
+- `src/dev/characterPreview.ts`: `async function start()` owns the separate preview; clothed-role gallery and vendor cart-grip toggle.
+- `src/game/world/humans.ts`: `export function createHumanRig(` and `export function animateHuman(` retain the legacy controls and now attach/drive the independent skeletal visual; compact crowd controls remain available.
+
+- `src/game/world/characterAppearance.ts`: `export function buildCharacterAppearance(` builds one clothed skinned mesh using the pinned rig.
+- `src/game/world/characterIK.ts`: `export function fitCharacterHands(` solves both cart grips in world space.
+- `src/game/world/characterVisual.ts`: `export class CharacterVisual` owns asynchronous fallback/lifecycle; `export class CrowdCharacterLOD` limits detailed crowd instances by quality.

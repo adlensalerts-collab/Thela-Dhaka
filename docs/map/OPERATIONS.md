@@ -49,10 +49,15 @@ GITHUB_PAGES=true VITE_STATIC_HOST=true npx vite build                          
 ```
 Headless browser checks run at low quality (software rendering is ~1 fps); to test timing-based features, expose the engine in a test-only build and call `engine.simulate(1/60)` in a loop rather than waiting in real time.
 
-## Character preview and asset preparation (Sprint 9A)
+## Skeletal characters, preview and asset preparation (Sprint 9)
 
 - Vite builds two HTML entries: the existing `index.html` and the separate `character-preview.html`. The Pages base path is applied to both.
 - Preview after deployment: `https://adlensalerts-collab.github.io/Thela-Dhaka/character-preview.html`. Local dev: `http://localhost:3000/character-preview.html`.
-- The prototype GLB is bundled under `public/assets/characters/`; ordinary game startup does not request it. No CDN or runtime asset credentials are needed.
+- The shared CC0 rig/clip GLB is bundled under `public/assets/characters/`; gameplay requests it once per page and clones independent actors. Procedural models remain visible while loading and on failure. No CDN or runtime asset credentials are needed.
 - Rebuild the GLB from the pinned standard animation-library files in `public/assets/characters/CREDITS.md`: `python3 scripts/prepare-character.py /path/to/AnimationLibrary_Godot_Standard.gltf public/assets/characters/locomotion-prototype.glb`. The adjacent source `.bin` is required. The converter uses Python's standard library only.
 - Source/model licence and checksums are recorded in `public/assets/characters/CREDITS.md`; retain `CC0-LICENSE.txt` with the derived asset.
+
+- Runtime clothing/face/hair geometry is authored in `characterAppearance.ts`; the original asset and its checksum are unchanged. Vendor, police and civilian styles render as one skinned mesh each.
+- Cart grip targets are local to the existing cart root: left/right X = -0.55/+0.55, Y = 1.05, Z = -0.48. `characterIK.ts` solves arms after each push-clip update; map positions/collision remain controlled by the engine.
+- Detailed crowd budgets: Low 0, Medium 2 within 12 m, High 4 within 18 m, Ultra 6 within 22 m, measured from the camera. Hysteresis reduces switches; distant NPCs use the existing compact rig. These budgets do not change the existing 20–50 crowd population.
+- `GameEngine.stop()` disposes hero and crowd skeletal visuals, including pending asynchronous loads. Cloth colours/accessories are resolved from the same appearance options used by the procedural fallback.

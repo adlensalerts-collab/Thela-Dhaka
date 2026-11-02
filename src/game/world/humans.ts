@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { CharacterVisual } from './characterVisual';
 
 /**
  * Sprint 4 — realistic human figure, shared by the player vendor, police and pedestrians.
@@ -33,6 +34,7 @@ export interface HumanOptions {
 }
 
 export interface HumanRig {
+  visual?: CharacterVisual;
   group: THREE.Group;
   /** Upper body, pivoting at the hips. Neutral height is body.userData.baseY — add bob to that. */
   body: THREE.Group;
@@ -242,6 +244,9 @@ export function createHumanRig(opts: HumanOptions = {}): HumanRig {
   group.scale.setScalar(opts.scale ?? 1.18);
   const rig: HumanRig = { group, body, head, leftArm: L.shoulder, rightArm: R.shoulder, leftForearm: L.elbow, rightForearm: R.elbow, leftLeg, rightLeg };
   if (opts.compact) compactRig(rig);
+  const resolved = { ...opts, outfit, skin: skinC, hair: hairC, shirt: shirtC, bottom: bottomC };
+  group.userData.humanRig = rig; group.userData.humanOptions = resolved;
+  if (!opts.compact) rig.visual = new CharacterVisual(rig, resolved);
   return rig;
 }
 
@@ -305,6 +310,7 @@ export const PUSH_LEAN = 0.37; // ~21°, solved numerically so hands land on the
  * local y = 1.05, z = +0.87 → world ≈ (±0.55, 1.05, -0.48)) at the default scale 1.18.
  */
 export function setPushPose(rig: HumanRig) {
+  rig.visual?.setPushing(true);
   rig.body.rotation.x = -PUSH_LEAN;
   rig.leftArm.rotation.x = rig.rightArm.rotation.x = PUSH_ARM;
   rig.leftForearm.rotation.x = rig.rightForearm.rotation.x = PUSH_FOREARM;
@@ -319,7 +325,8 @@ const PUSH_SPREAD = 0.38;
  * Walk cycle. Advance phase by distance travelled (e.g. phase += speed * dt * 2.2).
  * intensity: 0 idle .. 1 full stride. pushing keeps both hands on the cart handles.
  */
-export function animateHuman(rig: HumanRig, phase: number, intensity: number, pushing = false) {
+export function animateHuman(rig: HumanRig, phase: number, intensity: number, pushing = false, dt = 1 / 60) {
+  rig.visual?.update(dt, intensity, pushing);
   const swing = Math.sin(phase) * 0.55 * intensity;
   rig.leftLeg.rotation.x = swing;
   rig.rightLeg.rotation.x = -swing;
