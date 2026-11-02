@@ -45,6 +45,7 @@ Which file owns which feature. Sizes as of Hotfix 8.1. Files over ~20 KB: read v
 | Area | File | Key exports |
 |---|---|---|
 | PBR materials, per-surface tuning, world UVs | `src/game/render/pbr.ts` | `pbrMaterial`, `createPbrMaterials`, `applyWorldUV` (tuning const: `SURFACE_TUNING`) |
+| Worn road paint + deterministic flush footpath drains (existing marking batch) | `src/game/render/streetDetails.ts` | `createStreetPaint`, `collectDrainGrates` |
 | World-space asphalt/pavement cracks, repair patches and plaster rain streaks (material shader; no extra geometry) | `src/game/render/surfaceWear.ts` | `applySurfaceWear` |
 | Shared shop-sign atlases + chunked merged sign meshes | `src/game/render/signboards.ts` | `SignboardBatch.add`, `SignboardBatch.build` |
 | Sky, sun, ambient light, clouds, brightness | `src/game/render/lighting.ts` | `setupRealisticLighting` (ambient strength const: `ENV_INTENSITY`) |

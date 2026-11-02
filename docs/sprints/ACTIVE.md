@@ -53,7 +53,7 @@ Built and tested by Claude. Wiring (M-W) done by Claude: maps are bundled into t
 
 | # | Sprint | Status | Deliverable |
 |---|---|---|---|
-| 8 | Roads & textures | 🔄 | 8A: uploaded and verified at `a3235b5`; sign batching preserved. 8B: world-space matte road repairs/cracks, pavement wear and plaster rain streaks built for manual upload; see `docs/sprints/SPRINT-8B.md`. Remaining: painted-marking refinements and further authored footpath/building detail |
+| 8 | Roads & textures | 🔄 | 8A uploaded at `a3235b5`; 8B uploaded and verified at `32aae00`. 8C implements the remaining worn markings, flush footpath drains, storefront fascia/jambs and rain pipes; built for manual upload. See `docs/sprints/SPRINT-8C.md`. Implementation complete; close/archive Sprint 8 only after the 8C upload is verified. |
 | 9 | Realistic characters | ⏳ | Rigged CC0 3D characters with walk animations (model files to download, e.g. Quaternius) |
 | 10 | More NPCs + behaviour | ⏳ | Remove the 10–15 pedestrian cap; 60–120 people with distance-based detail; groups chatting, phones, browsing stalls, crossing at junctions, reacting to horns/accidents, haggling; density by time and hotspots |
 

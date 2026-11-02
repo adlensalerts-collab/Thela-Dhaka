@@ -1,6 +1,6 @@
 # Sprint 8B — matte surface wear
 
-Built against `a3235b5` on 2026-11-02. Ready for manual upload. Sprint 8 remains in progress.
+Built against `a3235b5` on 2026-11-02. Uploaded and verified at `32aae00`: all seven files matched the delivery package; lint and Pages build passed. Sprint 8 remains in progress.
 
 ## Change
 

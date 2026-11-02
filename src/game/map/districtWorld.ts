@@ -3,6 +3,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import type { Obstacle, PolyObstacle } from '../collision';
 import { pbrMaterial, applyWorldUV } from '../render/pbr';
 import { SignboardBatch } from '../render/signboards';
+import { collectDrainGrates, createStreetPaint } from '../render/streetDetails';
 import { buildTreesAt } from '../world/trees';
 import { buildGarage } from '../world/garages';
 import { buildAarot } from '../world/aarots';
@@ -120,12 +121,13 @@ export function buildDistrictWorld(scene: THREE.Scene, d: District): DistrictWor
   stats.roadPolygons = d.surfaces.carriageway.length; stats.footpathPolygons = d.surfaces.footpath.length;
 
   // ---- Markings
-  const paint = new THREE.MeshStandardMaterial({ color: '#ece4c2', roughness: 0.6 });
+  const paint = createStreetPaint();
+  const paintWhite = new THREE.Color('#ffffff');
   const flat = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
   const dashes = new Batch(flat, paint, false);
   for (const [x0, z0, x1, z1] of d.markings.dashes) {
     const len = Math.hypot(x1 - x0, z1 - z0);
-    dashes.add(chunks.chunkAt((x0 + x1) / 2, (z0 + z1) / 2), compose((x0 + x1) / 2, 0.025, (z0 + z1) / 2, Math.atan2(x1 - x0, z1 - z0), 0.15, 1, len));
+    dashes.add(chunks.chunkAt((x0 + x1) / 2, (z0 + z1) / 2), compose((x0 + x1) / 2, 0.025, (z0 + z1) / 2, Math.atan2(x1 - x0, z1 - z0), 0.15, 1, len), paintWhite);
   }
   for (const zb of d.markings.zebras) {
     const tx = Math.sin(zb.angle), tz = Math.cos(zb.angle);    // road direction
@@ -134,15 +136,28 @@ export function buildDistrictWorld(scene: THREE.Scene, d: District): DistrictWor
     for (let k = 0; k < count; k++) {
       const off = (k + 0.5) - count / 2;
       const x = zb.x + nx * off, z = zb.z + nz * off;
-      dashes.add(chunks.chunkAt(x, z), compose(x, 0.026, z, zb.angle, 0.5, 1, zb.depth));
+      dashes.add(chunks.chunkAt(x, z), compose(x, 0.026, z, zb.angle, 0.5, 1, zb.depth), paintWhite);
     }
   }
-  stats.markings = dashes.build();
+  // ---- Flush footpath drains: reuse the marking batch; no new mesh per cover.
+  const drainGrates = collectDrainGrates(d, roads);
+  const drainDark = new THREE.Color('#252b29'), drainMetal = new THREE.Color('#747e77');
+  for (const g of drainGrates) {
+    const chunk = chunks.chunkAt(g.x, g.z);
+    dashes.add(chunk, compose(g.x, 0.153, g.z, g.yaw, 0.65, 1, 0.95), drainDark);
+    for (let bar = 0; bar < 6; bar++) {
+      const offset = (bar - 2.5) * 0.14;
+      dashes.add(chunk, compose(g.x + Math.sin(g.yaw) * offset, 0.155,
+        g.z + Math.cos(g.yaw) * offset, g.yaw, 0.53, 1, 0.045), drainMetal);
+    }
+  }
+  stats.drainGrates = drainGrates.length;
+  stats.markings = dashes.build() - drainGrates.length * 7;
 
   // ---- Buildings from real footprints
   const plaster = pbrMaterial('plaster'); plaster.vertexColors = true;
   const brick = pbrMaterial('brick');
-  const shopLevel = pbrMaterial('concrete', { tint: '#b9b2a6' });
+  const shopLevel = pbrMaterial('concrete', { tint: '#b9b2a6' }); shopLevel.vertexColors = true;
   const roofMat = pbrMaterial('concrete', { tint: '#cfcac0' });
   const glassDark = new THREE.MeshPhysicalMaterial({ color: '#2b3a3f', roughness: 0.06, metalness: 0.2, clearcoat: 1 });
   const glassLit = new THREE.MeshStandardMaterial({ color: '#f6d9a0', emissive: '#ffcf86', emissiveIntensity: 0.55, roughness: 0.3 });
@@ -180,7 +195,7 @@ export function buildDistrictWorld(scene: THREE.Scene, d: District): DistrictWor
   };
   const roofs = new Map<THREE.Group, THREE.BufferGeometry[]>();
   const signboards = new SignboardBatch();
-  let signs = 0;
+  let signs = 0, facadeBands = 0, facadePipes = 0;
   for (const bd of d.buildings) {
     const ring = bd.footprint;
     if (ring.length < 3) continue;
@@ -226,7 +241,21 @@ export function buildDistrictWorld(scene: THREE.Scene, d: District): DistrictWor
         return roads.isOnFootpath(mx, mz) || roads.isOnCarriageway(mx, mz);
       });
       if (len >= 4 && faceRoad) {
+        // ---- Storefront trim: merge shallow fascia bands and jambs into the existing wall buffer.
+        const wallOffset = 0.015;
+        const facePoint = (distance: number): XZ => [p0[0] + ex * distance / len + n[0] * wallOffset,
+          p0[1] + ez * distance / len + n[1] * wallOffset];
+        if (h > FLOOR + 0.18) {
+          quad(buf(chunk, 'shop'), facePoint(0.03), facePoint(len - 0.03), FLOOR + 0.03, FLOOR + 0.18,
+            n, 0, len - 0.06, new THREE.Color('#e0ddd2'), flip);
+          facadeBands++;
+        }
         const shopN = Math.max(1, Math.floor(len / 5));
+        for (let division = 1; division < shopN; division++) {
+          const distance = division * len / shopN;
+          quad(buf(chunk, 'shop'), facePoint(distance - 0.06), facePoint(distance + 0.06), 0.16, 2.85,
+            n, 0, 0.12, new THREE.Color('#a5a89f'), flip);
+        }
         for (let s = 0; s < shopN; s++) {
           const t = (s + 0.5) / shopN, sh = r() < 0.5 ? 0.5 : r() < 0.8 ? 1.4 : 2.5;
           shutters.add(chunk, compose(p0[0] + ex * t + n[0] * 0.08, 2.75 - sh / 2, p0[1] + ez * t + n[1] * 0.08, yaw, len / shopN - 0.4, sh, 0.06));
@@ -239,6 +268,11 @@ export function buildDistrictWorld(scene: THREE.Scene, d: District): DistrictWor
       const p0 = ring[bestEdge], p1 = ring[(bestEdge + 1) % ring.length];
       const ex = p1[0] - p0[0], ez = p1[1] - p0[1], len = Math.hypot(ex, ez);
       let n: [number, number] = [-ez / len, ex / len]; if (flip) n = [-n[0], -n[1]];
+      // One narrow rain pipe per signed facade, clear of the shop entrance and sign.
+      const pipeA: XZ = [p0[0] + ex * 0.07 + n[0] * 0.025, p0[1] + ez * 0.07 + n[1] * 0.025];
+      const pipeB: XZ = [pipeA[0] + ex / len * 0.09, pipeA[1] + ez / len * 0.09];
+      quad(buf(chunk, 'shop'), pipeA, pipeB, 0.18, h - 0.15, n, 0, 0.09, new THREE.Color('#60675f'), flip);
+      facadePipes++;
       const w = Math.min(len * 0.8, 9);
       signboards.add(chunk, compose(
         (p0[0] + p1[0]) / 2 + n[0] * 0.25, FLOOR + 0.5,
@@ -272,7 +306,7 @@ export function buildDistrictWorld(scene: THREE.Scene, d: District): DistrictWor
     g.setAttribute('position', new THREE.Float32BufferAttribute(b.pos, 3));
     g.setAttribute('normal', new THREE.Float32BufferAttribute(b.nor, 3));
     g.setAttribute('uv', new THREE.Float32BufferAttribute(b.uv, 2));
-    if (kind === 'plaster') g.setAttribute('color', new THREE.Float32BufferAttribute(b.col, 3));
+    if (kind === 'plaster' || kind === 'shop') g.setAttribute('color', new THREE.Float32BufferAttribute(b.col, 3));
     const mesh = new THREE.Mesh(g, matFor[kind]);
     mesh.castShadow = true; mesh.receiveShadow = true;
     chunk.add(mesh);
@@ -285,6 +319,7 @@ export function buildDistrictWorld(scene: THREE.Scene, d: District): DistrictWor
     list.forEach((g) => g.dispose());
   }
   const signStats = signboards.build();
+  stats.facadeBands = facadeBands; stats.facadePipes = facadePipes;
   stats.buildings = d.buildings.length; stats.signs = signStats.signs;
   stats.signBatches = signStats.batches; stats.signAtlasPages = signStats.atlasPages;
   stats.signTexturePixels = signStats.texturePixels;

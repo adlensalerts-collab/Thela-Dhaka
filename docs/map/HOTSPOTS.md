@@ -53,6 +53,8 @@ Find the region with `grep -n "<anchor>" <file>`, then read a slice (`sed -n 'ST
 |---|---|
 | Roads + raised footpaths | `// ---- Roads` |
 | Markings (dashes, zebras) | `// ---- Markings` |
+| Flush drain covers (reuse marking instances) | `// ---- Flush footpath drains` |
+| Storefront bands, jambs, rain pipes (merged into walls) | `// ---- Storefront trim` · `// One narrow rain pipe` |
 | Buildings from footprints (walls, windows, shutters, signs, roofs) | `// ---- Buildings from real footprints` |
 | Shared shop-sign collection + flush | `const signboards = new SignboardBatch()` · `signboards.add(` · `const signStats = signboards.build()` |
 | Trees, poles | `// ---- Trees, poles` |
