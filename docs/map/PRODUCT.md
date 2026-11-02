@@ -45,6 +45,7 @@ Which file owns which feature. Sizes as of Hotfix 8.1. Files over ~20 KB: read v
 | Area | File | Key exports |
 |---|---|---|
 | PBR materials, per-surface tuning, world UVs | `src/game/render/pbr.ts` | `pbrMaterial`, `createPbrMaterials`, `applyWorldUV` (tuning const: `SURFACE_TUNING`) |
+| Shared shop-sign atlases + chunked merged sign meshes | `src/game/render/signboards.ts` | `SignboardBatch.add`, `SignboardBatch.build` |
 | Sky, sun, ambient light, clouds, brightness | `src/game/render/lighting.ts` | `setupRealisticLighting` (ambient strength const: `ENV_INTENSITY`) |
 | Quality presets, adaptive resolution | `src/game/render/quality.ts` | `QUALITY_PRESETS`, `AdaptiveResolution` |
 | Display settings storage | `src/game/render/display.ts` | `loadDisplaySettings` |

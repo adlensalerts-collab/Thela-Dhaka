@@ -53,7 +53,7 @@ Built and tested by Claude. Wiring (M-W) done by Claude: maps are bundled into t
 
 | # | Sprint | Status | Deliverable |
 |---|---|---|---|
-| 8 | Roads & textures | ⏳ | (asphalt/lighting fixed in 8.0) Combine the 140 shop signboards into shared images (fewer draw calls); cracks, patches, painted markings on the real roads; richer footpath and building detail |
+| 8 | Roads & textures | 🔄 | 8A: shared shop-sign atlas pages and merged meshes per chunk, preserving board placement/text/lighting. Implemented and checked against `6faa95c`, awaiting manual upload; verification in `docs/sprints/SPRINT-8A.md`. Remaining: cracks, patches, painted markings on the real roads; richer footpath and building detail |
 | 9 | Realistic characters | ⏳ | Rigged CC0 3D characters with walk animations (model files to download, e.g. Quaternius) |
 | 10 | More NPCs + behaviour | ⏳ | Remove the 10–15 pedestrian cap; 60–120 people with distance-based detail; groups chatting, phones, browsing stalls, crossing at junctions, reacting to horns/accidents, haggling; density by time and hotspots |
 

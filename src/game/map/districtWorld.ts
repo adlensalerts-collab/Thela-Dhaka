@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { Obstacle, PolyObstacle } from '../collision';
 import { pbrMaterial, applyWorldUV } from '../render/pbr';
+import { SignboardBatch } from '../render/signboards';
 import { buildTreesAt } from '../world/trees';
 import { buildGarage } from '../world/garages';
 import { buildAarot } from '../world/aarots';
@@ -58,18 +59,6 @@ function pointInRing(x: number, z: number, ring: XZ[]) {
     if ((zi > z) !== (zj > z) && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) inside = !inside;
   }
   return inside;
-}
-
-function signTexture(text: string, bg: string) {
-  const c = document.createElement('canvas'); c.width = 512; c.height = 128;
-  const g = c.getContext('2d')!;
-  const grad = g.createLinearGradient(0, 0, 0, 128); grad.addColorStop(0, bg); grad.addColorStop(1, '#0d1a18');
-  g.fillStyle = grad; g.fillRect(0, 0, 512, 128);
-  g.strokeStyle = 'rgba(255,255,255,0.6)'; g.lineWidth = 6; g.strokeRect(6, 6, 500, 116);
-  g.fillStyle = '#fff6dc'; g.font = 'bold 64px "Hind Siliguri", "Noto Sans Bengali", sans-serif';
-  g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(text, 256, 68, 480);
-  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
-  return new THREE.MeshStandardMaterial({ map: t, emissive: '#ffffff', emissiveMap: t, emissiveIntensity: 0.35, roughness: 0.5 });
 }
 
 /** Collects InstancedMesh transforms per chunk, then builds them in one go. */
@@ -190,6 +179,7 @@ export function buildDistrictWorld(scene: THREE.Scene, d: District): DistrictWor
     for (const i of tri) { b.pos.push(...v[i]); b.nor.push(n[0], 0, n[1]); b.uv.push(...uvs[i]); b.col.push(c.r, c.g, c.b); }
   };
   const roofs = new Map<THREE.Group, THREE.BufferGeometry[]>();
+  const signboards = new SignboardBatch();
   let signs = 0;
   for (const bd of d.buildings) {
     const ring = bd.footprint;
@@ -250,11 +240,12 @@ export function buildDistrictWorld(scene: THREE.Scene, d: District): DistrictWor
       const ex = p1[0] - p0[0], ez = p1[1] - p0[1], len = Math.hypot(ex, ez);
       let n: [number, number] = [-ez / len, ex / len]; if (flip) n = [-n[0], -n[1]];
       const w = Math.min(len * 0.8, 9);
-      const sign = new THREE.Mesh(unitBox, signTexture(bd.name || SHOP_NAMES[Math.floor(r() * SHOP_NAMES.length)], ['#1f6b5a', '#8c2f2a', '#2a4f86', '#7a5a14'][Math.floor(r() * 4)]));
-      sign.scale.set(w, w / 4.5, 0.18);
-      sign.position.set((p0[0] + p1[0]) / 2 + n[0] * 0.25, FLOOR + 0.5, (p0[1] + p1[1]) / 2 + n[1] * 0.25);
-      sign.rotation.y = Math.atan2(n[0], n[1]);
-      chunk.add(sign); signs++;
+      signboards.add(chunk, compose(
+        (p0[0] + p1[0]) / 2 + n[0] * 0.25, FLOOR + 0.5,
+        (p0[1] + p1[1]) / 2 + n[1] * 0.25, Math.atan2(n[0], n[1]), w, w / 4.5, 0.18
+      ), bd.name || SHOP_NAMES[Math.floor(r() * SHOP_NAMES.length)],
+      ['#1f6b5a', '#8c2f2a', '#2a4f86', '#7a5a14'][Math.floor(r() * 4)]);
+      signs++;
     }
     // flat roof + water tanks
     const roof = new THREE.ShapeGeometry(toShape(ring)).rotateX(-Math.PI / 2).translate(0, h, 0);
@@ -293,7 +284,10 @@ export function buildDistrictWorld(scene: THREE.Scene, d: District): DistrictWor
     const m = new THREE.Mesh(merged, roofMat); m.receiveShadow = true; m.castShadow = true; chunk.add(m);
     list.forEach((g) => g.dispose());
   }
-  stats.buildings = d.buildings.length; stats.signs = signs;
+  const signStats = signboards.build();
+  stats.buildings = d.buildings.length; stats.signs = signStats.signs;
+  stats.signBatches = signStats.batches; stats.signAtlasPages = signStats.atlasPages;
+  stats.signTexturePixels = signStats.texturePixels;
   stats.windows = winDark.build() + winLit.build(); grills.build(); stats.shutters = shutters.build(); stats.tanks = tanks.build();
 
   // ---- Trees, poles
