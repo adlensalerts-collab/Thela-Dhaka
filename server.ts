@@ -16,20 +16,103 @@ async function startServer() {
 
   app.use(express.json());
 
-  // In-memory 1v1 rooms
-  const rooms = new Map();
+  interface RoomPlayer {
+    id: string;
+    role: 'vendor' | 'police';
+    name: string;
+    pos: { x: number; z: number };
+    hasValidPos: boolean;
+    heading: number;
+    cash: number;
+    stock: number;
+    heat: number;
+  }
+
+  interface RoomState {
+    code: string;
+    players: RoomPlayer[];
+    state: 'waiting' | 'playing';
+  }
+
+  // In-memory 1v1 rooms and single active room per socket
+  const rooms = new Map<string, RoomState>();
+  const activeRoomBySocket = new Map<string, string>();
+
+  const cleanupSocketRoom = (socketId: string, explicitRoomCode?: string) => {
+    const trackedCode = activeRoomBySocket.get(socketId);
+    const candidateCode =
+      typeof explicitRoomCode === 'string' && explicitRoomCode.trim()
+        ? explicitRoomCode.trim().toUpperCase()
+        : trackedCode;
+
+    const codesToClose = new Set<string>();
+    if (trackedCode) codesToClose.add(trackedCode);
+    if (candidateCode) {
+      const candidateRoom = rooms.get(candidateCode);
+      if (candidateRoom && candidateRoom.players.some((p) => p.id === socketId)) {
+        codesToClose.add(candidateCode);
+      }
+    }
+    for (const [code, room] of rooms.entries()) {
+      if (room.players.some((p) => p.id === socketId)) {
+        codesToClose.add(code);
+      }
+    }
+
+    for (const code of codesToClose) {
+      const room = rooms.get(code);
+      if (!room) {
+        if (activeRoomBySocket.get(socketId) === code) {
+          activeRoomBySocket.delete(socketId);
+        }
+        continue;
+      }
+      if (!room.players.some((p) => p.id === socketId)) {
+        continue;
+      }
+
+      for (const participant of room.players) {
+        if (activeRoomBySocket.get(participant.id) === code) {
+          activeRoomBySocket.delete(participant.id);
+        }
+        if (participant.id !== socketId) {
+          io.to(participant.id).emit('player_disconnected', {
+            id: socketId,
+            roomCode: code
+          });
+        }
+      }
+
+      io.in(code).socketsLeave(code);
+      rooms.delete(code);
+    }
+  };
 
   io.on('connection', (socket) => {
-    socket.on('create_room', ({ role, playerName }) => {
-      const roomCode = Math.random().toString(36).substring(2, 7).toUpperCase();
+    socket.on('create_room', (data) => {
+      const payload = data && typeof data === 'object' ? data : {};
+      const assignedRole: 'vendor' | 'police' = payload.role === 'vendor' ? 'vendor' : 'police';
+      const playerName =
+        typeof payload.playerName === 'string' && payload.playerName.trim()
+          ? payload.playerName.trim().slice(0, 40)
+          : 'Vendor Master';
+
+      cleanupSocketRoom(socket.id);
+
+      let roomCode = '';
+      do {
+        roomCode = Math.random().toString(36).substring(2, 7).toUpperCase();
+      } while (rooms.has(roomCode));
+
       rooms.set(roomCode, {
         code: roomCode,
         players: [
           {
             id: socket.id,
-            role: role === 'vendor' ? 'vendor' : 'police',
-            name: playerName || 'Vendor Master',
-            pos: { x: 0, z: role === 'vendor' ? 7 : -23 },
+            role: assignedRole,
+            name: playerName,
+            pos: { x: 0, z: assignedRole === 'vendor' ? 7 : -23 },
+            hasValidPos: false,
             heading: 0,
             cash: 250,
             stock: 10,
@@ -38,98 +121,179 @@ async function startServer() {
         ],
         state: 'waiting'
       });
+      activeRoomBySocket.set(socket.id, roomCode);
       socket.join(roomCode);
-      socket.emit('room_created', { roomCode, role: role === 'vendor' ? 'vendor' : 'police' });
+      socket.emit('room_created', { roomCode, role: assignedRole });
     });
 
-    socket.on('join_room', ({ roomCode, playerName }) => {
-      const room = rooms.get(roomCode);
+    socket.on('join_room', (data) => {
+      if (!data || typeof data !== 'object') {
+        socket.emit('error_message', 'Room not found. Check code.');
+        return;
+      }
+      const normalizedCode =
+        typeof data.roomCode === 'string' ? data.roomCode.trim().toUpperCase() : '';
+      if (!normalizedCode) {
+        socket.emit('error_message', 'Room not found. Check code.');
+        return;
+      }
+      const room = rooms.get(normalizedCode);
       if (!room) {
         socket.emit('error_message', 'Room not found. Check code.');
         return;
       }
-      if (room.players.length >= 2) {
+      if (
+        room.players.some((p) => p.id === socket.id) ||
+        activeRoomBySocket.get(socket.id) === normalizedCode
+      ) {
+        socket.emit('error_message', 'Already in this room.');
+        return;
+      }
+      if (room.players.length >= 2 || room.state !== 'waiting') {
         socket.emit('error_message', 'Room is full (1v1 limit).');
         return;
       }
+
+      if (activeRoomBySocket.has(socket.id)) {
+        cleanupSocketRoom(socket.id);
+      }
+
       const existingRole = room.players[0].role;
-      const assignedRole = existingRole === 'vendor' ? 'police' : 'vendor';
+      const assignedRole: 'vendor' | 'police' = existingRole === 'vendor' ? 'police' : 'vendor';
+      const playerName =
+        typeof data.playerName === 'string' && data.playerName.trim()
+          ? data.playerName.trim().slice(0, 40)
+          : assignedRole === 'vendor'
+          ? 'Dhaka Vendor'
+          : 'Constable';
+
       room.players.push({
         id: socket.id,
         role: assignedRole,
-        name: playerName || (assignedRole === 'vendor' ? 'Dhaka Vendor' : 'Constable'),
+        name: playerName,
         pos: { x: 0, z: assignedRole === 'vendor' ? 7 : -23 },
+        hasValidPos: false,
         heading: 0,
         cash: 250,
         stock: 10,
         heat: 0
       });
       room.state = 'playing';
-      socket.join(roomCode);
-      io.to(roomCode).emit('start_multiplayer', room);
+      activeRoomBySocket.set(socket.id, normalizedCode);
+      socket.join(normalizedCode);
+      io.to(normalizedCode).emit('start_multiplayer', room);
+    });
+
+    socket.on('leave_room', (data) => {
+      const requestedCode =
+        data && typeof data === 'object' && typeof data.roomCode === 'string'
+          ? data.roomCode
+          : undefined;
+      cleanupSocketRoom(socket.id, requestedCode);
     });
 
     socket.on('player_action', (data) => {
-      const { roomCode, type, amount, payload } = data || {};
+      if (!data || typeof data !== 'object') return;
+      const { roomCode, type, amount, payload } = data;
+      if (typeof type !== 'string' || !type) return;
+
+      const activeCode = activeRoomBySocket.get(socket.id);
+      const normalizedCode =
+        typeof roomCode === 'string' ? roomCode.trim().toUpperCase() : '';
+      if (!activeCode || !normalizedCode || activeCode !== normalizedCode) return;
+
+      const room = rooms.get(activeCode);
+      if (!room) return;
+      const sender = room.players.find((p) => p.id === socket.id);
+      if (!sender) return;
+
       if (type === 'arrest_attempt') {
-        const room = rooms.get(roomCode);
-        if (!room) return;
-        const sender = room.players.find((p: any) => p.id === socket.id);
-        const other = room.players.find((p: any) => p.id !== socket.id);
-        if (sender && sender.role === 'police' && other && sender.pos && other.pos) {
-          const dist = Math.hypot(
-            (sender.pos.x ?? 0) - (other.pos.x ?? 0),
-            (sender.pos.z ?? 0) - (other.pos.z ?? 0)
-          );
-          if (dist <= 2.6) {
-            io.to(roomCode).emit('arrest_confirmed');
-          } else {
-            socket.emit('error_message', 'Too far to arrest');
-          }
+        if (room.players.length !== 2 || sender.role !== 'police') {
+          socket.emit('error_message', 'Too far to arrest');
+          return;
+        }
+        const other = room.players.find((p) => p.id !== socket.id);
+        if (
+          !other ||
+          !sender.hasValidPos ||
+          !other.hasValidPos ||
+          !sender.pos ||
+          !other.pos ||
+          !Number.isFinite(sender.pos.x) ||
+          !Number.isFinite(sender.pos.z) ||
+          !Number.isFinite(other.pos.x) ||
+          !Number.isFinite(other.pos.z)
+        ) {
+          socket.emit('error_message', 'Too far to arrest');
+          return;
+        }
+        const dist = Math.hypot(sender.pos.x - other.pos.x, sender.pos.z - other.pos.z);
+        if (dist <= 2.6) {
+          io.to(activeCode).emit('arrest_confirmed', { roomCode: activeCode });
         } else {
           socket.emit('error_message', 'Too far to arrest');
         }
         return;
       }
-      socket.to(roomCode).emit('opponent_action', { id: socket.id, type, amount, payload });
+
+      if (amount !== undefined && !Number.isFinite(amount)) return;
+
+      socket.to(activeCode).emit('opponent_action', {
+        id: socket.id,
+        roomCode: activeCode,
+        type,
+        amount,
+        payload
+      });
     });
 
     socket.on('player_update', (data) => {
-      const { roomCode, pos, heading, speed, cash, stock, heat, alert } = data || {};
-      const room = rooms.get(roomCode);
-      if (room) {
-        const player = room.players.find((p: any) => p.id === socket.id);
-        if (player) {
-          if (pos) player.pos = { x: pos.x, z: pos.z };
-          if (typeof heading === 'number') player.heading = heading;
-          if (typeof cash === 'number') player.cash = cash;
-          if (typeof stock === 'number') player.stock = stock;
-          if (typeof heat === 'number') player.heat = heat;
-        }
+      if (!data || typeof data !== 'object') return;
+      const { roomCode, pos, heading, speed, cash, stock, heat, alert } = data;
+
+      const activeCode = activeRoomBySocket.get(socket.id);
+      const normalizedCode =
+        typeof roomCode === 'string' ? roomCode.trim().toUpperCase() : '';
+      if (!activeCode || !normalizedCode || activeCode !== normalizedCode) return;
+
+      const room = rooms.get(activeCode);
+      if (!room) return;
+      const player = room.players.find((p) => p.id === socket.id);
+      if (!player) return;
+
+      if (
+        !pos ||
+        typeof pos !== 'object' ||
+        !Number.isFinite(pos.x) ||
+        !Number.isFinite(pos.z) ||
+        !Number.isFinite(heading) ||
+        !Number.isFinite(speed)
+      ) {
+        return;
       }
-      socket.to(roomCode).emit('opponent_update', {
+
+      player.pos = { x: pos.x, z: pos.z };
+      player.hasValidPos = true;
+      player.heading = heading;
+      if (Number.isFinite(cash)) player.cash = cash;
+      if (Number.isFinite(stock)) player.stock = stock;
+      if (Number.isFinite(heat)) player.heat = heat;
+
+      socket.to(activeCode).emit('opponent_update', {
         id: socket.id,
-        pos,
+        roomCode: activeCode,
+        pos: { x: pos.x, z: pos.z },
         heading,
         speed,
-        cash,
-        stock,
-        heat,
-        alert
+        cash: player.cash,
+        stock: player.stock,
+        heat: player.heat,
+        alert: Boolean(alert)
       });
     });
 
     socket.on('disconnect', () => {
-      for (const [code, room] of rooms.entries()) {
-        const idx = room.players.findIndex((p: any) => p.id === socket.id);
-        if (idx !== -1) {
-          room.players.splice(idx, 1);
-          io.to(code).emit('player_disconnected', { id: socket.id });
-          if (room.players.length === 0) {
-            rooms.delete(code);
-          }
-        }
-      }
+      cleanupSocketRoom(socket.id);
     });
   });
 

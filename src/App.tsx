@@ -30,10 +30,25 @@ export default function App() {
   const [muted, setMuted] = useState(false);
   const [roomCode, setRoomCode] = useState<string>('');
   const roomCodeRef = useRef<string>('');
+  const opponentIdRef = useRef<string | null>(null);
 
   const updateRoomCode = (code: string) => {
     roomCodeRef.current = code;
     setRoomCode(code);
+  };
+
+  const leaveCurrentRoom = (pauseAbandoned = true) => {
+    const activeCode = roomCodeRef.current;
+    if (activeCode && socketRef.current) {
+      socketRef.current.emit('leave_room', { roomCode: activeCode });
+    }
+    opponentIdRef.current = null;
+    updateRoomCode('');
+    setRunStats(null);
+    setModalType(null);
+    if (pauseAbandoned) {
+      engineRef.current?.pauseGame();
+    }
   };
 
   const showToast = (msg: string) => {
@@ -100,21 +115,42 @@ export default function App() {
       return () => { engine.stop(); };
     }
 
-    socket.on('room_created', ({ roomCode: createdCode, role }) => {
+    let disposed = false;
+
+    const isOnlineMode = () => {
+      const mode = engine.state?.mode;
+      return mode === 'online_vendor' || mode === 'online_police';
+    };
+
+    const isCurrentSessionEvent = (msg?: { id?: string; roomCode?: string }) => {
+      const activeCode = roomCodeRef.current;
+      if (!activeCode || !isOnlineMode()) return false;
+      if (msg?.roomCode && msg.roomCode !== activeCode) return false;
+      if (msg?.id && opponentIdRef.current && msg.id !== opponentIdRef.current) return false;
+      return true;
+    };
+
+    socket.on('room_created', (data) => {
+      const createdCode = typeof data?.roomCode === 'string' ? data.roomCode : '';
+      if (!createdCode) return;
+      const role = data?.role === 'vendor' ? 'vendor' : 'police';
+      opponentIdRef.current = null;
       updateRoomCode(createdCode);
+      setRunStats(null);
+      setModalType(null);
       setNotice(`Room created: ${createdCode}. Waiting for friend...`);
       engine.setMode(role === 'vendor' ? 'online_vendor' : 'online_police');
       setView('playing');
     });
 
     socket.on('start_multiplayer', (room) => {
-      if (room?.code) {
-        updateRoomCode(room.code);
-      }
-      const me = room?.players?.find((p: any) => p.id === socket.id);
-      if (me) {
-        engine.setMode(me.role === 'vendor' ? 'online_vendor' : 'online_police');
-      }
+      if (!room?.code || !Array.isArray(room?.players)) return;
+      const me = room.players.find((p: any) => p.id === socket.id);
+      if (!me) return;
+      const opponent = room.players.find((p: any) => p.id !== socket.id);
+      opponentIdRef.current = opponent?.id ?? null;
+      updateRoomCode(room.code);
+      engine.setMode(me.role === 'vendor' ? 'online_vendor' : 'online_police');
       setRunStats(null);
       setModalType(null);
       showToast('Match started! Both players connected.');
@@ -122,10 +158,12 @@ export default function App() {
     });
 
     socket.on('opponent_update', (msg) => {
+      if (!msg || !isCurrentSessionEvent(msg)) return;
       engine.applyRemoteUpdate(msg);
     });
 
-    socket.on('arrest_confirmed', () => {
+    socket.on('arrest_confirmed', (msg) => {
+      if (!isCurrentSessionEvent(msg)) return;
       if (engine.state.mode === 'online_vendor') {
         engine.triggerCaught();
       } else if (engine.state.mode === 'online_police') {
@@ -134,20 +172,38 @@ export default function App() {
     });
 
     socket.on('opponent_action', (msg) => {
+      if (!msg || !isCurrentSessionEvent(msg)) return;
       if (engine.state.mode !== 'online_police') return;
-      if (msg?.type === 'bribe_paid') {
+      if (msg.type === 'bribe_paid') {
         engine.receiveOnlineBribe(msg.amount ?? 0);
-      } else if (msg?.type === 'jailed') {
+      } else if (msg.type === 'jailed') {
         engine.receiveOnlineVictory();
       }
     });
 
-    socket.on('player_disconnected', () => {
-      showToast('প্রতিপক্ষ চলে গেছে · Opponent left');
+    socket.on('player_disconnected', (msg) => {
+      if (!roomCodeRef.current) return;
+      if (msg?.roomCode && msg.roomCode !== roomCodeRef.current) return;
+      if (msg?.id && opponentIdRef.current && msg.id !== opponentIdRef.current) return;
+      opponentIdRef.current = null;
+      updateRoomCode('');
       setRunStats(null);
       setModalType(null);
-      updateRoomCode('');
+      engine.pauseGame();
       setView('menu');
+      showToast('প্রতিপক্ষ চলে গেছে · Opponent left');
+    });
+
+    socket.on('disconnect', () => {
+      if (disposed) return;
+      if (!roomCodeRef.current && !isOnlineMode()) return;
+      opponentIdRef.current = null;
+      updateRoomCode('');
+      setRunStats(null);
+      setModalType(null);
+      engine.pauseGame();
+      setView('menu');
+      showToast('সংযোগ বিচ্ছিন্ন · Disconnected from server');
     });
 
     socket.on('error_message', (msg) => {
@@ -155,6 +211,7 @@ export default function App() {
     });
 
     return () => {
+      disposed = true;
       engine.stop();
       socket.disconnect();
     };
@@ -213,6 +270,7 @@ export default function App() {
 
   const handleStartSolo = (role: 'vendor' | 'police') => {
     if (!engineRef.current) return;
+    leaveCurrentRoom(false);
     engineRef.current.resumeAudio();
     engineRef.current.setMode(role);
     setView('playing');
@@ -224,6 +282,7 @@ export default function App() {
       alert(OFFLINE_MESSAGE);
       return;
     }
+    leaveCurrentRoom(true);
     engineRef.current?.resumeAudio();
     socketRef.current.emit('create_room', { role, playerName: name });
   };
@@ -234,9 +293,20 @@ export default function App() {
       return;
     }
     if (!engineRef.current) return;
+    const normalizedCode = code.trim().toUpperCase();
+    if (!normalizedCode) {
+      showToast('Room not found. Check code.');
+      return;
+    }
+    if (roomCodeRef.current && roomCodeRef.current !== normalizedCode) {
+      leaveCurrentRoom(true);
+      setView('menu');
+    } else {
+      setRunStats(null);
+      setModalType(null);
+    }
     engineRef.current.resumeAudio();
-    updateRoomCode(code);
-    socketRef.current.emit('join_room', { roomCode: code, playerName: name });
+    socketRef.current.emit('join_room', { roomCode: normalizedCode, playerName: name });
   };
 
   const handleAction = (actionKey: string) => {
@@ -425,10 +495,8 @@ export default function App() {
             setModalType(null);
           }}
           onMainMenu={() => {
-            setRunStats(null);
+            leaveCurrentRoom(true);
             setView('menu');
-            setModalType(null);
-            updateRoomCode('');
           }}
           onOpenSettings={handleOpenSettings}
         />
