@@ -997,11 +997,18 @@ export class GameEngine {
       this.updatePixelRatio();
     };
 
-    // Mouse drag camera controls (no pointer lock anywhere)
+    // Prevent browser gesture hijacking on the 3D canvas
+    dom.style.touchAction = 'none';
+
+    let activeDragPointerId: number | null = null;
+    let lastPinchDist: number | null = null;
+
+    // Mouse & single-finger touch camera drag (multi-touch safe while holding HUD buttons)
     const onPointerDown = (e: PointerEvent) => {
       this.resumeAudio();
-      // Rotate on left or right click drag
-      if (e.button === 0 || e.button === 2) {
+      if (e.pointerType === 'mouse' && e.button !== 0 && e.button !== 2) return;
+      if (activeDragPointerId === null) {
+        activeDragPointerId = e.pointerId;
         this.isMouseDragging = true;
         this.lastMouseX = e.clientX;
         this.lastMouseY = e.clientY;
@@ -1010,10 +1017,11 @@ export class GameEngine {
     };
 
     const onPointerMove = (e: PointerEvent) => {
-      if (this.isMouseDragging) {
+      if (this.isMouseDragging && e.pointerId === activeDragPointerId && lastPinchDist === null) {
         const dx = e.clientX - this.lastMouseX;
         const dy = e.clientY - this.lastMouseY;
-        const sens = (this.mouseSettings.mouseSensitivity || 1.0) * 0.0055;
+        const baseSens = e.pointerType === 'touch' ? 0.0045 : 0.0055;
+        const sens = (this.mouseSettings.mouseSensitivity || 1.0) * baseSens;
         const invertY = this.mouseSettings.invertY ? -1 : 1;
         this.cameraYaw -= dx * sens;
         this.cameraPitch = THREE.MathUtils.clamp(
@@ -1027,8 +1035,11 @@ export class GameEngine {
       }
     };
 
-    const onPointerUp = () => {
-      this.isMouseDragging = false;
+    const onPointerUp = (e: PointerEvent) => {
+      if (e.pointerId === activeDragPointerId) {
+        activeDragPointerId = null;
+        this.isMouseDragging = false;
+      }
     };
 
     const onWheel = (e: WheelEvent) => {
@@ -1038,32 +1049,41 @@ export class GameEngine {
       }
     };
 
-    // Mobile touch drag controls
+    // Two-finger pinch-to-zoom on the 3D canvas
     const onTouchStart = (e: TouchEvent) => {
       this.resumeAudio();
-      if (e.touches.length === 1 && this.state && this.state.stage === 'playing') {
-        this.isMouseDragging = true;
-        this.lastMouseX = e.touches[0].clientX;
-        this.lastMouseY = e.touches[0].clientY;
+      if (e.touches.length === 2) {
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        lastPinchDist = Math.hypot(dx, dy);
       }
     };
 
     const onTouchMove = (e: TouchEvent) => {
-      if (e.touches.length === 1 && this.isMouseDragging && this.state && this.state.stage === 'playing') {
-        const dx = e.touches[0].clientX - this.lastMouseX;
-        const dy = e.touches[0].clientY - this.lastMouseY;
-        const sens = (this.mouseSettings.mouseSensitivity || 1.0) * 0.003;
-        const invertY = this.mouseSettings.invertY ? -1 : 1;
-        this.cameraYaw -= dx * sens;
-        this.cameraPitch = THREE.MathUtils.clamp(this.cameraPitch - dy * sens * invertY, 0.08, 1.25);
-        this.mouseMovedRecently = 1.2;
-        this.lastMouseX = e.touches[0].clientX;
-        this.lastMouseY = e.touches[0].clientY;
+      if (
+        e.touches.length === 2 &&
+        lastPinchDist !== null &&
+        this.state &&
+        this.state.stage === 'playing' &&
+        !this.isMenuOrModalOpen
+      ) {
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        const dist = Math.hypot(dx, dy);
+        const delta = lastPinchDist - dist;
+        this.cameraDistance = THREE.MathUtils.clamp(
+          this.cameraDistance + delta * 0.035,
+          4.5,
+          26.0
+        );
+        lastPinchDist = dist;
       }
     };
 
-    const onTouchEnd = () => {
-      this.isMouseDragging = false;
+    const onTouchEnd = (e: TouchEvent) => {
+      if (e.touches.length < 2) {
+        lastPinchDist = null;
+      }
     };
 
     window.addEventListener('keydown', onKeyDown);
@@ -1075,10 +1095,12 @@ export class GameEngine {
     dom.addEventListener('pointerdown', onPointerDown);
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointercancel', onPointerUp);
     dom.addEventListener('wheel', onWheel, { passive: false });
     dom.addEventListener('touchstart', onTouchStart, { passive: true });
     dom.addEventListener('touchmove', onTouchMove, { passive: true });
     dom.addEventListener('touchend', onTouchEnd);
+    dom.addEventListener('touchcancel', onTouchEnd);
 
     // Save cleanup hooks
     this.cleanupListeners = [
@@ -1090,10 +1112,12 @@ export class GameEngine {
       () => dom.removeEventListener('pointerdown', onPointerDown),
       () => window.removeEventListener('pointermove', onPointerMove),
       () => window.removeEventListener('pointerup', onPointerUp),
+      () => window.removeEventListener('pointercancel', onPointerUp),
       () => dom.removeEventListener('wheel', onWheel),
       () => dom.removeEventListener('touchstart', onTouchStart),
       () => dom.removeEventListener('touchmove', onTouchMove),
-      () => dom.removeEventListener('touchend', onTouchEnd)
+      () => dom.removeEventListener('touchend', onTouchEnd),
+      () => dom.removeEventListener('touchcancel', onTouchEnd)
     ];
   }
 
@@ -1586,6 +1610,19 @@ export class GameEngine {
       this.onEvent('notify', 'Camera: Close Chase (কাছে)');
     }
     this.mouseMovedRecently = 0;
+  }
+
+  setHeldAction(action: ActionName, held: boolean) {
+    if (!this.state || this.state.stage !== 'playing' || this.isMenuOrModalOpen) {
+      this.heldActions.delete(action);
+      return;
+    }
+    this.resumeAudio();
+    if (held) {
+      this.heldActions.add(action);
+    } else {
+      this.heldActions.delete(action);
+    }
   }
 
   handleAction(action: string) {

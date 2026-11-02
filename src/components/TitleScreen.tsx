@@ -116,62 +116,62 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
   };
 
   return (
-    <div className="absolute inset-0 z-20 flex flex-col items-center justify-between p-4 sm:p-6 bg-gradient-to-b from-[#122826]/75 via-[#0d1b1a]/80 to-[#091211]/85 text-white overflow-y-auto select-none">
+    <div className="absolute inset-0 z-20 flex flex-col items-center justify-between p-3 sm:p-6 bg-gradient-to-b from-[#122826]/75 via-[#0d1b1a]/80 to-[#091211]/85 text-white overflow-y-auto select-none">
       {/* Top bar */}
-      <div className="w-full max-w-5xl flex items-center justify-between py-2 sm:py-3">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center font-bold text-gray-900 shadow-lg text-xl">
+      <div className="w-full max-w-5xl flex flex-wrap items-center justify-between gap-2 py-1.5 sm:py-3">
+        <div className="flex items-center gap-2.5 sm:gap-3">
+          <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center font-bold text-gray-900 shadow-lg text-lg sm:text-xl shrink-0">
             ৳
           </div>
           <div>
-            <h2 className="font-bold text-amber-400 tracking-wider text-sm uppercase">Original 3D Game</h2>
-            <p className="text-xs text-gray-300">Gulistan & New Market District</p>
+            <h2 className="font-bold text-amber-400 tracking-wider text-xs sm:text-sm uppercase leading-tight">Original 3D Game</h2>
+            <p className="text-[11px] sm:text-xs text-gray-300 leading-tight">Gulistan & New Market District</p>
           </div>
         </div>
-        <div className="flex items-center gap-2 sm:gap-2.5">
+        <div className="flex items-center gap-1.5 sm:gap-2.5">
           <button
             onClick={() => setShowHelp(!showHelp)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-teal-800/60 hover:bg-teal-700/80 border border-teal-600/40 text-xs font-medium transition"
+            className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg bg-teal-800/60 hover:bg-teal-700/80 border border-teal-600/40 text-xs font-medium transition"
           >
             <HelpCircle className="w-4 h-4 text-amber-300" />
-            <span>How to Play</span>
+            <span className="hidden xs:inline sm:inline">How to Play</span>
           </button>
           <button
             onClick={onOpenSettings}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-teal-800/60 hover:bg-teal-700/80 border border-teal-600/40 text-xs font-medium text-amber-300 transition"
+            className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg bg-teal-800/60 hover:bg-teal-700/80 border border-teal-600/40 text-xs font-medium text-amber-300 transition"
             title="Configure Controls & Camera"
           >
             <Sliders className="w-4 h-4 text-amber-300" />
-            <span>Settings</span>
+            <span className="hidden xs:inline sm:inline">Settings</span>
           </button>
           <button
             onClick={onToggleMute}
             className="p-2 rounded-lg bg-teal-800/60 hover:bg-teal-700/80 border border-teal-600/40 text-amber-300 transition"
             title={muted ? 'Unmute Audio' : 'Mute Audio'}
           >
-            {muted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
+            {muted ? <VolumeX className="w-4 h-4 sm:w-5 sm:h-5" /> : <Volume2 className="w-4 h-4 sm:w-5 sm:h-5" />}
           </button>
         </div>
       </div>
 
       {/* Hero Center */}
-      <div className="w-full max-w-4xl flex flex-col items-center text-center my-auto py-4 sm:py-6">
-        <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-semibold mb-3 tracking-wider uppercase">
-          <Sparkles className="w-3.5 h-3.5" />
-          ঢাকার ঠেলা · Street Survival & Pursuit
+      <div className="w-full max-w-4xl flex flex-col items-center text-center my-auto py-3 sm:py-6">
+        <div className="inline-flex items-center gap-2 px-3 sm:px-4 py-1 sm:py-1.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 text-[11px] sm:text-xs font-semibold mb-2 sm:mb-3 tracking-wider uppercase">
+          <Sparkles className="w-3.5 h-3.5 shrink-0" />
+          <span>ঢাকার ঠেলা · Street Survival & Pursuit</span>
         </div>
 
-        <h1 className="text-4xl sm:text-5xl md:text-7xl font-extrabold tracking-tight mb-2 sm:mb-3 bg-gradient-to-r from-amber-200 via-amber-400 to-teal-300 bg-clip-text text-transparent drop-shadow-md font-['Hind_Siliguri',sans-serif]">
+        <h1 className="text-3xl sm:text-5xl md:text-7xl font-extrabold tracking-tight mb-2 sm:mb-3 bg-gradient-to-r from-amber-200 via-amber-400 to-teal-300 bg-clip-text text-transparent drop-shadow-md font-['Hind_Siliguri',sans-serif]">
           THELA DHAKA
         </h1>
-        <p className="text-base sm:text-lg md:text-xl text-gray-300 max-w-xl mb-6 font-['Hind_Siliguri',sans-serif]">
+        <p className="text-sm sm:text-lg md:text-xl text-gray-300 max-w-xl mb-4 sm:mb-6 font-['Hind_Siliguri',sans-serif] px-2">
           ঝাঁঝালো রোদ, ব্যস্ত অলিগলি, ঠেলাগাড়ি আর পুলিশের ধাওয়া — ঢাকার রাজপথে টিকে থাকার লড়াই।
         </p>
 
         {/* Role & Mode Selectors */}
-        <div className="w-full grid grid-cols-1 md:grid-cols-2 gap-5 mb-6 text-left">
+        <div className="w-full grid grid-cols-1 md:grid-cols-2 gap-3.5 sm:gap-5 mb-4 sm:mb-6 text-left">
           {/* Role Choice */}
-          <div className="bg-teal-950/60 border border-teal-700/40 rounded-2xl p-5 backdrop-blur-md shadow-xl flex flex-col justify-between">
+          <div className="bg-teal-950/60 border border-teal-700/40 rounded-2xl p-4 sm:p-5 backdrop-blur-md shadow-xl flex flex-col justify-between">
             <div>
               <h3 className="text-sm font-bold text-amber-400 uppercase tracking-wider mb-3 flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-amber-400"></span> Select Role / চরিত্র
@@ -532,8 +532,8 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
         )}
       </div>
 
-      {/* Footer controls hint with updated keys */}
-      <div className="text-xs text-gray-400 text-center pb-2 flex flex-wrap items-center justify-center gap-3">
+      {/* Footer controls hint with updated keys & mobile touch hint */}
+      <div className="text-[11px] sm:text-xs text-gray-400 text-center pb-5 sm:pb-4 flex flex-wrap items-center justify-center gap-x-2.5 gap-y-1">
         <span>{forwardLabel} Forward</span>
         <span>·</span>
         <span>{backwardLabel} Reverse</span>
@@ -546,9 +546,9 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
         <span>·</span>
         <span>Hold {sprintLabel} Sprint</span>
         <span>·</span>
-        <span>Drag Mouse to Look</span>
+        <span>Drag / Touch to Look</span>
         <span>·</span>
-        <span>Scroll Zoom</span>
+        <span>Scroll / Pinch Zoom</span>
         <span>·</span>
         <span>{upgradeLabel} Upgrade</span>
         <span>·</span>
@@ -559,8 +559,8 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
 
       {/* Help Modal */}
       {showHelp && (
-        <div className="absolute inset-0 z-30 bg-black/80 backdrop-blur-md flex items-center justify-center p-6">
-          <div className="bg-[#162927] border border-teal-600/50 rounded-2xl p-6 max-w-lg w-full shadow-2xl text-left space-y-4">
+        <div className="fixed inset-0 z-30 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 sm:p-6">
+          <div className="bg-[#162927] border border-teal-600/50 rounded-2xl p-5 sm:p-6 max-w-lg w-full max-h-[90dvh] overflow-y-auto shadow-2xl text-left space-y-4">
             <h3 className="text-lg font-bold text-amber-400">How to Play Thela Dhaka</h3>
             <div className="text-xs text-gray-300 space-y-2">
               <p>
@@ -577,6 +577,13 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                 sprint.
               </p>
               <p>
+                <strong>Mobile &amp; Touch Controls:</strong> Use the left-hand on-screen{' '}
+                <strong className="text-amber-300">Touch Steering Pad</strong> to drive and steer, hold{' '}
+                <strong className="text-amber-300">Sprint · দৌড়</strong> to dash, tap{' '}
+                <strong className="text-amber-300">Sell / Arrest</strong>, drag the 3D view with one finger to
+                look around, and pinch with two fingers to zoom.
+              </p>
+              <p>
                 <strong>As Vendor (ঠেলাগাড়িওয়ালা):</strong> Park near wandering pedestrians on the
                 sidewalk, press{' '}
                 <code className="bg-black/50 px-1.5 py-0.5 rounded text-amber-300">{interactLabel}</code>{' '}
@@ -590,15 +597,11 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                 at close range to arrest or negotiate.
               </p>
               <p>
-                <strong>Drag Camera:</strong> Click and drag anywhere on screen to look around freely in
+                <strong>Drag Camera:</strong> Click or touch-drag anywhere on screen to look around freely in
                 360°. Release to let the camera smoothly align behind your cart after 1.2s. Scroll mouse
-                wheel to zoom in/out, or press{' '}
+                wheel or pinch to zoom in/out, or press{' '}
                 <code className="bg-black/50 px-1.5 py-0.5 rounded text-amber-300">{viewLabel}</code> to
                 cycle camera presets.
-              </p>
-              <p>
-                <strong>Rebindable Keys:</strong> Rebind any key, adjust mouse sensitivity, and toggle
-                inverted look in Settings.
               </p>
             </div>
             <button
@@ -610,7 +613,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
           </div>
         </div>
       )}
-      <div className="absolute bottom-2 left-0 right-0 text-center text-[10px] text-white/50 pointer-events-none">
+      <div className="w-full text-center text-[10px] text-white/50 pointer-events-none pt-1">
         Map data © OpenStreetMap contributors (ODbL)
       </div>
     </div>

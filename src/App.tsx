@@ -441,6 +441,13 @@ export default function App() {
     engineRef.current.handleAction(actionKey);
   };
 
+  const handleHoldAction = (
+    action: 'forward' | 'backward' | 'turnLeft' | 'turnRight' | 'sprint',
+    held: boolean
+  ) => {
+    engineRef.current?.setHeldAction(action, held);
+  };
+
   const handleToggleMute = () => {
     if (!engineRef.current) return;
     const nextMuted = !muted;
@@ -506,7 +513,7 @@ export default function App() {
     currentMode === 'online_vendor' || currentMode === 'online_police';
 
   return (
-    <div className="relative w-screen h-screen overflow-hidden bg-black select-none">
+    <div className="relative w-screen h-[100dvh] overflow-hidden bg-black select-none">
       {/* Game Viewport (Canvas + Views) with live brightness control */}
       <div
         className="relative w-full h-full"
@@ -565,6 +572,7 @@ export default function App() {
             }}
             notice={notice}
             onAction={handleAction}
+            onHoldAction={handleHoldAction}
             onPause={handlePause}
             onOpenSettings={handleOpenSettings}
             settings={settings}

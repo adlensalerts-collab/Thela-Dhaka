@@ -56,8 +56,8 @@ export const EventModal: React.FC<EventModalProps> = ({
   }
 
   return (
-    <div className="absolute inset-0 z-40 bg-black/80 backdrop-blur-md flex items-center justify-center p-6">
-      <div className="bg-[#152a28] border border-teal-500/50 rounded-3xl p-8 max-w-md w-full shadow-2xl text-center space-y-6">
+    <div className="absolute inset-0 z-40 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 sm:p-6">
+      <div className="bg-[#152a28] border border-teal-500/50 rounded-3xl p-5 sm:p-8 max-w-md w-full max-h-[92dvh] overflow-y-auto shadow-2xl text-center space-y-5 sm:space-y-6">
         {type === 'bribe' && (
           <>
             <div className="w-14 h-14 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center mx-auto text-amber-400">
