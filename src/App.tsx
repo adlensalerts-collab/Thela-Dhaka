@@ -29,6 +29,17 @@ export default function App() {
   const [notice, setNotice] = useState('Welcome to Thela Dhaka · ঢাকার ঠেলা');
   const [muted, setMuted] = useState(false);
   const [roomCode, setRoomCode] = useState<string>('');
+  const roomCodeRef = useRef<string>('');
+
+  const updateRoomCode = (code: string) => {
+    roomCodeRef.current = code;
+    setRoomCode(code);
+  };
+
+  const showToast = (msg: string) => {
+    setNotice(msg);
+    setTimeout(() => setNotice(''), 4000);
+  };
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -38,12 +49,18 @@ export default function App() {
       (state) => setGameState({ ...state }),
       (type, data) => {
         if (type === 'notify') {
-          setNotice(data);
-          setTimeout(() => setNotice(''), 4000);
+          showToast(data);
         } else if (type === 'bribe_prompt') {
           setModalType('bribe');
         } else if (type === 'police_decision') {
           setModalType('arrest_decision');
+        } else if (type === 'arrest_attempt') {
+          if (socketRef.current && roomCodeRef.current) {
+            socketRef.current.emit('player_action', {
+              roomCode: roomCodeRef.current,
+              type: 'arrest_attempt'
+            });
+          }
         } else if (type === 'pause') {
           engineRef.current?.pauseGame();
           setModalType('paused');
@@ -70,20 +87,58 @@ export default function App() {
       return () => { engine.stop(); };
     }
 
-    socket.on('room_created', ({ roomCode, role }) => {
-      setRoomCode(roomCode);
-      setNotice(`Room created: ${roomCode}. Waiting for friend...`);
+    socket.on('room_created', ({ roomCode: createdCode, role }) => {
+      updateRoomCode(createdCode);
+      setNotice(`Room created: ${createdCode}. Waiting for friend...`);
       engine.setMode(role === 'vendor' ? 'online_vendor' : 'online_police');
       setView('playing');
     });
 
-    socket.on('start_multiplayer', () => {
-      setNotice('Match started! Both players connected.');
+    socket.on('start_multiplayer', (room) => {
+      if (room?.code) {
+        updateRoomCode(room.code);
+      }
+      const me = room?.players?.find((p: any) => p.id === socket.id);
+      if (me) {
+        engine.setMode(me.role === 'vendor' ? 'online_vendor' : 'online_police');
+      }
+      setRunStats(null);
+      setModalType(null);
+      showToast('Match started! Both players connected.');
       setView('playing');
     });
 
+    socket.on('opponent_update', (msg) => {
+      engine.applyRemoteUpdate(msg);
+    });
+
+    socket.on('arrest_confirmed', () => {
+      if (engine.state.mode === 'online_vendor') {
+        engine.triggerCaught();
+      } else if (engine.state.mode === 'online_police') {
+        showToast('গ্রেপ্তার! · Vendor caught');
+      }
+    });
+
+    socket.on('opponent_action', (msg) => {
+      if (engine.state.mode !== 'online_police') return;
+      if (msg?.type === 'bribe_paid') {
+        engine.receiveOnlineBribe(msg.amount ?? 0);
+      } else if (msg?.type === 'jailed') {
+        engine.receiveOnlineVictory();
+      }
+    });
+
+    socket.on('player_disconnected', () => {
+      showToast('প্রতিপক্ষ চলে গেছে · Opponent left');
+      setRunStats(null);
+      setModalType(null);
+      updateRoomCode('');
+      setView('menu');
+    });
+
     socket.on('error_message', (msg) => {
-      alert(msg);
+      showToast(String(msg));
     });
 
     return () => {
@@ -91,6 +146,32 @@ export default function App() {
       socket.disconnect();
     };
   }, []);
+
+  // Periodic 80 ms position & state sync while in an online mode and playing
+  const currentMode = gameState?.mode;
+  const currentStage = gameState?.stage;
+  useEffect(() => {
+    const isOnline = currentMode === 'online_vendor' || currentMode === 'online_police';
+    if (view !== 'playing' || !isOnline || currentStage !== 'playing') return;
+    const interval = window.setInterval(() => {
+      const engine = engineRef.current;
+      const socket = socketRef.current;
+      const code = roomCodeRef.current;
+      if (!engine || !socket || !code || engine.state.stage !== 'playing') return;
+      const net = engine.getNetState();
+      socket.emit('player_update', {
+        roomCode: code,
+        pos: { x: net.x, z: net.z },
+        heading: net.heading,
+        speed: net.speed,
+        cash: net.cash,
+        stock: net.stock,
+        heat: net.heat,
+        alert: net.alert
+      });
+    }, 80);
+    return () => window.clearInterval(interval);
+  }, [view, currentMode, currentStage]);
 
   // Sync menu/modal open state with engine to ensure gameplay input is blocked
   useEffect(() => {
@@ -141,10 +222,8 @@ export default function App() {
     }
     if (!engineRef.current) return;
     engineRef.current.resumeAudio();
-    setRoomCode(code);
+    updateRoomCode(code);
     socketRef.current.emit('join_room', { roomCode: code, playerName: name });
-    engineRef.current.setMode('online_police');
-    setView('playing');
   };
 
   const handleAction = (actionKey: string) => {
@@ -284,12 +363,34 @@ export default function App() {
           stats={runStats ?? engineRef.current?.lastRunStats ?? null}
           onPayBribe={() => {
             if (!engineRef.current) return;
-            if (engineRef.current.payBribe()) {
+            const isOnlineVendor = engineRef.current.state.mode === 'online_vendor';
+            const paidAmount = engineRef.current.payBribe();
+            if (paidAmount > 0) {
+              if (isOnlineVendor && socketRef.current && roomCodeRef.current) {
+                socketRef.current.emit('player_action', {
+                  roomCode: roomCodeRef.current,
+                  type: 'bribe_paid',
+                  amount: paidAmount
+                });
+              }
               setModalType(null);
+            } else if (isOnlineVendor && socketRef.current && roomCodeRef.current) {
+              socketRef.current.emit('player_action', {
+                roomCode: roomCodeRef.current,
+                type: 'jailed'
+              });
             }
           }}
           onGoToJail={() => {
-            engineRef.current?.goToJail();
+            if (!engineRef.current) return;
+            const isOnlineVendor = engineRef.current.state.mode === 'online_vendor';
+            engineRef.current.goToJail();
+            if (isOnlineVendor && socketRef.current && roomCodeRef.current) {
+              socketRef.current.emit('player_action', {
+                roomCode: roomCodeRef.current,
+                type: 'jailed'
+              });
+            }
           }}
           onRecordArrest={() => {
             if (!engineRef.current) return;
@@ -312,7 +413,7 @@ export default function App() {
             setRunStats(null);
             setView('menu');
             setModalType(null);
-            setRoomCode('');
+            updateRoomCode('');
           }}
           onOpenSettings={handleOpenSettings}
         />

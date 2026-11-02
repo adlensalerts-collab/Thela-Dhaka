@@ -70,13 +70,53 @@ async function startServer() {
     });
 
     socket.on('player_action', (data) => {
-      const { roomCode, type, payload } = data;
-      socket.to(roomCode).emit('opponent_action', { id: socket.id, type, payload });
+      const { roomCode, type, amount, payload } = data || {};
+      if (type === 'arrest_attempt') {
+        const room = rooms.get(roomCode);
+        if (!room) return;
+        const sender = room.players.find((p: any) => p.id === socket.id);
+        const other = room.players.find((p: any) => p.id !== socket.id);
+        if (sender && sender.role === 'police' && other && sender.pos && other.pos) {
+          const dist = Math.hypot(
+            (sender.pos.x ?? 0) - (other.pos.x ?? 0),
+            (sender.pos.z ?? 0) - (other.pos.z ?? 0)
+          );
+          if (dist <= 2.6) {
+            io.to(roomCode).emit('arrest_confirmed');
+          } else {
+            socket.emit('error_message', 'Too far to arrest');
+          }
+        } else {
+          socket.emit('error_message', 'Too far to arrest');
+        }
+        return;
+      }
+      socket.to(roomCode).emit('opponent_action', { id: socket.id, type, amount, payload });
     });
 
     socket.on('player_update', (data) => {
-      const { roomCode, pos, heading, cash, stock, heat } = data;
-      socket.to(roomCode).emit('opponent_update', { id: socket.id, pos, heading, cash, stock, heat });
+      const { roomCode, pos, heading, speed, cash, stock, heat, alert } = data || {};
+      const room = rooms.get(roomCode);
+      if (room) {
+        const player = room.players.find((p: any) => p.id === socket.id);
+        if (player) {
+          if (pos) player.pos = { x: pos.x, z: pos.z };
+          if (typeof heading === 'number') player.heading = heading;
+          if (typeof cash === 'number') player.cash = cash;
+          if (typeof stock === 'number') player.stock = stock;
+          if (typeof heat === 'number') player.heat = heat;
+        }
+      }
+      socket.to(roomCode).emit('opponent_update', {
+        id: socket.id,
+        pos,
+        heading,
+        speed,
+        cash,
+        stock,
+        heat,
+        alert
+      });
     });
 
     socket.on('disconnect', () => {
