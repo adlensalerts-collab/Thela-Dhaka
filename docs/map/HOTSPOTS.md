@@ -68,3 +68,8 @@ Find the region with `grep -n "<anchor>" <file>`, then read a slice (`sed -n 'ST
 ## Surface finish (Sprint 8B)
 - `src/game/render/pbr.ts`: `export function pbrMaterial(` calls `applySurfaceWear` for asphalt, pavement and plaster.
 - `src/game/render/surfaceWear.ts`: `export function applySurfaceWear(`; masks are `ROAD`, `PAVEMENT`, `PLASTER`.
+
+## Character prototype (Sprint 9A)
+- `src/game/world/animatedCharacter.ts`: `export async function loadAnimatedCharacter(` loads/clones the local GLB; `setMotion`, `update`, `dispose` control each independent actor.
+- `src/dev/characterPreview.ts`: `async function start()` owns the separate preview; no game-engine integration.
+- `src/game/world/humans.ts`: `export function createHumanRig(` and `export function animateHuman(` are the existing gameplay rig; unchanged in 9A.

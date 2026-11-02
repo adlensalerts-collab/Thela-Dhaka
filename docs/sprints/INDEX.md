@@ -22,3 +22,4 @@ One line per closed sprint. Open work: `docs/sprints/ACTIVE.md`.
 | M-W | Real map live: New Market (wired by Claude) | ✅ | uploads `b1ebb6b` `48bde79` | [archive](archive/SM-W-real-map-live-new-market-wired-by-claude.md) |
 | — | AI Studio: hostile pedestrian mechanic (own initiative) | ⚠️ | `b281707` | [archive](archive/X-ai-studio-hostile-pedestrian-mechanic-own-initia.md) |
 | 8.0 | Hotfix: lint fix + road/lighting fix | ✅ | `e439532` | [archive](archive/S8_0-hotfix-lint-fix-road-lighting-fix.md) |
+| 8 | Roads & textures: shared signs, matte surface wear, worn markings and street/facade details | ✅ | `a3235b5` `32aae00` `f38c133` | [archive](archive/S8-roads-textures.md) |

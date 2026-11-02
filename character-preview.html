@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Thela Dhaka — character animation preview</title>
+    <style>
+      *{box-sizing:border-box}body{margin:0;background:#111b22;color:#eef2e9;font:15px system-ui,sans-serif}
+      main{max-width:1100px;margin:auto;padding:24px}h1{font-size:25px;margin:0 0 8px}p{color:#b7c6c3;line-height:1.5;margin:8px 0 18px}
+      #stage{height:62vh;min-height:300px;max-height:620px;border:1px solid #354851;border-radius:14px;overflow:hidden;background:#17252e}
+      canvas{display:block;width:100%;height:100%}nav{display:flex;gap:10px;flex-wrap:wrap;margin:18px 0}button,a{font:inherit}
+      button{padding:10px 18px;background:#213944;color:#f0f5ee;border:1px solid #41616b;border-radius:8px;cursor:pointer}
+      button[aria-pressed=true]{background:#d8b16b;color:#17252e;border-color:#d8b16b}button:disabled{opacity:.45;cursor:wait}
+      label{display:flex;align-items:center;gap:10px;color:#c7d2ca}#status{min-height:24px;color:#e0bc7c}a{color:#a5d2c8}
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Character animation preview</h1>
+      <p>Sprint 9A: a test rig for idle, walk, jog, sprint and pushing. These mannequins are animation prototypes; the game’s vendor, police and crowds are unchanged.</p>
+      <div id="stage" aria-label="Two animated test mannequins"></div>
+      <nav aria-label="Animation"><button data-motion="idle" disabled>Idle</button><button data-motion="walk" disabled>Walk</button><button data-motion="jog" disabled>Jog</button><button data-motion="sprint" disabled>Sprint</button><button data-motion="push" disabled>Push</button></nav>
+      <label>Playback speed <input id="speed" type="range" min="0.25" max="2" step="0.25" value="1" /><output id="speed-value">1×</output></label>
+      <p id="status" role="status">Loading the local character asset…</p>
+      <p>Model and animation: <a href="https://quaternius.com/packs/universalanimationlibrary.html">Quaternius</a>, CC0 1.0. <a href="./">Return to the game</a>.</p>
+    </main>
+    <script type="module" src="/src/dev/characterPreview.ts"></script>
+  </body>
+</html>

@@ -35,6 +35,7 @@ Which file owns which feature. Sizes as of Hotfix 8.1. Files over ~20 KB: read v
 | Area | File | Key exports |
 |---|---|---|
 | People (vendor, police, compact crowd rig) | `src/game/world/humans.ts` | `createHumanRig`, `animateHuman`, `setPushPose`, `outfitForArchetype` |
+| Cached skeletal character prototype (not wired into gameplay) | `src/game/world/animatedCharacter.ts` | `loadAnimatedCharacter`, `CHARACTER_MOTIONS` |
 | Vehicle models | `src/game/world/traffic.ts` | `buildVehicle`, `SPECS` (`spawnTraffic` = old grid only) |
 | Trees | `src/game/world/trees.ts` | `buildTreesAt` (`buildPavementTrees` = old grid) |
 | Garage / aarot models | `src/game/world/garages.ts`, `aarots.ts` | `buildGarage`, `buildAarot` (`*_SITES`, `nearest*` = old grid) |
@@ -55,6 +56,7 @@ Which file owns which feature. Sizes as of Hotfix 8.1. Files over ~20 KB: read v
 ## UI (React)
 | Area | File |
 |---|---|
+| Separate character animation preview | `character-preview.html` + `src/dev/characterPreview.ts` |
 | App shell, socket wiring, modals | `src/App.tsx` |
 | In-game HUD (stats, minimap, button bar, hotspot badge) — **31 KB** | `src/components/GameHUD.tsx` |
 | Title screen (role, solo/online, OSM credit) | `src/components/TitleScreen.tsx` |

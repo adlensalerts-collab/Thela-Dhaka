@@ -8,6 +8,14 @@ export default defineConfig(() => {
     // GitHub Pages serves the site from /Thela-Dhaka/; AI Studio and local dev use /.
     base: process.env.GITHUB_PAGES === 'true' ? '/Thela-Dhaka/' : '/',
     plugins: [react(), tailwindcss()],
+    build: {
+      rolldownOptions: {
+        input: {
+          game: path.resolve(__dirname, 'index.html'),
+          characters: path.resolve(__dirname, 'character-preview.html'),
+        },
+      },
+    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),

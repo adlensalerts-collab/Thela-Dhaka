@@ -48,3 +48,11 @@ npm run lint                                                                    
 GITHUB_PAGES=true VITE_STATIC_HOST=true npx vite build                             # Pages build
 ```
 Headless browser checks run at low quality (software rendering is ~1 fps); to test timing-based features, expose the engine in a test-only build and call `engine.simulate(1/60)` in a loop rather than waiting in real time.
+
+## Character preview and asset preparation (Sprint 9A)
+
+- Vite builds two HTML entries: the existing `index.html` and the separate `character-preview.html`. The Pages base path is applied to both.
+- Preview after deployment: `https://adlensalerts-collab.github.io/Thela-Dhaka/character-preview.html`. Local dev: `http://localhost:3000/character-preview.html`.
+- The prototype GLB is bundled under `public/assets/characters/`; ordinary game startup does not request it. No CDN or runtime asset credentials are needed.
+- Rebuild the GLB from the pinned standard animation-library files in `public/assets/characters/CREDITS.md`: `python3 scripts/prepare-character.py /path/to/AnimationLibrary_Godot_Standard.gltf public/assets/characters/locomotion-prototype.glb`. The adjacent source `.bin` is required. The converter uses Python's standard library only.
+- Source/model licence and checksums are recorded in `public/assets/characters/CREDITS.md`; retain `CC0-LICENSE.txt` with the derived asset.
