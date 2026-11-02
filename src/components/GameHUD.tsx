@@ -22,6 +22,9 @@ import { GameState } from '../game/simulation';
 import { GameSettingsData, formatCode } from '../game/keybindings';
 import { GARAGE_SITES } from '../game/world/garages';
 import { AAROT_SITES } from '../game/world/aarots';
+import { USE_REAL_MAP, REAL_MAP_ID } from '../game/simulation';
+import { getDistrict } from '../game/map/districtData';
+import { createDistrictMinimap } from '../game/map/minimap';
 import { loadDisplaySettings } from '../game/render/display';
 
 interface GameHUDProps {
@@ -49,11 +52,19 @@ export const GameHUD: React.FC<GameHUDProps> = ({
 }) => {
   const minimapRef = useRef<HTMLCanvasElement>(null);
   const bgCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  // world (x, z) → minimap pixels; real map uses the district transform, grid map the old ±120 one
+  const mapXZRef = useRef<(x: number, z: number) => [number, number]>((x, z) => [((x + 120) / 240) * 160, ((z + 120) / 240) * 160]);
   const isVendor = state.mode === 'vendor' || state.mode === 'online_vendor';
 
   // Memoized static minimap background rendering (only creates once)
   useEffect(() => {
     const size = 160;
+    if (USE_REAL_MAP) {
+      const mm = createDistrictMinimap(getDistrict(REAL_MAP_ID), size);
+      bgCanvasRef.current = mm.canvas;
+      mapXZRef.current = mm.toMap;
+      return;
+    }
     const bg = document.createElement('canvas');
     bg.width = size;
     bg.height = size;
@@ -118,7 +129,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
     const cx = canvas.getContext('2d');
     if (!cx) return;
     const size = 160;
-    const toMap = (v: number) => ((v + 120) / 240) * size;
+    const toMapXZ = mapXZRef.current;
     const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
 
     cx.drawImage(bgCanvasRef.current, 0, 0);
@@ -132,8 +143,9 @@ export const GameHUD: React.FC<GameHUDProps> = ({
       if (state.alert || distToOfficer <= 40) {
         const blinkOn = !state.alert || Math.floor(Date.now() / 220) % 2 === 0;
         if (blinkOn) {
-          const ox = clamp(toMap(state.officerX ?? 0), 6, size - 6);
-          const oy = clamp(toMap(state.officerZ ?? 0), 6, size - 6);
+          const [omx, omy] = toMapXZ(state.officerX ?? 0, state.officerZ ?? 0);
+          const ox = clamp(omx, 6, size - 6);
+          const oy = clamp(omy, 6, size - 6);
           cx.beginPath();
           cx.arc(ox, oy, 4, 0, Math.PI * 2);
           cx.fillStyle = '#ef4444';
@@ -146,8 +158,9 @@ export const GameHUD: React.FC<GameHUDProps> = ({
     }
 
     // Player blip: white-outlined amber arrow rotated by state.heading
-    const px = clamp(toMap(state.playerX ?? 0), 8, size - 8);
-    const py = clamp(toMap(state.playerZ ?? 0), 8, size - 8);
+    const [pmx, pmy] = toMapXZ(state.playerX ?? 0, state.playerZ ?? 0);
+    const px = clamp(pmx, 8, size - 8);
+    const py = clamp(pmy, 8, size - 8);
     cx.save();
     cx.translate(px, py);
     cx.rotate(state.heading || 0);
@@ -433,7 +446,8 @@ export const GameHUD: React.FC<GameHUDProps> = ({
         {/* Minimap */}
         <div className="bg-black/60 backdrop-blur-md border border-teal-600/40 rounded-2xl p-2 shadow-xl pointer-events-auto overflow-hidden">
           <canvas ref={minimapRef} width={160} height={160} className="rounded-xl w-32 h-32 md:w-36 md:h-36" />
-          <div className="text-[10px] text-center text-gray-400 mt-1 uppercase font-semibold">Gulistan Map</div>
+          <div className="text-[10px] text-center text-gray-400 mt-1 uppercase font-semibold">{USE_REAL_MAP ? getDistrict(REAL_MAP_ID).name : 'Gulistan'} Map</div>
+          <div className="text-[8px] text-center text-gray-500 leading-tight">© OpenStreetMap contributors</div>
         </div>
 
         {/* Action Buttons with active binding labels */}

@@ -260,6 +260,9 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
           </div>
         </div>
       )}
+      <div className="absolute bottom-2 left-0 right-0 text-center text-[10px] text-white/50 pointer-events-none">
+        Map data © OpenStreetMap contributors (ODbL)
+      </div>
     </div>
   );
 };

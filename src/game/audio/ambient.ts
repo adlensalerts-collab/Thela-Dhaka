@@ -333,6 +333,16 @@ export class SpatialSoundManager {
   };
 
   private zones: UrbanActivityZone[] = [...HIGH_ACTIVITY_URBAN_ZONES];
+  private roadDistance: ((x: number, z: number) => number) | null = null;
+
+  /**
+   * M-W — real map: sound zones come from the district's hotspots (markets, junctions, crowds) and
+   * traffic noise uses the distance to the nearest real road instead of the old grid streets.
+   */
+  setDistrict(zones: UrbanActivityZone[], roadDistance: (x: number, z: number) => number) {
+    this.zones = zones;
+    this.roadDistance = roadDistance;
+  }
 
   constructor(existingCtx?: AudioContext | null) {
     if (existingCtx) {
@@ -662,8 +672,8 @@ export class SpatialSoundManager {
     }
 
     // 2. Augment with continuous street-grid proximity & dynamic entities
-    let minRoadDist = 999;
-    for (let i = 0; i < STREET_AXES.length; i++) {
+    let minRoadDist = this.roadDistance ? this.roadDistance(playerX, playerZ) : 999;
+    for (let i = 0; !this.roadDistance && i < STREET_AXES.length; i++) {
       const axis = STREET_AXES[i];
       const dx = Math.abs(playerX - axis);
       const dz = Math.abs(playerZ - axis);

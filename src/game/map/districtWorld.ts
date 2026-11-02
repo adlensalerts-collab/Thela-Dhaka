@@ -111,7 +111,7 @@ export function buildDistrictWorld(scene: THREE.Scene, d: District): DistrictWor
   const hw = d.bounds.halfWidth, hd = d.bounds.halfDepth;
 
   // ---- Ground
-  const soil = pbrMaterial('soil');
+  const soil = pbrMaterial('soil', { tint: '#8f8270' });   // darker, packed urban ground (light sand read as fog)
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(2 * hw + 120, 2 * hd + 120).rotateX(-Math.PI / 2), soil);
   ground.position.y = -0.02; ground.receiveShadow = true; applyWorldUV(ground);
   scene.add(ground);

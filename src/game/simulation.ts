@@ -31,6 +31,16 @@ import { SpatialSoundManager } from './audio/ambient';
 import { GARAGE_SITES, buildGarage, entranceForSite, nearestGarage } from './world/garages';
 import { AAROT_SITES, buildAarot, entranceForAarot, nearestAarot } from './world/aarots';
 import { nearJunction, auditObstacles } from './world/layout';
+import { buildDistrictWorld, nearestService, type DistrictWorld } from './map/districtWorld';
+import { GraphTraffic } from './map/graphTraffic';
+import { getDistrict } from './map/districtData';
+import { VIEW_DISTANCE } from './map/chunks';
+import { auditDistrict } from './map/minimap';
+import type { DistrictId } from './map/district';
+
+/** M-W — play on the real OpenStreetMap district (false = old grid city, kept as a fallback). */
+export const USE_REAL_MAP = true;
+export const REAL_MAP_ID: DistrictId = 'newmarket';
 import { StaminaSystem } from './stamina';
 import { WeatherSystem, type WeatherType } from './world/weather';
 import { StatsTracker, type RunStats } from './stats';
@@ -125,6 +135,8 @@ export class GameEngine {
   pedestrianManager!: PedestrianManager;
   obstacles: Obstacle[] = [];
   traffic: TrafficItem[] = [];
+  world: DistrictWorld | null = null;
+  graphTraffic: GraphTraffic | null = null;
   damage = new DamageSystem();
   stamina = new StaminaSystem();
   stats = new StatsTracker();
@@ -411,6 +423,7 @@ export class GameEngine {
   }
 
   applyQuality(level: QualityLevel) {
+    this.world?.chunks.setViewDistance(VIEW_DISTANCE[level]);
     const preset = QUALITY_PRESETS[level] || QUALITY_PRESETS[defaultQuality()];
     const shadowsChanged = this.renderer.shadowMap.enabled !== preset.shadows;
     this.qualityLevel = level;
@@ -564,6 +577,21 @@ export class GameEngine {
       return mesh;
     };
 
+    if (USE_REAL_MAP) {
+      // Real district (roads, footpaths, buildings, trees, poles, stalls, garages, aarots, collision)
+      this.world = buildDistrictWorld(this.scene, getDistrict(REAL_MAP_ID));
+      this.obstacles = this.world.obstacles;
+      this.graphTraffic = new GraphTraffic(this.scene, this.world.roads, 36);
+      this.traffic = this.graphTraffic.vehicles;
+      this.ambientAudio.setDistrict(
+        this.world.district.sites.hotspots.map((h, i) => ({
+          id: `hot_${i}`, name: h.name, bnName: h.name,
+          type: h.kind === 'junction' ? 'traffic' : h.kind === 'marketplace' || h.kind === 'mall' || h.kind === 'department_store' ? 'streetMarket' : 'crowd',
+          x: h.x, z: h.z, innerRadius: 10, outerRadius: h.kind === 'junction' ? 45 : 70, maxWeight: 1
+        })),
+        (x, z) => this.world?.roads.nearest(x, z)?.dist ?? 30
+      );
+    } else {
     // Ground
     block(this.scene, 265, 0.7, 265, mat.soil, 0, -0.45, 0, false);
     const street = [-80, -40, 0, 40, 80];
@@ -699,9 +727,9 @@ export class GameEngine {
         ...AAROT_SITES.map((s) => ({ ...entranceForAarot(s), r: 5 }))
       ]
     });
+      this.traffic = spawnTraffic(this.scene, street, 18);
+    }
     this.applyQuality(this.qualityLevel);
-
-    this.traffic = spawnTraffic(this.scene, street, 18);
 
     const makeCart = (isVendor = true) => {
       const g = new THREE.Group();
@@ -745,12 +773,57 @@ export class GameEngine {
     this.scene.add(this.npcVendor);
 
     // Initialize Dhaka sidewalk waypoint network and pool of 14 A* pedestrian NPCs
-    this.sidewalkGraph = new SidewalkGraph();
+    this.sidewalkGraph = this.world ? this.world.footpaths : new SidewalkGraph();
     this.pedestrianManager = new PedestrianManager(this.scene, this.sidewalkGraph, 14);
 
     if ((import.meta as any).env?.DEV) {
-      auditObstacles(this.obstacles);
+      if (this.world) auditDistrict(this.world);
+      else auditObstacles(this.obstacles);
     }
+  }
+
+  /** Obstacles near a point: spatial grid on the real map, full list on the grid map. */
+  nearObstacles(x: number, z: number): Obstacle[] {
+    return this.world ? this.world.grid.near(x, z, 4) : this.obstacles;
+  }
+
+  mapBound(fallback: number): number | { x: number; z: number } {
+    return this.world ? this.world.bounds : fallback;
+  }
+
+  addObstacle(o: Obstacle) {
+    this.obstacles.push(o);              // on the real map this is the world's obstacle list
+    this.world?.grid.add(o);
+  }
+
+  respawnNpcVendor() {
+    if (this.world) {
+      const np = this.footpathPoint(this.officer.position.x, this.officer.position.z, 35, 55);
+      this.npcVendor.position.set(np.x, 0, np.z);
+    } else {
+      this.npcVendor.position.set(-36, 0, 36);
+    }
+  }
+
+  nearestGarageInfo(x: number, z: number) {
+    return this.world ? nearestService(this.world.garages, x, z) : nearestGarage(x, z);
+  }
+
+  nearestAarotInfo(x: number, z: number) {
+    return this.world ? nearestService(this.world.aarots, x, z) : nearestAarot(x, z);
+  }
+
+  /** A footpath point between minD and maxD metres from (x, z) — safe place to put an officer or NPC. */
+  footpathPoint(x: number, z: number, minD: number, maxD: number): { x: number; z: number } {
+    const nodes = this.sidewalkGraph?.nodes ?? [];
+    let best: { x: number; z: number } | null = null, bestScore = Infinity;
+    const mid = (minD + maxD) / 2;
+    for (const n of nodes) {
+      const d = Math.hypot(n.x - x, n.z - z);
+      const score = d >= minD && d <= maxD ? Math.abs(d - mid) : 1000 + Math.abs(d - mid);
+      if (score < bestScore) { bestScore = score; best = { x: n.x, z: n.z }; }
+    }
+    return best ?? { x, z };
   }
 
   clearInputs() {
@@ -959,9 +1032,18 @@ export class GameEngine {
     this.human.visible = isVendor;
     this.officer.visible = true;
     this.npcVendor.visible = mode === 'police' || mode === 'online_police';
-    this.human.position.set(0, 0, 7);
-    this.officer.position.set(0, 0, -23);
-    this.npcVendor.position.set(0, 0, -19);
+    if (this.world) {
+      const sp = this.world.spawn;
+      this.human.position.set(sp.x, 0, sp.z);
+      const op = this.footpathPoint(sp.x, sp.z, 28, 40);
+      this.officer.position.set(op.x, 0, op.z);
+      const np = this.footpathPoint(sp.x, sp.z, 20, 30);
+      this.npcVendor.position.set(np.x, 0, np.z);
+    } else {
+      this.human.position.set(0, 0, 7);
+      this.officer.position.set(0, 0, -23);
+      this.npcVendor.position.set(0, 0, -19);
+    }
     const activePlayer = isVendor ? this.human : this.officer;
     this.state.playerX = activePlayer.position.x;
     this.state.playerZ = activePlayer.position.z;
@@ -1117,7 +1199,7 @@ export class GameEngine {
   restockCart() {
     const isVendor = this.state.mode === 'vendor' || this.state.mode === 'online_vendor';
     if (!isVendor || this.state.sale || this.state.repairing || this.state.restocking) return;
-    const { entrance, distance } = nearestAarot(this.human.position.x, this.human.position.z);
+    const { entrance, distance } = this.nearestAarotInfo(this.human.position.x, this.human.position.z);
     if (distance > 4.5) {
       this.onEvent('notify', `আড়তে যান — ${Math.round(distance)}m দূরে`);
       return;
@@ -1179,7 +1261,7 @@ export class GameEngine {
     this.state.heat = 100;
 
     // Register large stall into collision system
-    this.obstacles.push({
+    this.addObstacle({
       type: 'box',
       x: stallX,
       z: stallZ,
@@ -1246,11 +1328,16 @@ export class GameEngine {
       }
       this.state.sale = null;
     }
-    this.officer.position.set(
-      this.human.position.x + 26,
-      0,
-      this.human.position.z - 22
-    );
+    if (this.world) {
+      const op = this.footpathPoint(this.human.position.x, this.human.position.z, 30, 45);
+      this.officer.position.set(op.x, 0, op.z);
+    } else {
+      this.officer.position.set(
+        this.human.position.x + 26,
+        0,
+        this.human.position.z - 22
+      );
+    }
     this.state.officerX = this.officer.position.x;
     this.state.officerZ = this.officer.position.z;
     this.stats.spentBribes += cost;
@@ -1267,7 +1354,7 @@ export class GameEngine {
   recordArrest() {
     this.state.arrests++;
     this.state.integrity = Math.min(100, this.state.integrity + 2);
-    this.npcVendor.position.set(-36, 0, 36);
+    this.respawnNpcVendor();
     this.state.rank = Math.min(4, 1 + Math.floor(this.state.arrests / 2));
     this.stats.arrests = this.state.arrests;
     this.resumeGame();
@@ -1277,7 +1364,7 @@ export class GameEngine {
   takeIllicit() {
     this.state.policeCash += 150;
     this.state.integrity = Math.max(0, this.state.integrity - 20);
-    this.npcVendor.position.set(-36, 0, 36);
+    this.respawnNpcVendor();
     this.resumeGame();
     this.onEvent('notify', 'Illicit payment received. Integrity decreased.');
   }
@@ -1320,7 +1407,7 @@ export class GameEngine {
     } else if (action === 'repair') {
       if (this.state.repairing || this.state.sale || this.state.restocking) return;
       const p = isVendor ? this.human : this.officer;
-      const { entrance, distance } = nearestGarage(p.position.x, p.position.z);
+      const { entrance, distance } = this.nearestGarageInfo(p.position.x, p.position.z);
       if (distance > 4.5) {
         this.onEvent('notify', `গ্যারেজে যান — ${Math.round(distance)}m দূরে`);
         return;
@@ -1483,8 +1570,8 @@ export class GameEngine {
       vz,
       this.state.heading,
       isVendor,
-      this.obstacles,
-      110
+      this.nearObstacles(p.position.x, p.position.z),
+      this.mapBound(110)
     );
 
     p.position.x = moveRes.newX;
@@ -1592,8 +1679,8 @@ export class GameEngine {
           officerVz,
           officerHeading,
           false,
-          this.obstacles,
-          105
+          this.nearObstacles(this.officer.position.x, this.officer.position.z),
+          this.mapBound(105)
         );
         this.officer.position.x = aiMove.newX;
         this.officer.position.z = aiMove.newZ;
@@ -1635,8 +1722,8 @@ export class GameEngine {
           aiVz,
           wanderHeading,
           false,
-          this.obstacles,
-          100
+          this.nearObstacles(this.officer.position.x, this.officer.position.z),
+          this.mapBound(100)
         );
         this.officer.position.x = aiMove.newX;
         this.officer.position.z = aiMove.newZ;
@@ -1674,8 +1761,8 @@ export class GameEngine {
         vendorVz,
         vendorHeading,
         true,
-        this.obstacles,
-        104
+        this.nearObstacles(this.npcVendor.position.x, this.npcVendor.position.z),
+        this.mapBound(104)
       );
       this.npcVendor.position.x = aiVendorMove.newX;
       this.npcVendor.position.z = aiVendorMove.newZ;
@@ -1779,7 +1866,8 @@ export class GameEngine {
     }
 
     // Traffic motion
-    updateTraffic(this.traffic, dt, p.position.x, p.position.z);
+    if (this.graphTraffic) this.graphTraffic.update(dt, p.position.x, p.position.z);
+    else updateTraffic(this.traffic, dt, p.position.x, p.position.z);
 
     // Particle updates
     for (let i = this.particles.length - 1; i >= 0; i--) {
@@ -1870,10 +1958,10 @@ export class GameEngine {
     }
 
     // Sync damage, garage & aarot proximity, and ambient soundscape state
-    const gInfo = nearestGarage(p.position.x, p.position.z);
+    const gInfo = this.nearestGarageInfo(p.position.x, p.position.z);
     this.state.nearGarage = gInfo.distance <= 4.5;
     this.state.garageDistance = Math.round(gInfo.distance);
-    const aInfo = nearestAarot(p.position.x, p.position.z);
+    const aInfo = this.nearestAarotInfo(p.position.x, p.position.z);
     this.state.nearAarot = aInfo.distance <= 4.5;
     this.state.aarotDistance = Math.round(aInfo.distance);
     this.state.damage = this.damage.damage;
@@ -2089,6 +2177,7 @@ export class GameEngine {
       });
     }
 
+    this.world?.chunks.update(this.camera.position);
     this.renderer.render(this.scene, this.camera);
   }
 

@@ -176,7 +176,11 @@ export function generatePbrSet(surface: Surface): PbrSet {
 }
 
 /** Swap in real CC0 textures from public/assets/textures/<surface>/ if they exist. */
+/** Surfaces that have real photo textures in public/assets/textures (others would only 404). */
+const REAL_TEXTURE_SURFACES: ReadonlySet<Surface> = new Set<Surface>(['pavement', 'brick', 'metal']);
+
 function tryRealTextures(surface: Surface, mat: THREE.MeshStandardMaterial) {
+  if (!REAL_TEXTURE_SURFACES.has(surface)) return;
   const loader = new THREE.TextureLoader();
   const base = `${import.meta.env.BASE_URL}assets/textures/${surface}/`;
   const slots: Array<[keyof PbrSet, string, boolean]> = [
