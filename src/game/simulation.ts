@@ -52,6 +52,7 @@ const PEDESTRIAN_VIEW_DISTANCE = 90;
 import { StaminaSystem } from './stamina';
 import { WeatherSystem, type WeatherType } from './world/weather';
 import { StatsTracker, type RunStats } from './stats';
+import { RemoteActor } from './net/remoteActor';
 
 const STALL_POSITIONS = [
   [-20, 10.5, 'x'],
@@ -162,6 +163,9 @@ export class GameEngine {
   stamina = new StaminaSystem();
   stats = new StatsTracker();
   lastRunStats: RunStats | null = null;
+  remote = new RemoteActor();
+  remoteActive = false;
+  remoteSpeed = 0;
   weather!: WeatherSystem;
   lighting: LightingRig | null = null;
   saleIndicator!: SaleIndicator;
@@ -1094,9 +1098,12 @@ export class GameEngine {
   setMode(mode: GameState['mode']) {
     this.state = this.getInitialState(mode);
     const isVendor = mode === 'vendor' || mode === 'online_vendor';
-    this.human.visible = isVendor;
+    this.human.visible = isVendor || mode === 'online_police';
     this.officer.visible = true;
-    this.npcVendor.visible = mode === 'police' || mode === 'online_police';
+    this.npcVendor.visible = mode === 'police';
+    this.remote.reset();
+    this.remoteActive = false;
+    this.remoteSpeed = 0;
     this.hotspotDwell = 0;
     this.hotspotCooldown = 0;
     this.summonPoint = null;
@@ -1355,11 +1362,120 @@ export class GameEngine {
     this.publishState(true);
   }
 
+  getNetState() {
+    const isVendor = this.state.mode === 'vendor' || this.state.mode === 'online_vendor';
+    const actor = isVendor ? this.human : this.officer;
+    return {
+      x: actor.position.x,
+      z: actor.position.z,
+      heading: this.state.heading,
+      speed: this.currentSpeed,
+      cash: isVendor ? this.state.cash : this.state.policeCash,
+      stock: this.state.stock,
+      heat: this.state.heat,
+      alert: this.state.alert
+    };
+  }
+
+  applyRemoteUpdate(msg: any) {
+    if (!msg || typeof msg !== 'object') return;
+    const x = msg.pos?.x;
+    const z = msg.pos?.z;
+    const heading =
+      typeof msg.heading === 'number' && Number.isFinite(msg.heading) ? msg.heading : 0;
+    const speed =
+      typeof msg.speed === 'number' && Number.isFinite(msg.speed) ? msg.speed : 0;
+    if (
+      typeof x === 'number' &&
+      Number.isFinite(x) &&
+      typeof z === 'number' &&
+      Number.isFinite(z)
+    ) {
+      this.remote.push({
+        x,
+        z,
+        heading,
+        speed,
+        t: performance.now()
+      });
+      this.remoteActive = true;
+    }
+
+    if (this.state.mode === 'online_police') {
+      if (typeof msg.cash === 'number' && Number.isFinite(msg.cash)) {
+        this.state.cash = msg.cash;
+      }
+      if (typeof msg.stock === 'number' && Number.isFinite(msg.stock)) {
+        this.state.stock = msg.stock;
+      }
+      if (typeof msg.heat === 'number' && Number.isFinite(msg.heat)) {
+        this.state.heat = msg.heat;
+      }
+      if (typeof msg.alert === 'boolean') {
+        this.state.alert = msg.alert;
+      }
+    }
+  }
+
+  triggerCaught() {
+    if (
+      this.state.mode !== 'online_vendor' ||
+      this.state.stage !== 'playing' ||
+      this.isMenuOrModalOpen
+    ) {
+      return;
+    }
+    if (this.state.sale) {
+      if (this.state.sale.customer) {
+        this.state.sale.customer.isEngagedInSale = false;
+        this.state.sale.customer.summonUntil = 0;
+      }
+      this.state.sale = null;
+    }
+    this.stats.timesCaught++;
+    this.isMenuOrModalOpen = true;
+    this.clearInputs();
+    this.onEvent('bribe_prompt');
+    this.publishState(true);
+  }
+
+  receiveOnlineBribe(amount: number) {
+    if (this.state.mode !== 'online_police') return;
+    const paid =
+      typeof amount === 'number' && Number.isFinite(amount) && amount > 0
+        ? Math.round(amount)
+        : 90 + this.state.level * 45;
+    this.state.policeCash += paid;
+    this.state.integrity = Math.max(0, this.state.integrity - 20);
+    this.state.heat = 0;
+    this.state.alert = false;
+    this.playBeep(660, 0.18, 'triangle');
+    this.onEvent('notify', `ঘুষ পেলেন · +৳${paid}`);
+    this.publishState(true);
+  }
+
+  receiveOnlineVictory() {
+    if (this.state.mode !== 'online_police' || this.state.stage !== 'playing') return;
+    this.state.arrests++;
+    this.state.integrity = Math.min(100, this.state.integrity + 2);
+    this.state.rank = Math.min(4, 1 + Math.floor(this.state.arrests / 2));
+    this.stats.arrests = this.state.arrests;
+    this.onEvent('notify', 'বিক্রেতা জেলে গেছে · জিতেছেন! · Vendor jailed — Victory!');
+    this.endRun('victory');
+  }
+
   arrestVendor() {
-    const isPolice = this.state.mode === 'police' || this.state.mode === 'online_police';
-    if (!isPolice) return;
-    const targetVendor = this.state.mode === 'online_police' ? this.human : this.npcVendor;
-    const d = this.vector2(this.officer.position, targetVendor.position);
+    if (this.state.mode === 'online_police') {
+      const d = this.vector2(this.officer.position, this.human.position);
+      if (!this.remoteActive || d > 2.6) {
+        this.onEvent('notify', 'Move close to the vendor before arresting.');
+        return;
+      }
+      this.onEvent('arrest_attempt');
+      return;
+    }
+    if (this.state.mode !== 'police') return;
+    const d = this.vector2(this.officer.position, this.npcVendor.position);
     if (d > 3.4) {
       this.onEvent('notify', 'Move close to the vendor before arresting.');
       return;
@@ -1410,18 +1526,20 @@ export class GameEngine {
       }
       this.state.sale = null;
     }
-    if (this.world) {
-      const op = this.footpathPoint(this.human.position.x, this.human.position.z, 30, 45);
-      this.officer.position.set(op.x, 0, op.z);
-    } else {
-      this.officer.position.set(
-        this.human.position.x + 26,
-        0,
-        this.human.position.z - 22
-      );
+    if (this.state.mode !== 'online_vendor') {
+      if (this.world) {
+        const op = this.footpathPoint(this.human.position.x, this.human.position.z, 30, 45);
+        this.officer.position.set(op.x, 0, op.z);
+      } else {
+        this.officer.position.set(
+          this.human.position.x + 26,
+          0,
+          this.human.position.z - 22
+        );
+      }
+      this.state.officerX = this.officer.position.x;
+      this.state.officerZ = this.officer.position.z;
     }
-    this.state.officerX = this.officer.position.x;
-    this.state.officerZ = this.officer.position.z;
     this.stats.spentBribes += cost;
     this.stats.bribesPaid++;
     this.resumeGame();
@@ -1529,6 +1647,35 @@ export class GameEngine {
     if (force || now - this.lastHudPublishTime >= 95) {
       this.lastHudPublishTime = now;
       this.onUpdate({ ...this.state });
+    }
+  }
+
+  private updateChaseAlert(dist: number, policeSightRange: number) {
+    if (
+      !this.state.alert &&
+      this.state.heat > 27 &&
+      this.state.cooldown === 0 &&
+      dist < policeSightRange
+    ) {
+      this.state.alert = true;
+      this.stats.chasesStarted++;
+    }
+  }
+
+  private updateChaseEscape(dt: number, dist: number, policeEscapeDist: number) {
+    if (dist > policeEscapeDist) {
+      this.state.escape += dt;
+      if (this.state.escape > 5) {
+        this.state.alert = false;
+        this.state.heat = Math.max(0, this.state.heat - 30);
+        this.state.cooldown = 11;
+        this.state.escape = 0;
+        this.stats.chasesEscaped++;
+        this.onEvent('notify', 'Escaped police! Stay out of sight.');
+        this.publishState(true);
+      }
+    } else {
+      this.state.escape = 0;
     }
   }
 
@@ -1733,16 +1880,31 @@ export class GameEngine {
       this.mouseMovedRecently = Math.max(0, this.mouseMovedRecently - dt);
     }
 
+    // Remote opponent pose interpolation (Online 1v1 modes)
+    let sampledRemoteSpeed = 0;
+    if (
+      (this.state.mode === 'online_vendor' || this.state.mode === 'online_police') &&
+      this.remoteActive
+    ) {
+      const remotePose = this.remote.sample(performance.now());
+      if (remotePose) {
+        const remoteActor = this.state.mode === 'online_vendor' ? this.officer : this.human;
+        remoteActor.position.x = remotePose.x;
+        remoteActor.position.z = remotePose.z;
+        remoteActor.rotation.y = -remotePose.heading;
+        sampledRemoteSpeed = Math.abs(remotePose.speed);
+      }
+    }
+    this.remoteSpeed = sampledRemoteSpeed;
+
     // AI Police pursuit & navigation with collision resolution (Solo Vendor Mode)
     const visibilityFactor = this.weather ? this.weather.visibilityFactor : 1;
     const policeSightRange = 55 * visibilityFactor;
     const policeEscapeDist = 30 * visibilityFactor;
 
     if (this.state.mode === 'vendor') {
-      if (!this.state.alert && this.state.heat > 27 && this.state.cooldown === 0 && this.vector2(this.human.position, this.officer.position) < policeSightRange) {
-        this.state.alert = true;
-        this.stats.chasesStarted++;
-      }
+      const distBefore = this.vector2(this.human.position, this.officer.position);
+      this.updateChaseAlert(distBefore, policeSightRange);
       _toHuman.subVectors(this.human.position, this.officer.position);
       const dist = _toHuman.length();
       if (this.state.alert) {
@@ -1779,20 +1941,7 @@ export class GameEngine {
           }
           return;
         }
-        if (dist > policeEscapeDist) {
-          this.state.escape += dt;
-          if (this.state.escape > 5) {
-            this.state.alert = false;
-            this.state.heat = Math.max(0, this.state.heat - 30);
-            this.state.cooldown = 11;
-            this.state.escape = 0;
-            this.stats.chasesEscaped++;
-            this.onEvent('notify', 'Escaped police! Stay out of sight.');
-            this.publishState(true);
-          }
-        } else {
-          this.state.escape = 0;
-        }
+        this.updateChaseEscape(dt, dist, policeEscapeDist);
       } else {
         const angle = this.state.time * 0.3;
         const aiVx = Math.sin(angle) * dt * 1.1;
@@ -1812,6 +1961,12 @@ export class GameEngine {
         this.officer.position.z = aiMove.newZ;
         // Orientation fix: Wander officer facing
         this.officer.rotation.y = -wanderHeading;
+      }
+    } else if (this.state.mode === 'online_vendor' && this.remoteActive) {
+      const dist = this.vector2(this.human.position, this.officer.position);
+      this.updateChaseAlert(dist, policeSightRange);
+      if (this.state.alert) {
+        this.updateChaseEscape(dt, dist, policeEscapeDist);
       }
     } else if (this.state.mode === 'police') {
       // Police mode: AI Vendor movement with collision resolution
@@ -1855,7 +2010,11 @@ export class GameEngine {
 
     // Update walk cycles & limb poses for realistic human figures
     const isVendorPlayer = this.state.mode === 'vendor' || this.state.mode === 'online_vendor';
-    const vendorSpeed = isVendorPlayer ? Math.abs(this.currentSpeed) : 0;
+    const vendorSpeed = isVendorPlayer
+      ? Math.abs(this.currentSpeed)
+      : this.state.mode === 'online_police' && this.remoteActive
+      ? this.remoteSpeed
+      : 0;
     this.vendorPhase += vendorSpeed * dt * 2.2;
     if (this.human.userData.rig) {
       const vendorIntensity =
@@ -1870,6 +2029,8 @@ export class GameEngine {
     let officerSpeed = 0;
     if (!isVendorPlayer) {
       officerSpeed = Math.abs(this.currentSpeed);
+    } else if (this.state.mode === 'online_vendor' && this.remoteActive) {
+      officerSpeed = this.remoteSpeed;
     } else if (this.state.mode === 'vendor') {
       if (this.state.alert) {
         _toHuman.subVectors(this.human.position, this.officer.position);
@@ -1944,7 +2105,7 @@ export class GameEngine {
       }
     }
 
-    if (this.state.mode === 'vendor') {
+    if (this.state.mode === 'vendor' || this.state.mode === 'online_vendor') {
       if (!this.state.alert && this.state.heat > 0) {
         this.state.heat = Math.max(0, this.state.heat - dt * 0.9);
       }

@@ -56,6 +56,19 @@ export default function App() {
           setModalType('arrest_decision');
         } else if (type === 'arrest_attempt') {
           if (socketRef.current && roomCodeRef.current) {
+            if (engineRef.current) {
+              const net = engineRef.current.getNetState();
+              socketRef.current.emit('player_update', {
+                roomCode: roomCodeRef.current,
+                pos: { x: net.x, z: net.z },
+                heading: net.heading,
+                speed: net.speed,
+                cash: net.cash,
+                stock: net.stock,
+                heat: net.heat,
+                alert: net.alert
+              });
+            }
             socketRef.current.emit('player_action', {
               roomCode: roomCodeRef.current,
               type: 'arrest_attempt'
@@ -364,9 +377,11 @@ export default function App() {
           onPayBribe={() => {
             if (!engineRef.current) return;
             const isOnlineVendor = engineRef.current.state.mode === 'online_vendor';
-            const paidAmount = engineRef.current.payBribe();
-            if (paidAmount > 0) {
-              if (isOnlineVendor && socketRef.current && roomCodeRef.current) {
+            const cashBefore = engineRef.current.state.cash;
+            const paid = engineRef.current.payBribe();
+            const paidAmount = Math.max(0, cashBefore - engineRef.current.state.cash);
+            if (paid) {
+              if (isOnlineVendor && socketRef.current && roomCodeRef.current && paidAmount > 0) {
                 socketRef.current.emit('player_action', {
                   roomCode: roomCodeRef.current,
                   type: 'bribe_paid',
