@@ -8,7 +8,7 @@ Open and planned work only. Closed sprints: `docs/sprints/INDEX.md` → `docs/sp
 
 | # | Sprint | Status | Deliverable |
 |---|---|---|---|
-| 8.1 | Hotfix: services, upgrades, police hospitals, more NPCs, hotspot customers, jumping button bar | 🔄 | Built and tested by Claude (`thela-dhaka-hotfix-8.1.zip`), waiting for upload. See details below |
+| 8.1 | Hotfix: services, upgrades, police hospitals, more NPCs, hotspot customers, jumping button bar | 🔄 | Uploaded; source present and lint/Pages build pass at `a3235b5`. Full interactive regression remains to be rechecked. See details below |
 
 **Hotfix 8.1 details (all play-tested in headless Chromium, 0 page errors):**
 - **5 garages + 6 aarots per district** (was 2 + 3), at least 122 m apart; all 11 rings on footpath entrances, nothing blocking, road audit 0.
@@ -25,7 +25,7 @@ Order: **Fixes → Real map → Game loop → Graphics → Sound → Features.**
 
 | # | Sprint | Status | Deliverable |
 |---|---|---|---|
-| 7.6 | Multiplayer A: shared world + sync | ⏸ (prompt sent; run after 8.1 is uploaded and AI Studio is synced) | Seeded world (both players see the same city); send/receive position ~12×/s with smooth interpolation; remote opponent replaces the AI in online modes; joiner gets the opposite role; server-checked arrests; disconnect + rematch |
+| 7.6 | Multiplayer A: shared world + sync | 🔄 (engine integration landed in `6faa95c`; room lifecycle and two-tab verification remain) | Seeded world (both players see the same city); send/receive position ~12×/s with smooth interpolation; remote opponent replaces the AI in online modes; joiner gets the opposite role; server-checked arrests; disconnect + rematch |
 | 7.7 | Multiplayer B: hosting | ⏳ | `server.ts` production mode (serves the built game, no Vite); deploy as an always-on web service; GitHub Pages connects via `VITE_SERVER_URL`; online buttons re-enabled on the live site |
 
 **Real map (OpenStreetMap: New Market + Gulistan)**
@@ -53,7 +53,7 @@ Built and tested by Claude. Wiring (M-W) done by Claude: maps are bundled into t
 
 | # | Sprint | Status | Deliverable |
 |---|---|---|---|
-| 8 | Roads & textures | 🔄 | 8A: shared shop-sign atlas pages and merged meshes per chunk, preserving board placement/text/lighting. Implemented and checked against `6faa95c`, awaiting manual upload; verification in `docs/sprints/SPRINT-8A.md`. Remaining: cracks, patches, painted markings on the real roads; richer footpath and building detail |
+| 8 | Roads & textures | 🔄 | 8A: uploaded and verified at `a3235b5`; sign batching preserved. 8B: world-space matte road repairs/cracks, pavement wear and plaster rain streaks built for manual upload; see `docs/sprints/SPRINT-8B.md`. Remaining: painted-marking refinements and further authored footpath/building detail |
 | 9 | Realistic characters | ⏳ | Rigged CC0 3D characters with walk animations (model files to download, e.g. Quaternius) |
 | 10 | More NPCs + behaviour | ⏳ | Remove the 10–15 pedestrian cap; 60–120 people with distance-based detail; groups chatting, phones, browsing stalls, crossing at junctions, reacting to horns/accidents, haggling; density by time and hotspots |
 

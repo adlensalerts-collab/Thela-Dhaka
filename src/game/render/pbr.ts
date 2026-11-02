@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { applySurfaceWear } from './surfaceWear';
 
 /**
  * Sprint 3 — PBR materials.
@@ -223,6 +224,7 @@ export function pbrMaterial(surface: Surface, opts: { tint?: string; metalness?:
     envMapIntensity: opts.envMapIntensity ?? tune?.envMapIntensity ?? 1
   });
   mat.userData.surface = surface;
+  if (surface === 'asphalt' || surface === 'pavement' || surface === 'plaster') applySurfaceWear(mat, surface);
   tryRealTextures(surface, mat);
   return mat;
 }

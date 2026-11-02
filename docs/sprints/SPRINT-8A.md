@@ -1,6 +1,6 @@
 # Sprint 8A — shared shop signs
 
-Built against main `6faa95c91326734005fbfe461e423a659f5e32ab` on 2026-11-02. Ready for manual upload. Sprint 8 remains in progress.
+Built against main `6faa95c91326734005fbfe461e423a659f5e32ab` on 2026-11-02. Uploaded as `a3235b5`; all six package files matched the repository exactly, and lint/Pages build were rerun successfully. Sprint 8 remains in progress.
 
 ## What changed
 

@@ -62,3 +62,7 @@ Find the region with `grep -n "<anchor>" <file>`, then read a slice (`sed -n 'ST
 
 ## Never read whole
 `src/game/map/data/newmarket.json`, `gulistan.json` (~300 KB each). To inspect: `python3 -c "import json;d=json.load(open('src/game/map/data/newmarket.json'));print(d['sites'].keys())"`.
+
+## Surface finish (Sprint 8B)
+- `src/game/render/pbr.ts`: `export function pbrMaterial(` calls `applySurfaceWear` for asphalt, pavement and plaster.
+- `src/game/render/surfaceWear.ts`: `export function applySurfaceWear(`; masks are `ROAD`, `PAVEMENT`, `PLASTER`.
