@@ -52,8 +52,8 @@ const SHADERS: Record<Surface, Shader> = {
     const grit = hash(Math.floor(u * 900), Math.floor(v * 900), 3);
     const stone = grit > 0.93 ? 0.25 : 0;
     const patch = fbm(u, v, 9, 2, 3) > 0.62 ? -0.06 : 0; // repaired patches
-    const c = mix([58, 61, 63], [92, 94, 92], n * 0.8 + stone + patch);
-    return rgb(c, n * 0.6 + stone, 0.82 - stone * 0.3);
+    const c = mix([50, 49, 46], [82, 79, 74], n * 0.8 + stone + patch);   // warm, dusty asphalt (cool grey read as water)
+    return rgb(c, n * 0.6 + stone, 0.9 - stone * 0.2);
   },
   pavement: (u, v) => {
     // 4×4 square slabs with mortar joints
@@ -198,7 +198,19 @@ function tryRealTextures(surface: Surface, mat: THREE.MeshStandardMaterial) {
 }
 
 /** A PBR material for a surface. tint multiplies the albedo (keep it light, e.g. '#ffffff'). */
-export function pbrMaterial(surface: Surface, opts: { tint?: string; metalness?: number; normalScale?: number } = {}) {
+/**
+ * Per-surface tuning. Flat ground seen at a low angle exaggerates bumps and sky reflections:
+ * strong normals + full sky reflection made asphalt look like rippling blue water and soil look rocky.
+ */
+const SURFACE_TUNING: Partial<Record<Surface, { normalScale: number; envMapIntensity: number }>> = {
+  asphalt: { normalScale: 0.25, envMapIntensity: 0.08 },   // matte: almost no sky reflection
+  soil: { normalScale: 0.3, envMapIntensity: 0.35 },
+  pavement: { normalScale: 0.7, envMapIntensity: 0.6 },
+  concrete: { normalScale: 0.6, envMapIntensity: 0.6 }
+};
+
+export function pbrMaterial(surface: Surface, opts: { tint?: string; metalness?: number; normalScale?: number; envMapIntensity?: number } = {}) {
+  const tune = SURFACE_TUNING[surface];
   const set = generatePbrSet(surface);
   const mat = new THREE.MeshStandardMaterial({
     color: opts.tint ?? '#ffffff',
@@ -207,7 +219,8 @@ export function pbrMaterial(surface: Surface, opts: { tint?: string; metalness?:
     roughnessMap: set.roughnessMap,
     roughness: 1,
     metalness: opts.metalness ?? (surface === 'metal' ? 0.75 : 0),
-    normalScale: new THREE.Vector2(opts.normalScale ?? 1, opts.normalScale ?? 1)
+    normalScale: new THREE.Vector2(opts.normalScale ?? tune?.normalScale ?? 1, opts.normalScale ?? tune?.normalScale ?? 1),
+    envMapIntensity: opts.envMapIntensity ?? tune?.envMapIntensity ?? 1
   });
   mat.userData.surface = surface;
   tryRealTextures(surface, mat);

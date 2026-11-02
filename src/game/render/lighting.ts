@@ -27,6 +27,12 @@ export interface LightingRig {
   dispose(): void;
 }
 
+/**
+ * Strength of the sky-based ambient (image-based) light. 0.9 flooded every surface with bright
+ * sky-blue (a plain grey road rendered light blue), so roads looked like water and ground looked foggy.
+ */
+const ENV_INTENSITY = 0.3;
+
 export function setupRealisticLighting(renderer: THREE.WebGLRenderer, scene: THREE.Scene): LightingRig {
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -59,7 +65,7 @@ export function setupRealisticLighting(renderer: THREE.WebGLRenderer, scene: THR
   scene.add(sun, sun.target);
 
   // Gentle bounce light from warm ground; the environment map does most of the ambient work.
-  const fill = new THREE.HemisphereLight(0xdfe9ff, 0x8a7458, 0.35);
+  const fill = new THREE.HemisphereLight(0xe9ebee, 0x8a7458, 0.35);   // near-neutral sky fill
   scene.add(fill);
 
   scene.fog = new THREE.FogExp2('#cdd3cc', 0.0055);
@@ -121,7 +127,7 @@ export function setupRealisticLighting(renderer: THREE.WebGLRenderer, scene: THR
     envRT?.dispose();
     envRT = pmrem.fromScene(envScene, 0, 0.1, 100);
     scene.environment = envRT.texture;
-    scene.environmentIntensity = 0.9 * brightnessMultiplier;
+    scene.environmentIntensity = ENV_INTENSITY * brightnessMultiplier;
   };
 
   const setTimeOfDay = (elevationDeg: number, azimuthDeg = 215) => {
@@ -158,7 +164,7 @@ export function setupRealisticLighting(renderer: THREE.WebGLRenderer, scene: THR
     brightnessMultiplier = b;
     renderer.toneMappingExposure = BASE_EXPOSURE * b;
     fill.intensity = 0.35 * b;
-    scene.environmentIntensity = 0.9 * b;
+    scene.environmentIntensity = ENV_INTENSITY * b;
     sun.intensity = baseSunIntensity * b;
     if (renderer.domElement) {
       renderer.domElement.style.filter = Math.abs(b - 1) < 0.01 ? '' : `brightness(${b})`;

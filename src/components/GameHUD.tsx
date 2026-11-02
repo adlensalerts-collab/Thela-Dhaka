@@ -139,8 +139,9 @@ export const GameHUD: React.FC<GameHUDProps> = ({
     // Hostile / injured pedestrian blips (orange-red dots)
     if (isVendor && state.angryPeds && state.angryPeds.length > 0) {
       for (const ap of state.angryPeds) {
-        const ax = clamp(toMap(ap.x), 5, size - 5);
-        const ay = clamp(toMap(ap.z), 5, size - 5);
+        const [amx, amy] = toMapXZ(ap.x, ap.z);
+        const ax = clamp(amx, 5, size - 5);
+        const ay = clamp(amy, 5, size - 5);
         cx.beginPath();
         cx.arc(ax, ay, 3.2, 0, Math.PI * 2);
         cx.fillStyle = '#f97316';

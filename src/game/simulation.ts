@@ -95,6 +95,12 @@ export interface GameState {
   displayHz: number;
   showFps?: boolean;
   playerX: number;
+  /** Angry pedestrians shown on the minimap (filled by the public-rage system, Sprint 15). */
+  angryPeds?: Array<{ x: number; z: number }>;
+  /** Vendor health, crowd rage and angry-crowd size (public-rage system, Sprint 15). */
+  health?: number;
+  rage?: number;
+  angryPedCount?: number;
   playerZ: number;
   officerX: number;
   officerZ: number;

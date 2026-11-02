@@ -117,7 +117,7 @@ export function buildDistrictWorld(scene: THREE.Scene, d: District): DistrictWor
   scene.add(ground);
 
   // ---- Roads (merged polygons → clean junctions) and raised footpaths with kerbs
-  const asphalt = pbrMaterial('asphalt');
+  const asphalt = pbrMaterial('asphalt', { tint: '#d6c8b4' });   // warm dusty tone counters the blue sky light
   const paving = pbrMaterial('pavement');
   for (const poly of d.surfaces.carriageway) {
     const mesh = new THREE.Mesh(new THREE.ShapeGeometry(toShape(poly.outer, poly.holes)).rotateX(-Math.PI / 2), asphalt);
