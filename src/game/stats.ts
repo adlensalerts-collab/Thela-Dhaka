@@ -1,4 +1,4 @@
-export type RunResult = 'jailed' | 'bribe_unaffordable' | 'destroyed' | 'victory' | null;
+export type RunResult = 'jailed' | 'bribe_unaffordable' | 'destroyed' | 'mob_beaten' | 'victory' | null;
 export type RunMode = 'vendor' | 'police' | 'online_vendor' | 'online_police';
 
 export interface BestSaleRecord {
@@ -29,6 +29,7 @@ export interface RunStats {
   bribesPaid: number;
   collisions: number;
   damageTaken: number;
+  pedestriansHit: number;
 
   // Movement
   distanceMetres: number;
@@ -67,6 +68,7 @@ export interface RunStats {
     bribesPaid: number;
     collisions: number;
     damageTaken: number;
+    pedestriansHit: number;
   };
   movement: {
     distanceMetres: number;
@@ -100,6 +102,7 @@ export class StatsTracker {
   bribesPaid = 0;
   collisions = 0;
   damageTaken = 0;
+  pedestriansHit = 0;
 
   distanceMetres = 0;
   sprintSeconds = 0;
@@ -131,6 +134,7 @@ export class StatsTracker {
     this.bribesPaid = 0;
     this.collisions = 0;
     this.damageTaken = 0;
+    this.pedestriansHit = 0;
 
     this.distanceMetres = 0;
     this.sprintSeconds = 0;
@@ -192,6 +196,7 @@ export class StatsTracker {
       bribesPaid: this.bribesPaid,
       collisions: this.collisions,
       damageTaken: this.damageTaken,
+      pedestriansHit: this.pedestriansHit,
 
       distanceMetres: this.distanceMetres,
       sprintSeconds: this.sprintSeconds,
@@ -225,7 +230,8 @@ export class StatsTracker {
         timesCaught: this.timesCaught,
         bribesPaid: this.bribesPaid,
         collisions: this.collisions,
-        damageTaken: this.damageTaken
+        damageTaken: this.damageTaken,
+        pedestriansHit: this.pedestriansHit
       },
       movement: {
         distanceMetres: this.distanceMetres,

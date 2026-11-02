@@ -93,12 +93,21 @@ async function startServer() {
     });
   });
 
-  const vite = await createViteServer({
-    server: { middlewareMode: true, hmr: process.env.DISABLE_HMR !== 'true' }
-  });
-  app.use(vite.middlewares);
+  if (process.env.NODE_ENV !== 'production') {
+    const vite = await createViteServer({
+      server: { middlewareMode: true, hmr: process.env.DISABLE_HMR !== 'true' },
+      appType: 'spa',
+    });
+    app.use(vite.middlewares);
+  } else {
+    const distPath = path.join(__dirname, 'dist');
+    app.use(express.static(distPath));
+    app.get('*', (_req, res) => {
+      res.sendFile(path.join(distPath, 'index.html'));
+    });
+  }
 
-  const PORT = Number(process.env.PORT) || 3000;
+  const PORT = 3000;
   httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`Thela Dhaka server running on http://localhost:${PORT}`);
   });

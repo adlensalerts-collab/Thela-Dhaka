@@ -16,7 +16,9 @@ import {
   Zap,
   Sun,
   CloudRain,
-  CloudFog
+  CloudFog,
+  Heart,
+  Flame
 } from 'lucide-react';
 import { GameState } from '../game/simulation';
 import { GameSettingsData, formatCode } from '../game/keybindings';
@@ -134,6 +136,21 @@ export const GameHUD: React.FC<GameHUDProps> = ({
 
     cx.drawImage(bgCanvasRef.current, 0, 0);
 
+    // Hostile / injured pedestrian blips (orange-red dots)
+    if (isVendor && state.angryPeds && state.angryPeds.length > 0) {
+      for (const ap of state.angryPeds) {
+        const ax = clamp(toMap(ap.x), 5, size - 5);
+        const ay = clamp(toMap(ap.z), 5, size - 5);
+        cx.beginPath();
+        cx.arc(ax, ay, 3.2, 0, Math.PI * 2);
+        cx.fillStyle = '#f97316';
+        cx.fill();
+        cx.strokeStyle = '#7f1d1d';
+        cx.lineWidth = 1;
+        cx.stroke();
+      }
+    }
+
     // Police blip (vendor modes only): shown when alert or within 40 units of player
     if (isVendor) {
       const distToOfficer = Math.hypot(
@@ -180,7 +197,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
     cx.strokeStyle = '#c5a059';
     cx.lineWidth = 2;
     cx.strokeRect(1, 1, size - 2, size - 2);
-  }, [state.playerX, state.playerZ, state.heading, state.officerX, state.officerZ, state.alert, isVendor]);
+  }, [state.playerX, state.playerZ, state.heading, state.officerX, state.officerZ, state.alert, state.angryPeds, isVendor]);
 
   const stars = Math.min(5, Math.ceil(state.heat / 20));
 
@@ -193,6 +210,9 @@ export const GameHUD: React.FC<GameHUDProps> = ({
 
   const damage = state.damage || 0;
   const repairCost = state.repairCost || 0;
+  const health = Math.round(state.health ?? 100);
+  const rage = Math.round(state.rage ?? 0);
+  const angryPedCount = state.angryPedCount ?? 0;
   const stamina = Math.round(state.stamina ?? 100);
   const staminaLevel = state.staminaLevel ?? (isVendor ? 1 : 3);
   const staminaUpgradeCost = state.staminaUpgradeCost === undefined ? 150 : state.staminaUpgradeCost;
@@ -200,6 +220,17 @@ export const GameHUD: React.FC<GameHUDProps> = ({
   const showFps = state.showFps ?? loadDisplaySettings().showFps;
   const fps = state.fps ?? 60;
   const renderHeight = state.renderHeight ?? 1080;
+
+  // Health bar color
+  let healthBarColor = 'bg-emerald-500';
+  let healthTextColor = 'text-emerald-400';
+  if (health <= 30) {
+    healthBarColor = 'bg-rose-500 animate-pulse';
+    healthTextColor = 'text-rose-400 animate-pulse';
+  } else if (health <= 60) {
+    healthBarColor = 'bg-amber-500';
+    healthTextColor = 'text-amber-400';
+  }
 
   // Damage bar color (green < 40, amber < 75, red otherwise)
   let damageBarColor = 'bg-emerald-500';
@@ -269,6 +300,31 @@ export const GameHUD: React.FC<GameHUDProps> = ({
               {isVendor ? `${state.stock}/${state.cap}` : `${state.integrity}%`}
             </span>
           </div>
+
+          {isVendor && (
+            <>
+              <div className="h-8 w-px bg-teal-800/60" />
+
+              {/* Vendor Life / Health Bar */}
+              <div className="flex flex-col min-w-[100px]">
+                <div className="flex justify-between items-center text-[10px] uppercase tracking-wider mb-1 gap-1.5">
+                  <span className="text-gray-400 flex items-center gap-1">
+                    <Heart className="w-3 h-3 text-rose-400 fill-rose-400" />
+                    LIFE · জীবন
+                  </span>
+                  <span className={`font-mono font-bold ${healthTextColor}`}>
+                    {health}%
+                  </span>
+                </div>
+                <div className="w-full h-2 bg-gray-900/90 rounded-full overflow-hidden border border-teal-800/40">
+                  <div
+                    className={`h-full transition-all duration-200 rounded-full ${healthBarColor}`}
+                    style={{ width: `${Math.min(100, Math.max(0, health))}%` }}
+                  />
+                </div>
+              </div>
+            </>
+          )}
 
           <div className="h-8 w-px bg-teal-800/60" />
 
@@ -367,6 +423,25 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                     <span className="text-[10px] text-teal-300/90">{state.ambientZoneBn}</span>
                   )}
                 </div>
+              </div>
+            )}
+
+            {isVendor && (angryPedCount > 0 || rage > 0) && (
+              <div
+                className={`bg-black/60 backdrop-blur-md border rounded-2xl px-3.5 py-2 shadow-xl flex items-center gap-1.5 text-xs font-bold ${
+                  angryPedCount > 0
+                    ? 'border-rose-500/60 text-rose-400'
+                    : 'border-orange-500/40 text-orange-300'
+                }`}
+                title="Crowd Rage & Angry Pedestrians Chasing You"
+              >
+                <Flame className="w-4 h-4 fill-orange-500 text-orange-400" />
+                <span>জনরোষ: {rage}%</span>
+                {angryPedCount > 0 && (
+                  <span className="font-mono text-rose-300 ml-1">
+                    · {angryPedCount} Chasing
+                  </span>
+                )}
               </div>
             )}
 

@@ -37,6 +37,8 @@ export const StatsScreen: React.FC<StatsScreenProps> = ({
       ? "ঘুষের টাকা ছিল না · Couldn't pay the bribe"
       : result === 'destroyed'
       ? 'ঠেলা ভেঙে গেছে · Cart Destroyed'
+      : result === 'mob_beaten'
+      ? 'জনতার হাতে মার খেয়েছেন · Beaten by Angry Crowd'
       : result === 'victory'
       ? 'জয়! · Victory'
       : 'জেলে গেলেন · Jailed';
@@ -273,6 +275,12 @@ export const StatsScreen: React.FC<StatsScreenProps> = ({
               <span>দুর্ঘটনা · Collisions</span>
               <span className="font-mono text-gray-100">
                 {stats?.collisions ?? 0}
+              </span>
+            </div>
+            <div className="flex justify-between text-gray-300">
+              <span>পথচারীকে ধাক্কা · Pedestrians Hit</span>
+              <span className="font-mono text-orange-300">
+                {stats?.pedestriansHit ?? 0}
               </span>
             </div>
             <div className="flex justify-between text-gray-300">
