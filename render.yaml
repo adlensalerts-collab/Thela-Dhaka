@@ -1,0 +1,25 @@
+# Render Blueprint for Thela Dhaka multiplayer service (Sprint 7.7)
+# Docs: https://render.com/docs/blueprint-spec
+#
+# Notes:
+# - Rooms are stored in process memory (`rooms` Map in server.ts), so `numInstances` MUST stay `1`.
+#   Server restarts clear active rooms, and horizontal scaling (>1 instance) would require shared state (e.g. Redis adapter).
+# - `plan: starter` keeps the Node service always-on (Render's `free` tier spins down after ~15 minutes of inactivity).
+# - Builds the service's own frontend at base `/` (without GitHub Pages flags) and serves `dist/` + `/socket.io/`.
+
+services:
+  - type: web
+    name: thela-dhaka-multiplayer
+    runtime: node
+    plan: starter
+    numInstances: 1
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "22"
+      - key: ALLOWED_ORIGINS
+        value: https://adlensalerts-collab.github.io

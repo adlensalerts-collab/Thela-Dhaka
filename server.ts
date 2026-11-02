@@ -1,17 +1,118 @@
 import express from 'express';
-import { createServer } from 'http';
+import fs from 'fs';
+import { createServer, type IncomingMessage } from 'http';
 import { Server } from 'socket.io';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { createServer as createViteServer } from 'vite';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+const GITHUB_PAGES_ORIGIN = 'https://adlensalerts-collab.github.io';
+
+function normalizeOrigin(raw: string): string | null {
+  const trimmed = raw.trim().replace(/\/+$/, '');
+  if (!trimmed) return null;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return parsed.origin;
+    }
+  } catch {
+    // Ignore malformed origin strings
+  }
+  return null;
+}
+
+function buildAllowedOrigins(port: number, isProduction: boolean): Set<string> {
+  const allowed = new Set<string>([
+    GITHUB_PAGES_ORIGIN,
+    `http://localhost:${port}`,
+    `http://127.0.0.1:${port}`,
+  ]);
+
+  if (!isProduction) {
+    allowed.add('http://localhost:3000');
+    allowed.add('http://127.0.0.1:3000');
+    allowed.add('http://localhost:5173');
+    allowed.add('http://127.0.0.1:5173');
+  }
+
+  const rawSources = [
+    process.env.ALLOWED_ORIGINS,
+    process.env.PUBLIC_ORIGIN,
+    process.env.RENDER_EXTERNAL_URL,
+    process.env.APP_URL,
+  ];
+
+  for (const source of rawSources) {
+    if (!source) continue;
+    for (const part of source.split(',')) {
+      const normalized = normalizeOrigin(part);
+      if (normalized) {
+        allowed.add(normalized);
+      }
+    }
+  }
+
+  return allowed;
+}
+
+function isSameHostOrigin(normalizedOrigin: string, req?: IncomingMessage): boolean {
+  if (!req) return false;
+  const forwardedHost = req.headers['x-forwarded-host'];
+  const rawHost = Array.isArray(forwardedHost)
+    ? forwardedHost[0]
+    : forwardedHost || req.headers.host;
+  if (!rawHost) return false;
+  const host = rawHost.split(',')[0].trim();
+  if (!host) return false;
+  return normalizedOrigin === `https://${host}` || normalizedOrigin === `http://${host}`;
+}
+
 async function startServer() {
+  const isProduction =
+    process.env.NODE_ENV === 'production' ||
+    process.argv.includes('--production') ||
+    process.env.npm_lifecycle_event === 'start';
+  if (isProduction) {
+    process.env.NODE_ENV = 'production';
+  }
+
+  const parsedPort = Number.parseInt(process.env.PORT ?? '', 10);
+  const PORT = Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : 3000;
+  const allowedOrigins = buildAllowedOrigins(PORT, isProduction);
+
+  const isOriginAllowed = (origin: string | undefined, req?: IncomingMessage): boolean => {
+    if (!origin) return true;
+    const normalized = normalizeOrigin(origin);
+    if (!normalized) return false;
+    if (allowedOrigins.has(normalized)) return true;
+    if (isSameHostOrigin(normalized, req)) return true;
+    return false;
+  };
+
   const app = express();
   const httpServer = createServer(app);
   const io = new Server(httpServer, {
-    cors: { origin: '*' }
+    path: '/socket.io/',
+    transports: ['polling', 'websocket'],
+    cors: {
+      origin: (origin, callback) => {
+        if (isOriginAllowed(origin)) {
+          callback(null, true);
+        } else {
+          callback(null, false);
+        }
+      },
+      methods: ['GET', 'POST'],
+    },
+    allowRequest: (req, callback) => {
+      if (isOriginAllowed(req.headers.origin, req)) {
+        callback(null, true);
+      } else {
+        callback('Origin not allowed by CORS', false);
+      }
+    },
   });
 
   app.use(express.json());
@@ -378,7 +479,15 @@ async function startServer() {
     });
   });
 
-  if (process.env.NODE_ENV !== 'production') {
+  app.get('/healthz', (_req, res) => {
+    res.status(200).json({
+      status: 'ok',
+      mode: isProduction ? 'production' : 'development',
+    });
+  });
+
+  if (!isProduction) {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true, hmr: process.env.DISABLE_HMR !== 'true' },
       appType: 'spa',
@@ -386,15 +495,47 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(__dirname, 'dist');
+    const distIndexPath = path.join(distPath, 'index.html');
+    if (!fs.existsSync(distIndexPath)) {
+      console.error(
+        `[server] Production frontend build not found at ${distIndexPath}. Run "npm run build" before starting in production.`
+      );
+      process.exit(1);
+    }
     app.use(express.static(distPath));
     app.get('*', (_req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+      res.sendFile(distIndexPath);
     });
   }
 
-  const PORT = 3000;
+  let shuttingDown = false;
+  const shutdown = (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`[server] Received ${signal}, shutting down cleanly...`);
+    const forceTimer = setTimeout(() => {
+      process.exit(0);
+    }, 5000);
+    forceTimer.unref();
+
+    io.close(() => {
+      if (httpServer.listening) {
+        httpServer.close(() => {
+          process.exit(0);
+        });
+      } else {
+        process.exit(0);
+      }
+    });
+  };
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+
   httpServer.listen(PORT, '0.0.0.0', () => {
-    console.log(`Thela Dhaka server running on http://localhost:${PORT}`);
+    console.log(
+      `Thela Dhaka server (${isProduction ? 'production' : 'development'}) running on http://0.0.0.0:${PORT}`
+    );
   });
 }
 

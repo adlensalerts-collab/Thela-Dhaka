@@ -1,13 +1,26 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import {defineConfig} from 'vite';
+import {defineConfig, loadEnv} from 'vite';
 
 export default defineConfig(() => {
+  const isPages = process.env.GITHUB_PAGES === 'true';
+  const pagesEnv = isPages ? loadEnv('pages', __dirname, 'VITE_') : {};
+  const pagesServerUrl =
+    process.env.VITE_SERVER_URL !== undefined
+      ? process.env.VITE_SERVER_URL
+      : pagesEnv.VITE_SERVER_URL;
+
   return {
     // GitHub Pages serves the site from /Thela-Dhaka/; AI Studio and local dev use /.
-    base: process.env.GITHUB_PAGES === 'true' ? '/Thela-Dhaka/' : '/',
+    base: isPages ? '/Thela-Dhaka/' : '/',
     plugins: [react(), tailwindcss()],
+    define:
+      isPages && pagesServerUrl !== undefined
+        ? {
+            'import.meta.env.VITE_SERVER_URL': JSON.stringify(pagesServerUrl),
+          }
+        : undefined,
     build: {
       rolldownOptions: {
         input: {

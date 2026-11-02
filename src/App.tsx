@@ -14,8 +14,12 @@ import { loadDisplaySettings, DisplaySettings } from './game/render/display';
 import { RunStats } from './game/stats';
 import { io, Socket } from 'socket.io-client';
 
-const SERVER_URL = import.meta.env.VITE_SERVER_URL as string | undefined;
-const ONLINE_AVAILABLE = import.meta.env.VITE_STATIC_HOST !== 'true' || !!SERVER_URL;
+const RAW_SERVER_URL = import.meta.env.VITE_SERVER_URL as string | undefined;
+const SERVER_URL =
+  typeof RAW_SERVER_URL === 'string' && RAW_SERVER_URL.trim().length > 0
+    ? RAW_SERVER_URL.trim().replace(/\/+$/, '')
+    : undefined;
+const ONLINE_AVAILABLE = import.meta.env.VITE_STATIC_HOST !== 'true' || Boolean(SERVER_URL);
 const OFFLINE_MESSAGE =
   'Online multiplayer is not available on this host — please play Solo vs AI. · অনলাইন মাল্টিপ্লেয়ার এই সাইটে চালু নেই — সোলো খেলুন।';
 

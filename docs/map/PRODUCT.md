@@ -16,7 +16,7 @@ Which file owns which feature. Sizes as of Hotfix 8.1. Files over ~20 KB: read v
 | Weather | `src/game/world/weather.ts` | `WeatherSystem` |
 | Ambient city audio — **26 KB** | `src/game/audio/ambient.ts` | `SpatialSoundManager.setDistrict` |
 | Sale/repair/restock timer ring | `src/game/ui/saleIndicator.ts` | `SaleIndicator` |
-| Multiplayer server (rooms, relay) | `server.ts` | Socket.io events `create_room`, `join_room`, `player_update`, `player_action` |
+| Multiplayer server (rooms, relay, `/healthz`, origin allowlist, static `dist/` host) | `server.ts` (`render.yaml`, `.env.pages`) | Socket.io events `create_room`, `join_room`, `leave_room`, `request_rematch`, `player_update`, `player_action` |
 
 ## Real map (OpenStreetMap districts)
 | Area | File | Key exports |

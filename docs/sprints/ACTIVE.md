@@ -26,7 +26,7 @@ Order: **Fixes → Real map → Game loop → Graphics → Sound → Features.**
 | # | Sprint | Status | Deliverable |
 |---|---|---|---|
 | 7.6 | Multiplayer A: shared world + sync | 🔄 (engine integration landed in `6faa95c`; room lifecycle and two-tab verification remain) | Seeded world (both players see the same city); send/receive position ~12×/s with smooth interpolation; remote opponent replaces the AI in online modes; joiner gets the opposite role; server-checked arrests; disconnect + rematch |
-| 7.7 | Multiplayer B: hosting | ⏳ | `server.ts` production mode (serves the built game, no Vite); deploy as an always-on web service; GitHub Pages connects via `VITE_SERVER_URL`; online buttons re-enabled on the live site |
+| 7.7 | Multiplayer B: hosting | 🔄 (production `server.ts`, `/healthz`, Socket.io CORS allowlist, `render.yaml`, and `.env.pages` wired and verified locally; live Render deployment, setting `VITE_SERVER_URL` in `.env.pages`, and live two-tab gameplay verification remain) | `server.ts` production mode (serves the built game, no Vite); deploy as an always-on web service; GitHub Pages connects via `VITE_SERVER_URL`; online buttons re-enabled on the live site |
 
 **Real map (OpenStreetMap: New Market + Gulistan)**
 

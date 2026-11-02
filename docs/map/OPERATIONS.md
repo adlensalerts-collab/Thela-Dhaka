@@ -5,22 +5,39 @@ Names only — never copy values from `.env*` files or tokens into docs or promp
 ## Commands
 | Task | Command | Notes |
 |---|---|---|
-| Dev server (game + multiplayer) | `npm run dev` | `tsx server.ts`: Express + Vite middleware + Socket.io on port 3000 |
+| Dev server (game + multiplayer) | `npm run dev` | `tsx server.ts`: Express + Vite middleware + Socket.io on `PORT` (default `3000`) |
 | Type check ("lint") | `npm run lint` | `tsc --noEmit`. **The only real error check** — `vite build` does not type-check |
-| Production build | `npm run build` | `vite build` → `dist/` |
-| Production server | `NODE_ENV=production tsx server.ts` | Serves `dist/` + Socket.io (for Sprint 7.7 hosting) |
+| Production build (full service, base `/`) | `npm run build` | `vite build` → `dist/` (`index.html` + `character-preview.html`) |
+| Production build (GitHub Pages, base `/Thela-Dhaka/`) | `GITHUB_PAGES=true VITE_STATIC_HOST=true npm run build` | Loads `.env.pages` for `VITE_SERVER_URL` unless overridden in shell env |
+| Production server | `npm start` | `tsx server.ts --production`: serves `dist/`, `GET /healthz`, and `/socket.io/` without loading Vite/HMR; exits non-zero if `dist/index.html` is missing |
 
 ## Environment variables (names only)
 | Name | Where | Effect |
 |---|---|---|
-| `GITHUB_PAGES` | build (`vite.config.ts`) | `'true'` → base path `/Thela-Dhaka/` |
-| `VITE_STATIC_HOST` | build (`src/App.tsx`) | `'true'` → no game server: online buttons show the "play Solo" message |
-| `VITE_SERVER_URL` | build (`src/App.tsx`) | Address of a hosted multiplayer server; enables online play on static hosting |
-| `NODE_ENV` | `server.ts` | `production` → serve `dist/` instead of Vite middleware |
-| `DISABLE_HMR` | `vite.config.ts` | AI Studio dev-server setting |
+| `PORT` | runtime (`server.ts`) | HTTP + Socket.io listen port (binds `0.0.0.0`, falls back to `3000` locally) |
+| `NODE_ENV` | runtime (`server.ts`) | `production` (also set by `npm start` / `--production`) → serve `dist/` instead of Vite middleware |
+| `ALLOWED_ORIGINS` | runtime (`server.ts`) | Comma-separated list of allowed browser `Origin` values for Socket.io CORS (`https://adlensalerts-collab.github.io` is always allowed) |
+| `PUBLIC_ORIGIN` | runtime (`server.ts`) | Optional canonical origin of the hosted Node service itself (supplementing `RENDER_EXTERNAL_URL` / `APP_URL` and same-host checks) |
+| `GITHUB_PAGES` | build (`vite.config.ts`) | `'true'` → base path `/Thela-Dhaka/` and loads `.env.pages` |
+| `VITE_STATIC_HOST` | build (`src/App.tsx`) | `'true'` → static host mode; online play disabled unless `VITE_SERVER_URL` is non-empty |
+| `VITE_SERVER_URL` | build (`src/App.tsx`, `.env.pages`) | Trimmed build-time URL of the hosted multiplayer backend; enables online play on GitHub Pages |
+| `DISABLE_HMR` | dev (`vite.config.ts`, `server.ts`) | AI Studio dev-server setting |
 
-## Deploy (GitHub Pages)
-- Workflow: `.github/workflows/deploy-pages.yml` (never edited by AI Studio). Every push to `main` builds with `GITHUB_PAGES=true` + `VITE_STATIC_HOST=true` and deploys `dist/`.
+## Production multiplayer hosting (Render — Sprint 7.7)
+- **Provider & Blueprint:** `render.yaml` defines a single Render Node Web Service (`thela-dhaka-multiplayer`).
+- **Node version & commands:** Node `>=20.0.0` (`NODE_VERSION=22` in `render.yaml`), install + build command `npm ci && npm run build` (base `/`, no GitHub Pages flags), start command `npm start` (`tsx server.ts --production`; `tsx` is in `dependencies`).
+- **Health check & lifecycle:** `GET /healthz` returns HTTP 200 JSON (`{ "status": "ok", "mode": "production" }`) before the SPA fallback. `server.ts` handles `SIGTERM` and `SIGINT` to close Socket.io and the HTTP server cleanly.
+- **Single-instance & always-on constraint:** Rooms are stored in process memory (`rooms` Map in `server.ts`). Keep `numInstances: 1` — server restarts clear active rooms, and running multiple replicas would require shared-state infrastructure (such as a Redis adapter). Render's `starter` plan is required for true always-on hosting because the `free` plan sleeps after ~15 minutes of inactivity and drops in-memory rooms.
+- **Socket.io CORS allowlist:** `server.ts` validates browser `Origin` headers during Socket.io polling and WebSocket handshakes. It always allows `https://adlensalerts-collab.github.io`, same-host requests, loopback `http://localhost:<PORT>`, and any comma-separated origins in `ALLOWED_ORIGINS` (plus `PUBLIC_ORIGIN`, `RENDER_EXTERNAL_URL`, and `APP_URL`). Disallowed browser `Origin` headers receive HTTP 403. To allow an additional preview origin (such as an AI Studio preview URL), append it to `ALLOWED_ORIGINS`.
+
+## Deploy (GitHub Pages) & connecting to the backend
+- Workflow: `.github/workflows/deploy-pages.yml` (never edited by AI Studio). Every push to `main` runs `GITHUB_PAGES=true VITE_STATIC_HOST=true npm run build` and deploys `dist/`.
+- Because `deploy-pages.yml` does not pass `VITE_SERVER_URL` from GitHub Actions variables, `vite.config.ts` loads `.env.pages` whenever `GITHUB_PAGES === 'true'` (while still letting an explicit shell `VITE_SERVER_URL` override it). Normal `npm run dev` and `npm run build` ignore `.env.pages`.
+- **Connecting GitHub Pages after deploying the Node service:**
+  1. Deploy the Node service using `render.yaml` (or the Render dashboard with the settings above) and verify `https://<your-service>.onrender.com/healthz` returns HTTP 200.
+  2. Set `VITE_SERVER_URL=https://<your-service>.onrender.com` in `.env.pages` (no trailing slash) and push to `main`.
+  3. Wait for `.github/workflows/deploy-pages.yml` to finish, then hard-refresh https://adlensalerts-collab.github.io/Thela-Dhaka/ and test Create Room / Join Room across two browser tabs.
+  4. Until `.env.pages` has a non-empty `VITE_SERVER_URL`, GitHub Pages builds keep Solo playable and show the bilingual offline notice in Online mode.
 - Settings → Pages → Source must be **GitHub Actions**.
 - Live: https://adlensalerts-collab.github.io/Thela-Dhaka/ (hard refresh after a deploy).
 - The deploy job still has a one-off "Cancel stuck Pages deployment" step (from the 2026-11-01 stuck deployment). Harmless; safe to delete.
