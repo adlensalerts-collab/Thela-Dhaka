@@ -4,16 +4,18 @@
 # Notes:
 # - Rooms are stored in process memory (`rooms` Map in server.ts), so `numInstances` MUST stay `1`.
 #   Server restarts clear active rooms, and horizontal scaling (>1 instance) would require shared state (e.g. Redis adapter).
-# - `plan: starter` keeps the Node service always-on (Render's `free` tier spins down after ~15 minutes of inactivity).
+# - `plan: free` is used for free multiplayer testing: the service sleeps after ~15 minutes of inactivity, has cold-start wake latency,
+#   and clears in-memory rooms whenever the server sleeps or restarts. Upgrading to a paid plan (`starter`) remains a later option for always-on hosting.
+# - The repository has no `package-lock.json`, so `buildCommand` uses `npm install --include=dev && npm run build`.
 # - Builds the service's own frontend at base `/` (without GitHub Pages flags) and serves `dist/` + `/socket.io/`.
 
 services:
   - type: web
     name: thela-dhaka-multiplayer
     runtime: node
-    plan: starter
+    plan: free
     numInstances: 1
-    buildCommand: npm ci && npm run build
+    buildCommand: npm install --include=dev && npm run build
     startCommand: npm start
     healthCheckPath: /healthz
     envVars:
