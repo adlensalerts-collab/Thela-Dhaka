@@ -31,7 +31,7 @@ import { SpatialSoundManager } from './audio/ambient';
 import { GARAGE_SITES, buildGarage, entranceForSite, nearestGarage } from './world/garages';
 import { AAROT_SITES, buildAarot, entranceForAarot, nearestAarot } from './world/aarots';
 import { nearJunction, auditObstacles } from './world/layout';
-import { buildDistrictWorld, nearestService, type DistrictWorld } from './map/districtWorld';
+import { buildDistrictWorld, nearestService, setServiceMode, type DistrictWorld } from './map/districtWorld';
 import { GraphTraffic } from './map/graphTraffic';
 import { getDistrict } from './map/districtData';
 import { VIEW_DISTANCE } from './map/chunks';
@@ -41,6 +41,14 @@ import type { DistrictId } from './map/district';
 /** M-W — play on the real OpenStreetMap district (false = old grid city, kept as a fallback). */
 export const USE_REAL_MAP = true;
 export const REAL_MAP_ID: DistrictId = 'newmarket';
+
+/** Pedestrians per quality preset (crowd NPCs use the compact ~6-draw-call model). */
+const PEDESTRIANS_BY_QUALITY = { low: 20, medium: 30, high: 40, ultra: 50 } as const;
+/** Hotspot crowd: stand still this long inside a hotspot and customers walk over. */
+const HOTSPOT_RADIUS = 30;
+const HOTSPOT_DWELL_SECONDS = 4;
+const HOTSPOT_COOLDOWN_SECONDS = 18;
+const PEDESTRIAN_VIEW_DISTANCE = 90;
 import { StaminaSystem } from './stamina';
 import { WeatherSystem, type WeatherType } from './world/weather';
 import { StatsTracker, type RunStats } from './stats';
@@ -97,6 +105,10 @@ export interface GameState {
   playerX: number;
   /** Angry pedestrians shown on the minimap (filled by the public-rage system, Sprint 15). */
   angryPeds?: Array<{ x: number; z: number }>;
+  /** Hotspot the vendor is standing in (null when none). */
+  hotspotName?: string | null;
+  /** 0..1 progress toward drawing customers in a hotspot. */
+  hotspotDwell?: number;
   /** Vendor health, crowd rage and angry-crowd size (public-rage system, Sprint 15). */
   health?: number;
   rage?: number;
@@ -143,6 +155,9 @@ export class GameEngine {
   traffic: TrafficItem[] = [];
   world: DistrictWorld | null = null;
   graphTraffic: GraphTraffic | null = null;
+  hotspotDwell = 0;
+  hotspotCooldown = 0;
+  summonPoint: { x: number; z: number } | null = null;
   damage = new DamageSystem();
   stamina = new StaminaSystem();
   stats = new StatsTracker();
@@ -780,11 +795,55 @@ export class GameEngine {
 
     // Initialize Dhaka sidewalk waypoint network and pool of 14 A* pedestrian NPCs
     this.sidewalkGraph = this.world ? this.world.footpaths : new SidewalkGraph();
-    this.pedestrianManager = new PedestrianManager(this.scene, this.sidewalkGraph, 14);
+    this.pedestrianManager = new PedestrianManager(
+      this.scene,
+      this.sidewalkGraph,
+      this.world ? PEDESTRIANS_BY_QUALITY[this.qualityLevel] ?? 30 : 14
+    );
+    if (this.world) this.pedestrianManager.bounds = { ...this.world.bounds };
+    if (this.world) this.pedestrianManager.setHotspots(this.world.district.sites.hotspots);
 
     if ((import.meta as any).env?.DEV) {
       if (this.world) auditDistrict(this.world);
       else auditObstacles(this.obstacles);
+    }
+  }
+
+  /**
+   * Hotspot crowd: a vendor who stands still inside a hotspot (market, busy junction…) for a few
+   * seconds draws nearby pedestrians, who walk over and wait to buy. Moving away sends them back.
+   */
+  updateHotspotCrowd(dt: number, p: THREE.Object3D) {
+    const isVendor = this.state.mode === 'vendor' || this.state.mode === 'online_vendor';
+    if (!this.world || !isVendor || !this.pedestrianManager) { this.state.hotspotName = null; this.state.hotspotDwell = 0; return; }
+    this.hotspotCooldown = Math.max(0, this.hotspotCooldown - dt);
+    let spot: { name: string } | null = null;
+    for (const h of this.world.district.sites.hotspots) {
+      if (Math.hypot(h.x - p.position.x, h.z - p.position.z) <= HOTSPOT_RADIUS) { spot = h; break; }
+    }
+    this.state.hotspotName = spot ? (spot.name === 'Junction' ? 'ব্যস্ত মোড় · Busy junction' : spot.name) : null;
+    const still = Math.abs(this.currentSpeed) < 0.4;
+    const busy = !!(this.state.sale || this.state.repairing || this.state.restocking || this.state.alert);
+    if (spot && still && !busy && this.state.stock > 0 && this.hotspotCooldown <= 0) {
+      this.hotspotDwell += dt;
+      if (this.hotspotDwell >= HOTSPOT_DWELL_SECONDS) {
+        const n = this.pedestrianManager.summonCustomers(p.position.x, p.position.z, 3, 55);
+        if (n > 0) {
+          this.summonPoint = { x: p.position.x, z: p.position.z };
+          this.onEvent('notify', `ভিড় জমছে! ${n} জন ক্রেতা আসছে · Customers coming`);
+          this.playBeep(660, 0.12);
+        }
+        this.hotspotDwell = 0;
+        this.hotspotCooldown = HOTSPOT_COOLDOWN_SECONDS;
+      }
+    } else if (!still) {
+      this.hotspotDwell = 0;
+    }
+    this.state.hotspotDwell = Math.min(1, this.hotspotDwell / HOTSPOT_DWELL_SECONDS);
+    // Vendor walked off: waiting customers lose interest
+    if (this.summonPoint && Math.hypot(p.position.x - this.summonPoint.x, p.position.z - this.summonPoint.z) > 12) {
+      this.pedestrianManager.releaseSummoned();
+      this.summonPoint = null;
     }
   }
 
@@ -1038,6 +1097,11 @@ export class GameEngine {
     this.human.visible = isVendor;
     this.officer.visible = true;
     this.npcVendor.visible = mode === 'police' || mode === 'online_police';
+    this.hotspotDwell = 0;
+    this.hotspotCooldown = 0;
+    this.summonPoint = null;
+    this.pedestrianManager?.releaseSummoned();
+    if (this.world) setServiceMode(this.world, isVendor ? 'vendor' : 'police');
     if (this.world) {
       const sp = this.world.spawn;
       this.human.position.set(sp.x, 0, sp.z);
@@ -1139,6 +1203,7 @@ export class GameEngine {
     if (!s) return;
     if (s.customer) {
       s.customer.isEngagedInSale = false;
+      s.customer.summonUntil = 0;
     }
     this.state.cash += s.price;
     this.state.total += s.price;
@@ -1152,9 +1217,17 @@ export class GameEngine {
     this.publishState(true);
   }
 
+  /** Upgrades are done by the mechanic: only inside a garage's ring. */
+  private atGarageForUpgrade(): boolean {
+    if (this.state.nearGarage) return true;
+    this.onEvent('notify', `আপগ্রেড শুধু গ্যারেজে — ${Math.round(this.state.garageDistance ?? 0)}m দূরে`);
+    return false;
+  }
+
   upgradeCart() {
     const isVendor = this.state.mode === 'vendor' || this.state.mode === 'online_vendor';
     if (!isVendor) return;
+    if (!this.atGarageForUpgrade()) return;
     if (this.state.level >= 12) {
       this.onEvent('notify', 'Maximum cart level reached.');
       return;
@@ -1178,6 +1251,7 @@ export class GameEngine {
   upgradeStamina() {
     const isVendor = this.state.mode === 'vendor' || this.state.mode === 'online_vendor';
     if (!isVendor) return;
+    if (!this.atGarageForUpgrade()) return;
     if (this.stamina.level >= 5) {
       this.onEvent('notify', 'স্ট্যামিনা সর্বোচ্চ লেভেলে');
       return;
@@ -1297,6 +1371,7 @@ export class GameEngine {
     if (this.state.sale) {
       if (this.state.sale.customer) {
         this.state.sale.customer.isEngagedInSale = false;
+        this.state.sale.customer.summonUntil = 0;
       }
       this.state.sale = null;
     }
@@ -1331,6 +1406,7 @@ export class GameEngine {
     if (this.state.sale) {
       if (this.state.sale.customer) {
         this.state.sale.customer.isEngagedInSale = false;
+        this.state.sale.customer.summonUntil = 0;
       }
       this.state.sale = null;
     }
@@ -1415,17 +1491,17 @@ export class GameEngine {
       const p = isVendor ? this.human : this.officer;
       const { entrance, distance } = this.nearestGarageInfo(p.position.x, p.position.z);
       if (distance > 4.5) {
-        this.onEvent('notify', `গ্যারেজে যান — ${Math.round(distance)}m দূরে`);
+        this.onEvent('notify', isVendor ? `গ্যারেজে যান — ${Math.round(distance)}m দূরে` : `হাসপাতালে যান — ${Math.round(distance)}m দূরে`);
         return;
       }
       if (this.damage.damage <= 0) {
-        this.onEvent('notify', 'No damage — vehicle in good shape');
+        this.onEvent('notify', isVendor ? 'No damage — vehicle in good shape' : 'সুস্থ আছেন — চিকিৎসার দরকার নেই');
         return;
       }
       const cost = this.damage.repairCost(this.state.level);
       const currentCash = isVendor ? this.state.cash : this.state.policeCash;
       if (currentCash < cost) {
-        this.onEvent('notify', `টাকা কম — মেরামতে ৳${cost} লাগবে`);
+        this.onEvent('notify', isVendor ? `টাকা কম — মেরামতে ৳${cost} লাগবে` : `টাকা কম — চিকিৎসায় ৳${cost} লাগবে`);
         return;
       }
       this.state.repairing = {
@@ -1624,6 +1700,7 @@ export class GameEngine {
       if (this.state.sale) {
         if (this.state.sale.customer) {
           this.state.sale.customer.isEngagedInSale = false;
+          this.state.sale.customer.summonUntil = 0;
         }
         this.state.sale = null;
       }
@@ -1826,6 +1903,12 @@ export class GameEngine {
     // Update A* Sidewalk Pedestrian crowd
     if (this.pedestrianManager) {
       this.pedestrianManager.update(dt);
+      this.updateHotspotCrowd(dt, p);
+      // Hide pedestrians far from the camera (they keep walking; they just aren't drawn)
+      const cam = this.camera.position;
+      for (const ped of this.pedestrianManager.pedestrians) {
+        ped.mesh.visible = Math.hypot(ped.mesh.position.x - cam.x, ped.mesh.position.z - cam.z) < PEDESTRIAN_VIEW_DISTANCE;
+      }
 
       for (const ped of this.pedestrianManager.pedestrians) {
         const distToPlayer = this.vector2(p.position, ped.mesh.position);
@@ -1849,6 +1932,7 @@ export class GameEngine {
       if (this.vector2(this.human.position, s.customer.mesh.position) > 6 || this.state.alert) {
         if (s.customer) {
           s.customer.isEngagedInSale = false;
+          s.customer.summonUntil = 0;
         }
         this.state.sale = null;
         this.stats.salesInterrupted++;
@@ -1934,7 +2018,7 @@ export class GameEngine {
           this.state.damage = 0;
           this.state.repairCost = 0;
           this.playBeep(480, 0.2);
-          this.onEvent('notify', `মেরামত সম্পন্ন · ৳${costPaid}`);
+          this.onEvent('notify', (this.state.mode === 'vendor' || this.state.mode === 'online_vendor') ? `মেরামত সম্পন্ন · ৳${costPaid}` : `চিকিৎসা সম্পন্ন · ৳${costPaid}`);
         }
         this.state.repairing = null;
         this.publishState(true);
@@ -2139,7 +2223,7 @@ export class GameEngine {
         ? {
             progress: (this.state.time - r.start) / r.seconds,
             secondsLeft: r.seconds - (this.state.time - r.start),
-            label: 'মেরামত',
+            label: (this.state.mode === 'vendor' || this.state.mode === 'online_vendor') ? 'মেরামত' : 'চিকিৎসা',
             price: r.cost
           }
         : rs && this.state

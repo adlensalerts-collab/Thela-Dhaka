@@ -18,7 +18,7 @@ import type { SidewalkGraph } from '../pathfinding';
  * instanced details), trees, poles, stalls, garages and aarots facing their road, and all collision.
  * Replaces the old grid world (initWorld's street/building/tree/pole/stall code).
  */
-export interface ServicePoint { site: ServiceSite; entrance: { x: number; z: number } }
+export interface ServicePoint { site: ServiceSite; entrance: { x: number; z: number }; holder?: THREE.Group }
 export interface DistrictWorld {
   district: District;
   roads: RoadGraph;
@@ -335,7 +335,7 @@ export function buildDistrictWorld(scene: THREE.Scene, d: District): DistrictWor
       addObs({ type: 'poly', x: (Math.min(...xs) + Math.max(...xs)) / 2, z: (Math.min(...zs) + Math.max(...zs)) / 2,
         hw: (Math.max(...xs) - Math.min(...xs)) / 2, hd: (Math.max(...zs) - Math.min(...zs)) / 2, points: corners, tag: o.tag ?? 'wall' });
     }
-    return { site, entrance: { x: site.entrance[0], z: site.entrance[1] } };
+    return { site, entrance: { x: site.entrance[0], z: site.entrance[1] }, holder };
   };
   const garages = d.sites.garages.map((site) => place(buildGarage(new THREE.Scene(), { x: 0, z: 0 }), site));
   const aarots = d.sites.aarots.map((site) => place(buildAarot(new THREE.Scene(), { x: 0, z: 0 }), site));
@@ -375,4 +375,52 @@ export function nearestService(list: ServicePoint[], x: number, z: number) {
   let best = list[0], bd = Infinity;
   for (const s of list) { const dd = Math.hypot(s.entrance.x - x, s.entrance.z - z); if (dd < bd) { bd = dd; best = s; } }
   return { entrance: best?.entrance ?? { x: 0, z: 0 }, distance: bd };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Police mode: garages become hospitals (police are treated there); aarots are not used.
+
+let hospitalSignMat: THREE.MeshBasicMaterial | null = null;
+function hospitalSign() {
+  if (hospitalSignMat) return hospitalSignMat;
+  const c = document.createElement('canvas'); c.width = 1024; c.height = 220;
+  const g = c.getContext('2d')!;
+  g.fillStyle = '#f8fafc'; g.fillRect(0, 0, 1024, 220);
+  g.strokeStyle = '#b91c1c'; g.lineWidth = 12; g.strokeRect(8, 8, 1008, 204);
+  g.fillStyle = '#dc2626'; g.fillRect(70, 60, 100, 100); g.fillStyle = '#f8fafc';
+  g.fillRect(105, 72, 30, 76); g.fillRect(82, 95, 76, 30);                      // red cross
+  g.fillStyle = '#b91c1c'; g.font = 'bold 96px "Hind Siliguri", "Noto Sans Bengali", sans-serif';
+  g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('হাসপাতাল · চিকিৎসা', 590, 118, 780);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  hospitalSignMat = new THREE.MeshBasicMaterial({ map: t, side: THREE.DoubleSide });
+  return hospitalSignMat;
+}
+
+/** Switch service lots between vendor mode (garages + aarots) and police mode (hospitals, no aarots). */
+export function setServiceMode(w: DistrictWorld, mode: 'vendor' | 'police') {
+  const police = mode === 'police';
+  for (const g of w.garages) {
+    g.holder?.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh) return;
+      const mat = m.material as THREE.MeshBasicMaterial;
+      if (mat?.isMeshBasicMaterial && mat.map && m.geometry.type === 'PlaneGeometry') {     // signboard faces
+        if (!m.userData.garageMat) m.userData.garageMat = mat;
+        m.material = police ? hospitalSign() : m.userData.garageMat;
+      } else if (mat?.isMeshBasicMaterial && (m.geometry.type === 'RingGeometry' || m.geometry.type === 'CircleGeometry')) {
+        if (!m.userData.garageColor) { m.material = mat.clone(); m.userData.garageColor = mat.color.clone(); }
+        (m.material as THREE.MeshBasicMaterial).color.copy(police ? new THREE.Color('#ef4444') : m.userData.garageColor);
+      }
+    });
+  }
+  for (const a of w.aarots) {
+    a.holder?.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh) return;
+      const mat = m.material as THREE.MeshBasicMaterial;
+      const isRing = m.geometry.type === 'RingGeometry' || m.geometry.type === 'CircleGeometry';
+      const isSign = !!(mat?.isMeshBasicMaterial && mat.map && m.geometry.type === 'PlaneGeometry');
+      if (isRing || isSign) m.visible = !police;      // the market shed stays; the aarot is closed to police
+    });
+  }
 }

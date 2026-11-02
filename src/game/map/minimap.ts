@@ -5,7 +5,7 @@ import type { DistrictWorld } from './districtWorld';
  * M4 — minimap background for a real district (whole district, north up), plus the world → map
  * transform. Sprint 12 replaces this with the rotating GTA-style radar.
  */
-export function createDistrictMinimap(d: District, sizePx = 160) {
+export function createDistrictMinimap(d: District, sizePx = 160, mode: 'vendor' | 'police' = 'vendor') {
   const c = document.createElement('canvas');
   c.width = c.height = sizePx;
   const g = c.getContext('2d')!;
@@ -25,8 +25,12 @@ export function createDistrictMinimap(d: District, sizePx = 160) {
     g.strokeStyle = '#111'; g.lineWidth = 1; g.strokeRect(mx - 5, my - 5, 10, 10);
     g.fillStyle = '#111'; g.font = 'bold 8px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(letter, mx, my + 0.5);
   };
-  for (const s of d.sites.garages) marker(s.x, s.z, '#f59e0b', 'G');
-  for (const s of d.sites.aarots) marker(s.x, s.z, '#22c55e', 'A');
+  if (mode === 'police') {
+    for (const s of d.sites.garages) marker(s.x, s.z, '#ef4444', 'H');        // hospitals; no aarots for police
+  } else {
+    for (const s of d.sites.garages) marker(s.x, s.z, '#f59e0b', 'G');
+    for (const s of d.sites.aarots) marker(s.x, s.z, '#22c55e', 'A');
+  }
   return { canvas: c, toMap, metresPerPixel: 1 / scale };
 }
 

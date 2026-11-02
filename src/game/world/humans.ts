@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 /**
  * Sprint 4 — realistic human figure, shared by the player vendor, police and pedestrians.
@@ -25,6 +26,8 @@ export interface HumanOptions {
   bag?: boolean;
   gamchha?: boolean;  // checked towel over the shoulder
   beard?: boolean;
+  /** Crowd mode: merge each body part into one vertex-coloured mesh (~6 draw calls instead of ~35). */
+  compact?: boolean;
   scale?: number;     // world scale; 1.18 ≈ 2 m figure, in proportion to the 3.2 m building floors and the thela
   seed?: number;
 }
@@ -237,8 +240,61 @@ export function createHumanRig(opts: HumanOptions = {}): HumanRig {
   body.userData.baseY = HIP_Y;
 
   group.scale.setScalar(opts.scale ?? 1.18);
-  return { group, body, head, leftArm: L.shoulder, rightArm: R.shoulder, leftForearm: L.elbow, rightForearm: R.elbow, leftLeg, rightLeg };
+  const rig: HumanRig = { group, body, head, leftArm: L.shoulder, rightArm: R.shoulder, leftForearm: L.elbow, rightForearm: R.elbow, leftLeg, rightLeg };
+  if (opts.compact) compactRig(rig);
+  return rig;
 }
+
+/**
+ * Merge every mesh under each animated pivot into ONE mesh (vertex colours carry the material
+ * colours). Pivots kept: body (incl. head), each arm (incl. forearm/hand), each leg.
+ * Textured parts (checked lungi/gamchha) keep one extra textured mesh per pivot.
+ */
+const crowdMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8 });
+function compactRig(rig: HumanRig) {
+  const pivots: THREE.Object3D[] = [rig.body, rig.leftArm, rig.rightArm, rig.leftLeg, rig.rightLeg];
+  rig.group.updateMatrixWorld(true);
+  for (const pivot of pivots) {
+    const inv = new THREE.Matrix4().copy(pivot.matrixWorld).invert();
+    const plain: THREE.BufferGeometry[] = [];
+    const textured = new Map<THREE.Material, THREE.BufferGeometry[]>();
+    const victims: THREE.Mesh[] = [];
+    pivot.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh) return;
+      // skip meshes that belong to a deeper animated pivot (arms/legs are not inside body)
+      let p: THREE.Object3D | null = m.parent;
+      while (p && p !== pivot) { if (pivots.includes(p)) return; p = p.parent; }
+      const g = (m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone());
+      g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, m.matrixWorld));
+      for (const k of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(k)) g.deleteAttribute(k);
+      if (!g.attributes.uv) g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2));
+      const mat = m.material as THREE.MeshStandardMaterial;
+      if (mat.map) {
+        if (!textured.has(mat)) textured.set(mat, []);
+        textured.get(mat)!.push(g);
+      } else {
+        const c = mat.color ?? new THREE.Color('#888');
+        const cols = new Float32Array(g.attributes.position.count * 3);
+        for (let i = 0; i < cols.length; i += 3) { cols[i] = c.r; cols[i + 1] = c.g; cols[i + 2] = c.b; }
+        g.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+        plain.push(g);
+      }
+      victims.push(m);
+    });
+    for (const m of victims) m.removeFromParent();
+    if (plain.length) {
+      const merged = mergeGeometries(plain, false);
+      if (merged) { const mesh = new THREE.Mesh(merged, crowdMat); mesh.castShadow = true; pivot.add(mesh); }
+    }
+    for (const [mat, list] of textured) {
+      const merged = mergeGeometries(list, false);
+      if (merged) { const mesh = new THREE.Mesh(merged, mat); mesh.castShadow = true; pivot.add(mesh); }
+    }
+  }
+  // empty helper groups (head, elbows) stay so code that references them keeps working
+}
+
 
 /** Forward lean from the hips (radians). NOTE: in three.js a NEGATIVE x-rotation tips the torso forward (-Z). */
 export const PUSH_LEAN = 0.37; // ~21°, solved numerically so hands land on the handles (±5 cm)
@@ -293,6 +349,7 @@ export function outfitForArchetype(a: {
     bottom: a.pantsColor,
     cap: a.hasCap, bag: a.hasBag, gamchha: a.hasGamchha,
     beard: /uncle|senior/i.test(a.name),
+    compact: true,
     scale: 1.08 + Math.random() * 0.16
   };
 }

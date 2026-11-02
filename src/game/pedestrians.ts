@@ -38,6 +38,10 @@ export interface PedestrianNPC {
   hitCooldown: number;
   attackCooldown: number;
   knockbackVx: number;
+  /** Hotspot customer: walking to / waiting at the vendor until this game time (0 = not summoned). */
+  summonUntil?: number;
+  summonX?: number;
+  summonZ?: number;
   knockbackVz: number;
   rage: number;
   damageTaken: number;
@@ -65,11 +69,33 @@ export class PedestrianManager {
   graph: SidewalkGraph;
   pedestrians: PedestrianNPC[] = [];
   poolSize: number;
+  /** Map half-extents (real districts are larger than the old ±108 grid). */
+  bounds = { x: 108, z: 108 };
+  private clock = 0;
+  /** Graph nodes near hotspots: half of all trips head to one, so markets and busy junctions are crowded. */
+  private hotspotNodes: number[] = [];
+
+  setHotspots(points: Array<{ x: number; z: number }>) {
+    const nodes = this.graph.nodes;
+    const set = new Set<number>();
+    for (const h of points) {
+      for (const n of nodes) if (Math.hypot(n.x - h.x, n.z - h.z) < 35) set.add(n.id);
+      set.add(this.graph.findNearestNode(h.x, h.z));
+    }
+    this.hotspotNodes = [...set];
+  }
+
+  private pickDestination(fromId: number): number {
+    if (this.hotspotNodes.length && Math.random() < 0.5) {
+      return this.hotspotNodes[Math.floor(Math.random() * this.hotspotNodes.length)];
+    }
+    return this.graph.getRandomDestination(fromId, 35);
+  }
 
   constructor(scene: THREE.Scene, graph: SidewalkGraph, count = 14) {
     this.scene = scene;
     this.graph = graph;
-    this.poolSize = Math.max(10, Math.min(15, count));
+    this.poolSize = Math.max(6, Math.min(60, count));
     this.initPool();
   }
 
@@ -343,6 +369,7 @@ export class PedestrianManager {
     vendorPos?: { x: number; z: number },
     stepHostileFn?: (mesh: THREE.Group, dirX: number, dirZ: number, speed: number) => number
   ) {
+    this.clock += dt;
     for (let i = 0; i < this.pedestrians.length; i++) {
       const p = this.pedestrians[i];
 
@@ -351,8 +378,8 @@ export class PedestrianManager {
 
       // Apply physical knockback velocity if recently struck by the vendor's vehicle
       if (Math.abs(p.knockbackVx) > 0.02 || Math.abs(p.knockbackVz) > 0.02) {
-        p.mesh.position.x = THREE.MathUtils.clamp(p.mesh.position.x + p.knockbackVx * dt, -108, 108);
-        p.mesh.position.z = THREE.MathUtils.clamp(p.mesh.position.z + p.knockbackVz * dt, -108, 108);
+        p.mesh.position.x = THREE.MathUtils.clamp(p.mesh.position.x + p.knockbackVx * dt, -this.bounds.x, this.bounds.x);
+        p.mesh.position.z = THREE.MathUtils.clamp(p.mesh.position.z + p.knockbackVz * dt, -this.bounds.z, this.bounds.z);
         p.knockbackVx = THREE.MathUtils.damp(p.knockbackVx, 0, 7, dt);
         p.knockbackVz = THREE.MathUtils.damp(p.knockbackVz, 0, 7, dt);
       }
@@ -490,6 +517,24 @@ export class PedestrianManager {
         continue;
       }
 
+      // Hotspot customer waiting at the thela: face it, idle, give up when the time runs out.
+      if (p.state === 'browsing') {
+        if (!p.summonUntil || this.clock > p.summonUntil) {
+          p.summonUntil = 0;
+          p.state = 'idle';
+          p.idleTimer = 0.5 + Math.random();
+          continue;
+        }
+        const fx = (p.summonX ?? p.mesh.position.x) - p.mesh.position.x;
+        const fz = (p.summonZ ?? p.mesh.position.z) - p.mesh.position.z;
+        if (Math.hypot(fx, fz) > 0.01) { p.heading = Math.atan2(fx, -fz); p.mesh.rotation.y = -p.heading; }
+        p.walkCycle += dt * 1.5;
+        p.body.position.y = p.body.userData.baseY + Math.sin(p.walkCycle) * 0.015;
+        p.leftLeg.rotation.x = 0; p.rightLeg.rotation.x = 0;
+        p.leftArm.rotation.x = 0; p.rightArm.rotation.x = 0;
+        continue;
+      }
+
       if (p.state === 'idle') {
         p.idleTimer -= dt;
         // Subtle breathing animation during idle
@@ -502,7 +547,7 @@ export class PedestrianManager {
 
         if (p.idleTimer <= 0) {
           // Select new distant destination node and run A* search
-          const newTargetId = this.graph.getRandomDestination(p.currentNodeId, 35);
+          const newTargetId = this.pickDestination(p.currentNodeId);
           p.targetNodeId = newTargetId;
           const fullPath = this.graph.findAStarPath(p.currentNodeId, newTargetId);
           p.path = fullPath.length > 1 ? fullPath.slice(1) : fullPath;
@@ -529,6 +574,10 @@ export class PedestrianManager {
         p.pathIndex++;
         if (p.pathIndex >= p.path.length) {
           p.currentNodeId = p.targetNodeId;
+          if (p.summonUntil && this.clock < p.summonUntil) {
+            p.state = 'browsing';            // arrived at the thela: wait to be served
+            continue;
+          }
           p.state = 'idle';
           p.idleTimer = 1.8 + Math.random() * 3.5;
           continue;
@@ -551,7 +600,8 @@ export class PedestrianManager {
 
         // Scale forward step by alignment so NPCs pivot before walking after a 180° turn
         const alignment = Math.max(0, Math.cos(angleDiff));
-        const walkSpeed = p.isInjured ? p.speed * 0.8 : p.speed;
+        const hurrying = !!p.summonUntil && this.clock < p.summonUntil;     // customer heading to the thela
+        const walkSpeed = p.isInjured ? p.speed * 0.8 : hurrying ? Math.max(2.6, p.speed * 1.9) : p.speed;
         const moveDist = Math.min(dist, walkSpeed * alignment * dt);
 
         p.mesh.position.x += dirX * moveDist;
@@ -568,6 +618,63 @@ export class PedestrianManager {
       }
     }
   }
+
+  /**
+   * Hotspot crowd: send up to `max` nearby, free pedestrians (within `radius` m) to stand around the
+   * vendor at (x, z) and wait up to `waitSeconds` to buy. Returns how many are coming.
+   */
+  summonCustomers(x: number, z: number, max: number, radius: number, waitSeconds = 25): number {
+    const free = this.pedestrians
+      .filter((p) => !p.isEngagedInSale && !p.summonUntil && (p.state === 'walking' || p.state === 'idle'))
+      .map((p) => ({ p, d: Math.hypot(p.mesh.position.x - x, p.mesh.position.z - z) }))
+      .filter((e) => e.d <= radius && e.d > 1.5)
+      .sort((a, b) => a.d - b.d)
+      .slice(0, max);
+    // Not enough people nearby: bring in pedestrians who are out of view (> 90 m), placing them on
+    // a footpath 45-70 m away so they visibly walk in (never seen teleporting).
+    if (free.length < max) {
+      const far = this.pedestrians
+        .filter((p) => !p.isEngagedInSale && !p.summonUntil && p.state !== 'hostile' && p.state !== 'injured'
+          && Math.hypot(p.mesh.position.x - x, p.mesh.position.z - z) > 90);
+      const ring = this.graph.nodes.filter((n) => { const d = Math.hypot(n.x - x, n.z - z); return d >= 45 && d <= 60; });
+      for (const p of far) {
+        if (free.length >= max || !ring.length) break;
+        const n = ring[Math.floor(Math.random() * ring.length)];
+        p.mesh.position.set(n.x, p.mesh.position.y, n.z);
+        p.currentNodeId = n.id;
+        free.push({ p, d: Math.hypot(n.x - x, n.z - z) });
+      }
+    }
+    const goal = this.graph.findNearestNode(x, z);
+    free.forEach(({ p }, idx) => {
+      const ang = (idx / Math.max(1, free.length)) * Math.PI * 1.4 - Math.PI * 0.7 + Math.PI;   // fan out around the cart
+      const tx = x + Math.sin(ang) * 2.4, tz = z + Math.cos(ang) * 2.4;
+      const start = this.graph.findNearestNode(p.mesh.position.x, p.mesh.position.z);
+      const route = this.graph.findAStarPath(start, goal);
+      p.path = [...route, { x: tx, z: tz }];
+      p.pathIndex = 0;
+      p.targetNodeId = goal;
+      p.state = 'walking';
+      // waiting time starts on arrival: allow for the walk (they hurry, ~2.6 m/s)
+      let walk = 0;
+      for (let k = 1; k < p.path.length; k++) walk += Math.hypot(p.path[k].x - p.path[k - 1].x, p.path[k].z - p.path[k - 1].z);
+      walk += Math.hypot(p.path[0].x - p.mesh.position.x, p.path[0].z - p.mesh.position.z);
+      p.summonUntil = this.clock + walk / 2.6 + waitSeconds;
+      p.summonX = x; p.summonZ = z;
+    });
+    return free.length;
+  }
+
+  /** Vendor left the spot: waiting customers go back to wandering. */
+  releaseSummoned() {
+    for (const p of this.pedestrians) {
+      if (!p.summonUntil || p.isEngagedInSale) continue;
+      p.summonUntil = 0;
+      if (p.state === 'browsing') { p.state = 'idle'; p.idleTimer = 0.5 + Math.random(); }
+    }
+  }
+
+  get summonedCount() { return this.pedestrians.filter((p) => p.summonUntil && p.summonUntil > this.clock).length; }
 
   getNearestPedestrian(x: number, z: number): { pedestrian: PedestrianNPC | null; distance: number } {
     let nearest: PedestrianNPC | null = null;

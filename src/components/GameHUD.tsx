@@ -62,7 +62,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
   useEffect(() => {
     const size = 160;
     if (USE_REAL_MAP) {
-      const mm = createDistrictMinimap(getDistrict(REAL_MAP_ID), size);
+      const mm = createDistrictMinimap(getDistrict(REAL_MAP_ID), size, isVendor ? 'vendor' : 'police');
       bgCanvasRef.current = mm.canvas;
       mapXZRef.current = mm.toMap;
       return;
@@ -122,7 +122,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
       }
     }
     bgCanvasRef.current = bg;
-  }, []);
+  }, [isVendor]);
 
   // Update blips on minimap efficiently
   useEffect(() => {
@@ -517,8 +517,19 @@ export const GameHUD: React.FC<GameHUDProps> = ({
         </div>
       )}
 
+      {/* Hotspot indicator: stand still to draw customers */}
+      {isVendor && state.hotspotName && (
+        <div className="absolute bottom-[92px] right-4 pointer-events-none bg-black/60 backdrop-blur-md border border-orange-500/50 rounded-xl px-3 py-1.5 text-[11px] text-orange-200 font-semibold whitespace-nowrap">
+          <div>🔥 হট স্পট · {state.hotspotName}</div>
+          <div className="text-[10px] text-orange-300/80">দাঁড়িয়ে থাকুন — ক্রেতা আসবে · Stand still to draw customers</div>
+          <div className="mt-1 h-1 w-full bg-gray-800 rounded-full overflow-hidden">
+            <div className="h-full bg-orange-400 transition-all" style={{ width: `${Math.round((state.hotspotDwell ?? 0) * 100)}%` }} />
+          </div>
+        </div>
+      )}
+
       {/* Bottom HUD Bar & Controls */}
-      <div className="w-full flex items-end justify-between gap-4">
+      <div className="absolute bottom-4 left-4 right-4 flex items-end justify-between gap-4">
         {/* Minimap */}
         <div className="bg-black/60 backdrop-blur-md border border-teal-600/40 rounded-2xl p-2 shadow-xl pointer-events-auto overflow-hidden">
           <canvas ref={minimapRef} width={160} height={160} className="rounded-xl w-32 h-32 md:w-36 md:h-36" />
@@ -527,19 +538,20 @@ export const GameHUD: React.FC<GameHUDProps> = ({
         </div>
 
         {/* Action Buttons with active binding labels */}
-        <div className="flex items-center gap-2 pointer-events-auto">
+        <div className="flex flex-nowrap items-center gap-2 pointer-events-auto">
           {isVendor ? (
             <>
               <button
                 onClick={() => onAction('sell')}
-                className="px-4 py-3 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-gray-950 font-bold text-xs shadow-lg flex items-center gap-2 transition active:scale-95"
+                className="whitespace-nowrap shrink-0 px-4 py-3 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-gray-950 font-bold text-xs shadow-lg flex items-center gap-2 transition active:scale-95"
               >
                 <Package className="w-4 h-4" />
                 <span>Sell [{sellKey}]</span>
               </button>
               <button
                 onClick={() => onAction('upgrade')}
-                className="px-4 py-3 rounded-2xl bg-teal-800/80 hover:bg-teal-700 border border-teal-600/60 text-amber-300 font-bold text-xs shadow-lg flex items-center gap-2 transition active:scale-95"
+                title={state.nearGarage ? 'Upgrade your cart' : 'Upgrades are done at a garage'}
+                className={`whitespace-nowrap shrink-0 px-4 py-3 rounded-2xl border font-bold text-xs shadow-lg flex items-center gap-2 transition active:scale-95 ${state.nearGarage ? 'bg-teal-800/80 hover:bg-teal-700 border-teal-600/60 text-amber-300' : 'bg-teal-950/60 border-teal-800/40 text-gray-400'}`}
               >
                 <ArrowUp className="w-4 h-4" />
                 <span>Upgrade (৳{130 + state.level * 85}) [{upgradeKey}]</span>
@@ -548,7 +560,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                 <button
                   onClick={() => onAction('upgradeStamina')}
                   disabled
-                  className="px-4 py-3 rounded-2xl bg-teal-950/50 border border-teal-800/30 text-gray-500 font-bold text-xs shadow-lg flex items-center gap-2 cursor-not-allowed opacity-60"
+                  className="whitespace-nowrap shrink-0 px-4 py-3 rounded-2xl bg-teal-950/50 border border-teal-800/30 text-gray-500 font-bold text-xs shadow-lg flex items-center gap-2 cursor-not-allowed opacity-60"
                 >
                   <Zap className="w-4 h-4" />
                   <span>Stamina MAX</span>
@@ -556,16 +568,17 @@ export const GameHUD: React.FC<GameHUDProps> = ({
               ) : (
                 <button
                   onClick={() => onAction('upgradeStamina')}
-                  className="px-4 py-3 rounded-2xl bg-sky-900/80 hover:bg-sky-800 border border-sky-500/60 text-sky-200 font-bold text-xs shadow-lg flex items-center gap-2 transition active:scale-95"
+                  title={state.nearGarage ? 'Upgrade stamina' : 'Upgrades are done at a garage'}
+                  className={`whitespace-nowrap shrink-0 px-4 py-3 rounded-2xl border font-bold text-xs shadow-lg flex items-center gap-2 transition active:scale-95 ${state.nearGarage ? 'bg-sky-900/80 hover:bg-sky-800 border-sky-500/60 text-sky-200' : 'bg-teal-950/60 border-teal-800/40 text-gray-400'}`}
                 >
                   <Zap className="w-4 h-4 text-sky-400" />
-                  <span>Stamina ৳{staminaUpgradeCost} [{staminaKey}]</span>
+                  <span>Stamina ৳<span className="tabular-nums">{staminaUpgradeCost}</span> [{staminaKey}]</span>
                 </button>
               )}
               {state.nearAarot ? (
                 <button
                   onClick={() => onAction('restock')}
-                  className="px-4 py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-500 border border-emerald-400 text-gray-950 font-bold text-xs shadow-lg shadow-emerald-500/20 flex items-center gap-2 transition active:scale-95 animate-pulse cursor-pointer"
+                  className="whitespace-nowrap shrink-0 px-4 py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-500 border border-emerald-400 text-gray-950 font-bold text-xs shadow-lg shadow-emerald-500/20 flex items-center gap-2 transition active:scale-95 animate-pulse cursor-pointer"
                   title="Restock inventory at wholesale aarot"
                 >
                   <RefreshCw className="w-4 h-4" />
@@ -574,17 +587,17 @@ export const GameHUD: React.FC<GameHUDProps> = ({
               ) : (
                 <button
                   onClick={() => onAction('restock')}
-                  className="px-4 py-3 rounded-2xl bg-teal-950/70 hover:bg-teal-900/80 border border-teal-700/50 text-gray-300 font-bold text-xs shadow-lg flex items-center gap-2 transition active:scale-95 cursor-pointer"
+                  className="whitespace-nowrap shrink-0 px-4 py-3 rounded-2xl bg-teal-950/70 hover:bg-teal-900/80 border border-teal-700/50 text-gray-300 font-bold text-xs shadow-lg flex items-center gap-2 transition active:scale-95 cursor-pointer"
                   title="Drive to nearest wholesale aarot to restock"
                 >
                   <RefreshCw className="w-4 h-4 text-emerald-400/80" />
-                  <span>আড়ত {state.aarotDistance ?? 0}m [{restockKey}]</span>
+                  <span>আড়ত <span className="tabular-nums inline-block min-w-[3ch] text-right">{state.aarotDistance ?? 0}</span>m [{restockKey}]</span>
                 </button>
               )}
               {state.level >= 10 && (
                 <button
                   onClick={() => onAction('placeStall')}
-                  className="px-4 py-3 rounded-2xl bg-red-800/80 hover:bg-red-700 border border-red-600/60 text-white font-bold text-xs shadow-lg flex items-center gap-2 transition active:scale-95"
+                  className="whitespace-nowrap shrink-0 px-4 py-3 rounded-2xl bg-red-800/80 hover:bg-red-700 border border-red-600/60 text-white font-bold text-xs shadow-lg flex items-center gap-2 transition active:scale-95"
                 >
                   <Store className="w-4 h-4" />
                   <span>Big Stall [{stallKey}]</span>
@@ -594,7 +607,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                 <button
                   onClick={() => onAction('repair')}
                   disabled={damage <= 0}
-                  className={`px-4 py-3 rounded-2xl font-bold text-xs shadow-lg flex items-center gap-2 transition active:scale-95 ${
+                  className={`whitespace-nowrap shrink-0 px-4 py-3 rounded-2xl font-bold text-xs shadow-lg flex items-center gap-2 transition active:scale-95 ${
                     damage > 0
                       ? 'bg-amber-600 hover:bg-amber-500 text-gray-950 border border-amber-400 shadow-amber-500/20 animate-pulse cursor-pointer'
                       : 'bg-teal-950/50 border border-teal-800/30 text-gray-500 cursor-not-allowed opacity-50'
@@ -607,11 +620,11 @@ export const GameHUD: React.FC<GameHUDProps> = ({
               ) : (
                 <button
                   onClick={() => onAction('repair')}
-                  className="px-4 py-3 rounded-2xl font-bold text-xs shadow-lg flex items-center gap-2 transition active:scale-95 bg-teal-950/70 hover:bg-teal-900/80 border border-teal-700/50 text-gray-300 cursor-pointer"
+                  className="whitespace-nowrap shrink-0 px-4 py-3 rounded-2xl font-bold text-xs shadow-lg flex items-center gap-2 transition active:scale-95 bg-teal-950/70 hover:bg-teal-900/80 border border-teal-700/50 text-gray-300 cursor-pointer"
                   title="Drive to nearest garage to repair"
                 >
                   <Wrench className="w-4 h-4 text-amber-400/80" />
-                  <span>গ্যারেজ {state.garageDistance ?? 0}m [{repairKey}]</span>
+                  <span>গ্যারেজ <span className="tabular-nums inline-block min-w-[3ch] text-right">{state.garageDistance ?? 0}</span>m [{repairKey}]</span>
                 </button>
               )}
             </>
@@ -619,7 +632,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
             <>
               <button
                 onClick={() => onAction('arrest')}
-                className="px-5 py-3 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-lg flex items-center gap-2 transition active:scale-95"
+                className="whitespace-nowrap shrink-0 px-5 py-3 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-lg flex items-center gap-2 transition active:scale-95"
               >
                 <Shield className="w-4 h-4" />
                 <span>Attempt Arrest [{sellKey}]</span>
@@ -628,7 +641,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                 <button
                   onClick={() => onAction('repair')}
                   disabled={damage <= 0}
-                  className={`px-4 py-3 rounded-2xl font-bold text-xs shadow-lg flex items-center gap-2 transition active:scale-95 ${
+                  className={`whitespace-nowrap shrink-0 px-4 py-3 rounded-2xl font-bold text-xs shadow-lg flex items-center gap-2 transition active:scale-95 ${
                     damage > 0
                       ? 'bg-amber-600 hover:bg-amber-500 text-gray-950 border border-amber-400 shadow-amber-500/20 animate-pulse cursor-pointer'
                       : 'bg-teal-950/50 border border-teal-800/30 text-gray-500 cursor-not-allowed opacity-50'
@@ -636,16 +649,16 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                   title={damage > 0 ? `Repair damage for ৳${repairCost}` : 'No repair needed'}
                 >
                   <Wrench className="w-4 h-4" />
-                  <span>Repair ৳{repairCost} [{repairKey}]</span>
+                  <span>Treatment / চিকিৎসা ৳{repairCost} [{repairKey}]</span>
                 </button>
               ) : (
                 <button
                   onClick={() => onAction('repair')}
-                  className="px-4 py-3 rounded-2xl font-bold text-xs shadow-lg flex items-center gap-2 transition active:scale-95 bg-teal-950/70 hover:bg-teal-900/80 border border-teal-700/50 text-gray-300 cursor-pointer"
-                  title="Drive to nearest garage to repair"
+                  className="whitespace-nowrap shrink-0 px-4 py-3 rounded-2xl font-bold text-xs shadow-lg flex items-center gap-2 transition active:scale-95 bg-teal-950/70 hover:bg-teal-900/80 border border-teal-700/50 text-gray-300 cursor-pointer"
+                  title="Go to the nearest hospital for treatment"
                 >
                   <Wrench className="w-4 h-4 text-amber-400/80" />
-                  <span>গ্যারেজ {state.garageDistance ?? 0}m [{repairKey}]</span>
+                  <span>হাসপাতাল <span className="tabular-nums inline-block min-w-[3ch] text-right">{state.garageDistance ?? 0}</span>m [{repairKey}]</span>
                 </button>
               )}
             </>

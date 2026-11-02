@@ -286,8 +286,9 @@ def main(path, did, name, crop=None):
     all_sites = []
     inner_box = sbox(-half_w + 40, -half_h + 40, half_w - 40, half_h - 40)   # keep lots away from the map edge
     major = ('trunk', 'primary', 'secondary', 'tertiary', 'residential', 'unclassified')
-    garages = find_sites(2, 14, 11, 220, major, 'garage'); all_sites += garages
-    aarots = find_sites(3, 14, 11, 160, major, 'aarot'); all_sites += aarots
+    # 5 garages (hospitals in police mode) and 6 aarots per district, spread out
+    garages = find_sites(5, 14, 11, 150, major, 'garage'); all_sites += garages
+    aarots = find_sites(6, 14, 11, 120, major, 'aarot'); all_sites += aarots
     stall_sites = find_sites(10, 3.9, 1.8, 45, major, 'stall'); all_sites += stall_sites
     for site in all_sites:      # clear props from service-ring entrances
         e = Point(*site['entrance'])
@@ -313,7 +314,7 @@ def main(path, did, name, crop=None):
         spawn = [round(sp.x, 2), round(sp.y, 2)]
     sites = {'trees': trees, 'poles': poles, 'stalls': stall_sites, 'garages': garages, 'aarots': aarots,
              'hotspots': hot, 'spawn': spawn}
-    fixes['missingSites'] = [k for k, n in (('garages', 2), ('aarots', 3)) if len(sites[k]) < n]
+    fixes['missingSites'] = [k for k, n in (('garages', 5), ('aarots', 6)) if len(sites[k]) < n]
 
     # Junctions: OSM nodes shared by 2+ road ways, or used twice by one way (loops).
     junctions = {}
