@@ -140,7 +140,7 @@ export default function App() {
     );
 
     engineRef.current = engine;
-    (window as any).__thelaEngine = engine;
+    if (import.meta.env.DEV) (window as any).__thelaEngine = engine;
     engine.start();
     engine.publishState(true);
 
