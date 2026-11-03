@@ -29,6 +29,7 @@ import {
   AdaptiveResolution
 } from './render/quality';
 import { SpatialSoundManager } from './audio/ambient';
+import { StreetSounds, type StreetSound } from './audio/streetSounds';
 import { GARAGE_SITES, buildGarage, entranceForSite, nearestGarage } from './world/garages';
 import { AAROT_SITES, buildAarot, entranceForAarot, nearestAarot } from './world/aarots';
 import { nearJunction, auditObstacles } from './world/layout';
@@ -192,6 +193,11 @@ export class GameEngine {
   onEvent: (type: string, data?: any) => void;
   audioCtx: AudioContext | null = null;
   ambientAudio: SpatialSoundManager = new SpatialSoundManager();
+  streetSounds: StreetSounds | null = null;
+  private hornTimers = new WeakMap<
+    TrafficItem,
+    { timer: number; cooldown: number; prevX: number; prevZ: number; prevSpeed: number; fwdX: number; fwdZ: number }
+  >();
   muted: boolean = false;
   human!: THREE.Group;
   officer!: THREE.Group;
@@ -391,6 +397,11 @@ export class GameEngine {
       if (AudioCtx) {
         this.audioCtx = new AudioCtx();
         this.ambientAudio.attachContext(this.audioCtx);
+        const out = this.ambientAudio.getMasterGain();
+        if (!this.streetSounds && out) {
+          this.streetSounds = new StreetSounds(this.audioCtx, out);
+          this.streetSounds.setMasterVolume(this.muted || this.ambientAudio.getVolume() <= 0.001 ? 0 : 1);
+        }
       }
     } catch (e) {
       console.warn('AudioContext not started', e);
@@ -405,16 +416,23 @@ export class GameEngine {
       this.audioCtx.resume().catch(() => {});
     }
     this.ambientAudio.attachContext(this.audioCtx);
+    const out = this.ambientAudio.getMasterGain();
+    if (!this.streetSounds && this.audioCtx && out) {
+      this.streetSounds = new StreetSounds(this.audioCtx, out);
+      this.streetSounds.setMasterVolume(this.muted || this.ambientAudio.getVolume() <= 0.001 ? 0 : 1);
+    }
   }
 
   setMuted(muted: boolean) {
     this.muted = muted;
     this.ambientAudio.setMuted(muted);
+    this.streetSounds?.setMasterVolume(muted || this.ambientAudio.getVolume() <= 0.001 ? 0 : 1);
   }
 
   setAmbientVolume(v: number) {
     this.resumeAudio();
     this.ambientAudio.setVolume(v);
+    this.streetSounds?.setMasterVolume(this.muted || v <= 0.001 ? 0 : 1);
   }
 
   playBeep(freq = 440, duration = 0.1, type: OscillatorType = 'sine') {
@@ -980,6 +998,7 @@ export class GameEngine {
           this.summonPoint = { x: p.position.x, z: p.position.z };
           this.onEvent('notify', `ভিড় জমছে! ${n} জন ক্রেতা আসছে · Customers coming`);
           this.playBeep(660, 0.12);
+          this.streetSounds?.play('vendor_bell', p.position.x, p.position.z);
         }
         this.hotspotDwell = 0;
         this.hotspotCooldown = HOTSPOT_COOLDOWN_SECONDS;
@@ -1565,6 +1584,7 @@ export class GameEngine {
     const price = Math.max(20, Math.round((23 + seconds * 9 + (Math.random() * 31 - 14)) * (1 + (this.state.level - 1) * 0.28)));
     this.state.sale = { seconds, start: this.state.time, price, product, customer: nearest };
     this.playBeep(600, 0.15);
+    this.streetSounds?.play('vendor_bell', this.human.position.x, this.human.position.z);
     this.onEvent('notify', `${nearest.archetype.bnName} কিনছেন · ${product} · ৳${price}`);
     this.publishState(true);
   }
@@ -2140,12 +2160,15 @@ export class GameEngine {
   private updateChaseAlert(dist: number, policeSightRange: number) {
     if (
       !this.state.alert &&
-      this.state.heat > 27 &&
+      this.state.heat >= 18 &&
       this.state.cooldown === 0 &&
       dist < policeSightRange
     ) {
       this.state.alert = true;
       this.stats.chasesStarted++;
+      this.playBeep(740, 0.18, 'sawtooth');
+      this.onEvent('notify', 'পুলিশ তাড়া করছে! · Police spotted you — run!');
+      this.publishState(true);
     }
   }
 
@@ -2437,8 +2460,17 @@ export class GameEngine {
       const distBefore = this.campaignPolice?.nearestDistance(this.human.position.x, this.human.position.z)
         ?? this.vector2(this.human.position, this.officer.position);
       this.updateChaseAlert(distBefore, policeSightRange);
-      this.campaignPolice?.update(dt, this.human.position, this.state.alert, weatherSpeedMult, this.camera.position);
+      this.campaignPolice?.update(
+        dt,
+        this.human.position,
+        this.state.alert,
+        weatherSpeedMult,
+        this.camera.position,
+        this.state.heat,
+        this.state.cooldown
+      );
       const dist = this.campaignPolice?.nearestDistance(this.human.position.x, this.human.position.z) ?? distBefore;
+      this.updateChaseAlert(dist, policeSightRange);
       if (this.state.alert) {
         if (dist < 2.1) {
           if (!this.isMenuOrModalOpen) {
@@ -2592,8 +2624,8 @@ export class GameEngine {
     }
 
     if (this.state.mode === 'vendor' || this.state.mode === 'online_vendor') {
-      if (!this.state.alert && this.state.heat > 0) {
-        this.state.heat = Math.max(0, this.state.heat - dt * 0.9);
+      if (!this.state.alert && !this.state.sale && this.state.heat > 0) {
+        this.state.heat = Math.max(0, this.state.heat - dt * 0.4);
       }
       if (this.state.stall && Math.random() < dt * 0.08) {
         this.state.cash += 45;
@@ -2607,6 +2639,7 @@ export class GameEngine {
     // Traffic motion
     if (this.graphTraffic) this.graphTraffic.update(dt, p.position.x, p.position.z);
     else updateTraffic(this.traffic, dt, p.position.x, p.position.z);
+    this.updateTrafficHorns(dt, p.position.x, p.position.z);
 
     // Particle updates
     for (let i = this.particles.length - 1; i >= 0; i--) {
@@ -2921,8 +2954,83 @@ export class GameEngine {
       });
     }
 
+    if (this.streetSounds) {
+      this.streetSounds.setListener(this.camera.position.x, this.camera.position.z, this.cameraYaw);
+      const cs = this.pedestrianManager?.crowdStats;
+      const murmur =
+        cs && this.state?.stage === 'playing' && !this.isMenuOrModalOpen
+          ? Math.min(1, (cs.near + cs.far) / 40)
+          : 0;
+      this.streetSounds.setMurmur(murmur);
+    }
+
     this.world?.chunks.update(this.camera.position);
     this.renderer.render(this.scene, this.camera);
+  }
+
+  private updateTrafficHorns(dt: number, playerX: number, playerZ: number) {
+    if (!this.streetSounds || dt <= 0) return;
+    for (let i = 0; i < this.traffic.length; i++) {
+      const v = this.traffic[i];
+      const vx = v.mesh.position.x;
+      const vz = v.mesh.position.z;
+      let st = this.hornTimers.get(v);
+      if (!st) {
+        st = {
+          timer: 12 + Math.random() * 18,
+          cooldown: 0,
+          prevX: vx,
+          prevZ: vz,
+          prevSpeed: 0,
+          fwdX: Math.sin(v.mesh.rotation.y),
+          fwdZ: Math.cos(v.mesh.rotation.y)
+        };
+        this.hornTimers.set(v, st);
+      }
+      const moveDx = vx - st.prevX;
+      const moveDz = vz - st.prevZ;
+      const moveDist = Math.hypot(moveDx, moveDz);
+      const speed = moveDist / dt;
+      if (moveDist > 0.001) {
+        st.fwdX = moveDx / moveDist;
+        st.fwdZ = moveDz / moveDist;
+      }
+      st.cooldown = Math.max(0, st.cooldown - dt);
+
+      const dist = Math.hypot(vx - playerX, vz - playerZ);
+      if (dist <= 45) {
+        st.timer -= dt;
+        if (dist <= 8) {
+          const toPx = playerX - vx;
+          const toPz = playerZ - vz;
+          const ahead = toPx * st.fwdX + toPz * st.fwdZ;
+          const lateral = Math.abs(-toPx * st.fwdZ + toPz * st.fwdX);
+          const slowing = speed < st.prevSpeed - 0.05 || (st.prevSpeed > 0.5 && speed < 1.2);
+          if (ahead > 0 && ahead <= 8 && lateral < 3.0 && slowing) {
+            st.timer = Math.min(st.timer, Math.random());
+          }
+        }
+        if (st.timer <= 0 && st.cooldown <= 0) {
+          const vKind = v.kind as string;
+          const kind: StreetSound =
+            vKind === 'rickshaw'
+              ? 'rickshaw_bell'
+              : vKind === 'cng'
+              ? 'cng_horn'
+              : vKind === 'bus' || vKind === 'truck'
+              ? 'bus_horn'
+              : 'car_horn';
+          if (this.streetSounds.play(kind, vx, vz)) {
+            this.pedestrianManager?.notifyEvent('horn', vx, vz);
+          }
+          st.cooldown = 4;
+          st.timer = 12 + Math.random() * 18;
+        }
+      }
+      st.prevX = vx;
+      st.prevZ = vz;
+      st.prevSpeed = speed;
+    }
   }
 
   start() {
@@ -2939,6 +3047,7 @@ export class GameEngine {
     this.crowdCharacters.dispose();
     for (const actor of [this.human, this.officer, this.npcVendor]) actor?.userData.rig?.visual?.dispose();
     cancelAnimationFrame(this.animId);
+    this.streetSounds?.dispose();
     this.ambientAudio?.dispose();
     this.saleIndicator?.dispose();
     this.weather?.dispose();

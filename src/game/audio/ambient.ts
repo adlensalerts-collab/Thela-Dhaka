@@ -355,7 +355,20 @@ export class SpatialSoundManager {
     if (this.ctx !== ctx) {
       this.ctx = ctx;
       this.initialized = false;
+      this.masterGain = null;
     }
+    if (!this.masterGain) {
+      this.masterGain = ctx.createGain();
+      this.masterGain.gain.setValueAtTime(
+        this.muted || this.userVolume <= 0.001 ? 0.0001 : Math.max(0.0001, this.userVolume),
+        ctx.currentTime
+      );
+      this.masterGain.connect(ctx.destination);
+    }
+  }
+
+  public getMasterGain(): GainNode | null {
+    return this.masterGain;
   }
 
   public setVolume(v: number): void {
@@ -415,12 +428,14 @@ export class SpatialSoundManager {
       const ctx = this.ctx;
       const now = ctx.currentTime;
 
-      this.masterGain = ctx.createGain();
+      if (!this.masterGain) {
+        this.masterGain = ctx.createGain();
+        this.masterGain.connect(ctx.destination);
+      }
       this.masterGain.gain.setValueAtTime(
         this.muted ? 0.0001 : Math.max(0.0001, this.userVolume),
         now
       );
-      this.masterGain.connect(ctx.destination);
 
       // Synthesize rich 6-second seamless looping buffers for each of the 3 ambient tracks
       const trafficBuffer = this.buildTrafficTrackBuffer(ctx, 6.0);
