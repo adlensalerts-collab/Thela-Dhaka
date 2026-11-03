@@ -549,6 +549,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
           {state.hotspotEvent && (
             <div className="text-[10px] font-semibold text-amber-300 truncate">
               {state.hotspotEvent.labelBn} · {state.hotspotEvent.labelEn}
+              {state.hotspotSchedule?.endsAt && ` · ${state.hotspotSchedule.endsAt} পর্যন্ত`}
             </div>
           )}
           <div className="text-[10px] text-orange-300/80 truncate">দাঁড়িয়ে থাকুন — ক্রেতা আসবে · Stand still to draw customers</div>

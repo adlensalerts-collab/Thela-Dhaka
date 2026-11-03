@@ -16,6 +16,7 @@ Find the region with `grep -n "<anchor>" <file>`, then read a slice (`sed -n 'ST
 | Mode start + spawn positions + police service mode | `  syncDayAccountingState()` · `  restartDay()` · `  setMode(mode` |
 | Campaign continuation, staged district swap and retired-resource cleanup | `  continueCampaign(` · `  private ensureDistrict(` · `  private releaseDistrictObjects(` |
 | Daily difficulty, traffic resizing and patrol population | `  private applyCampaignDifficulty()` · `// AI Police pursuit & navigation` |
+| Solo police sight checks, arrest contact and escape timer (online retains its existing rules) | `  private updateChaseAlert(` · `  private updateChaseEscape(` · `// AI Police pursuit & navigation` |
 | Selling | `  beginSale() {` · `  completeSale() {` |
 | Upgrades (garage-only) | `atGarageForUpgrade(` · `  upgradeCart() {` · `  upgradeStamina() {` |
 | Restock / stall | `  restockCart() {` · `  placeStall() {` |

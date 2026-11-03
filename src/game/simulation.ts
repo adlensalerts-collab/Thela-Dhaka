@@ -44,6 +44,7 @@ import { difficultyForDay, type DifficultyProfile } from './difficulty';
 import { CampaignPolice } from './campaignPolice';
 import { nearbyRadarPoints, type RadarSnapshot } from './ui/radar';
 import { hotspotPeriod, scheduleHotspots, nearbyHotspot, type HotspotSchedule } from './hotspots';
+import { activeHotspotEvent } from './hotspotEvents';
 
 /** M-W — play on the real OpenStreetMap district (false = old grid city, kept as a fallback). */
 export const USE_REAL_MAP = true;
@@ -177,6 +178,7 @@ export interface GameState {
   policePositions?: Array<{ x: number; z: number }>;
   radar?: RadarSnapshot;
   hotspotSchedule?: HotspotSchedule;
+  hotspotEvent?: ReturnType<typeof activeHotspotEvent>;
 }
 
 // Module-level reusable math objects for zero garbage collection during 60 FPS loop
@@ -992,6 +994,7 @@ export class GameEngine {
     this.hotspotScheduleKey = key;
     this.state.hotspotSchedule = scheduleHotspots(this.world.district.sites.hotspots, minutes);
     this.state.hotspotName = null;
+    this.state.hotspotEvent = undefined;
     this.state.hotspotDwell = 0;
     this.pedestrianManager.setHotspots([...this.state.hotspotSchedule.active]);
     this.pedestrianManager.releaseSummoned(); // Existing engaged sales finish normally.
@@ -1003,7 +1006,9 @@ export class GameEngine {
 
   updateHotspotCrowd(dt: number, p: THREE.Object3D) {
     const isVendor = this.state.mode === 'vendor' || this.state.mode === 'online_vendor';
-    if (!this.world || !isVendor || !this.pedestrianManager) { this.state.hotspotName = null; this.state.hotspotDwell = 0; return; }
+    if (!this.world || !isVendor || !this.pedestrianManager) {
+      this.state.hotspotName = null; this.state.hotspotEvent = undefined; this.state.hotspotDwell = 0; return;
+    }
     this.hotspotCooldown = Math.max(0, this.hotspotCooldown - dt);
     this.refreshHotspotSchedule();
     const schedule = this.state.hotspotSchedule;
@@ -1011,6 +1016,8 @@ export class GameEngine {
     const spotKey = spot ? `${spot.x}:${spot.z}` : null;
     if (spotKey !== this.dwellingHotspot) { this.hotspotDwell = 0; this.dwellingHotspot = spotKey; }
     this.state.hotspotName = spot ? (spot.name === 'Junction' ? 'ব্যস্ত মোড় · Busy junction' : spot.name) : null;
+    this.state.hotspotEvent = spot && this.state.mode === 'vendor'
+      ? activeHotspotEvent(spot.kind, getDayClockMinutes(this.state.dayElapsedSeconds)) : undefined;
     const still = Math.abs(this.currentSpeed) < 0.4;
     const busy = !!(this.state.sale || this.state.repairing || this.state.restocking || this.state.alert);
     if (spot && still && !busy && this.state.stock > 0 && this.hotspotCooldown <= 0 &&
@@ -1491,7 +1498,13 @@ export class GameEngine {
     this.stats.reset(mode, effectiveDay);
     this.lastRunStats = null;
     this.syncDayAccountingState();
-    this.weather?.reset();
+    this.weather?.reset(mode === 'vendor' ? effectiveDay : 1);
+    if (this.weather) {
+      this.state.weather = this.weather.current;
+      this.state.weatherLabel = this.weather.profile.label;
+      this.state.weatherTraction = Math.round(this.weather.traction * 100);
+      this.state.weatherVisibility = Math.round(this.weather.visibilityFactor * 100);
+    }
     this.clearInputs();
     this.clock.getDelta();
     this.acc = 0;
@@ -1555,6 +1568,9 @@ export class GameEngine {
         obstacles: (x, z) => this.nearObstacles(x, z),
         bounds: this.mapBound(105),
         isRoad: (x, z) => this.world?.roads.isOnCarriageway(x, z) ?? false,
+        sightObstacles: (from, to) => this.world?.grid.near((from.x + to.x) / 2, (from.z + to.z) / 2,
+          Math.hypot(to.x - from.x, to.z - from.z) / 2 + 1) ?? this.obstacles,
+        junctions: this.world?.roads.nodes.filter(node => node.edges.length >= 3),
       }, this.scene);
       this.campaignPolice.resetPositions(this.human.position.x, this.human.position.z);
       this.state.policePositions = this.campaignPolice.positions();
@@ -2203,9 +2219,10 @@ export class GameEngine {
     }
   }
 
-  private updateChaseAlert(dist: number, policeSightRange: number) {
+  private updateChaseAlert(dist: number, policeSightRange: number, visible = true) {
     if (
       !this.state.alert &&
+      visible &&
       this.state.heat >= 18 &&
       this.state.cooldown === 0 &&
       dist < policeSightRange
@@ -2218,8 +2235,8 @@ export class GameEngine {
     }
   }
 
-  private updateChaseEscape(dt: number, dist: number, policeEscapeDist: number) {
-    if (dist > policeEscapeDist) {
+  private updateChaseEscape(dt: number, dist: number, policeEscapeDist: number, hidden = false) {
+    if (hidden || dist > policeEscapeDist) {
       this.state.escape += dt;
       if (this.state.escape > 5) {
         this.state.alert = false;
@@ -2505,7 +2522,6 @@ export class GameEngine {
     if (this.state.mode === 'vendor') {
       const distBefore = this.campaignPolice?.nearestDistance(this.human.position.x, this.human.position.z)
         ?? this.vector2(this.human.position, this.officer.position);
-      this.updateChaseAlert(distBefore, policeSightRange);
       this.campaignPolice?.update(
         dt,
         this.human.position,
@@ -2513,12 +2529,13 @@ export class GameEngine {
         weatherSpeedMult,
         this.camera.position,
         this.state.heat,
-        this.state.cooldown
+        this.state.cooldown,
+        visibilityFactor
       );
       const dist = this.campaignPolice?.nearestDistance(this.human.position.x, this.human.position.z) ?? distBefore;
-      this.updateChaseAlert(dist, policeSightRange);
+      this.updateChaseAlert(dist, policeSightRange, this.campaignPolice?.playerVisible ?? false);
       if (this.state.alert) {
-        if (dist < 2.1) {
+        if (this.campaignPolice?.canArrest(this.human.position)) {
           if (!this.isMenuOrModalOpen) {
             this.stats.timesCaught++;
             this.isMenuOrModalOpen = true;
@@ -2527,7 +2544,7 @@ export class GameEngine {
           }
           return;
         }
-        this.updateChaseEscape(dt, dist, policeEscapeDist);
+        this.updateChaseEscape(dt, dist, policeEscapeDist, !(this.campaignPolice?.playerVisible ?? false));
       }
     } else if (this.state.mode === 'online_vendor' && this.remoteActive) {
       const dist = this.vector2(this.human.position, this.officer.position);

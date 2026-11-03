@@ -3,6 +3,10 @@ import { resolveMovement, type Obstacle } from './collision';
 import type { SidewalkGraph } from './pathfinding';
 import type { DifficultyProfile } from './difficulty';
 import { animateHuman, createHumanRig, type HumanRig } from './world/humans';
+import { inPoliceView, policeLineOfSight, policeTactics, POLICE_CHASE_SPEED,
+  POLICE_VISION_HALF_ANGLE, type PolicePoint } from './policePerception';
+
+export type PoliceMode = 'post' | 'patrol' | 'chase' | 'search' | 'backup' | 'intercept';
 
 interface Patrol {
   object: THREE.Group;
@@ -12,6 +16,10 @@ interface Patrol {
   phase: number;
   nextRoute: number;
   blockedUntil: number;
+  home: PolicePoint;
+  visible: boolean;
+  informed: boolean;
+  mode: PoliceMode;
 }
 
 export interface PatrolWorld {
@@ -19,24 +27,45 @@ export interface PatrolWorld {
   obstacles: (x: number, z: number) => Obstacle[];
   bounds: number | { x: number; z: number };
   isRoad: (x: number, z: number) => boolean;
+  sightObstacles?: (from: PolicePoint, to: PolicePoint) => readonly Obstacle[];
+  junctions?: readonly PolicePoint[];
 }
 
-/** Bounded solo patrol population. Direct pursuit preserves existing speed/rules;
- * tactical search, line of sight and backup remain Sprint 14. */
+/** Bounded solo officers; routing uses sightings, never hidden vendor coordinates. */
 export class CampaignPolice {
   private patrols: Patrol[];
   private routeSequence = 0;
   primarySpeed = 0;
+  playerVisible = false;
+  private senseIn = 0;
+  private clock = 0;
+  private alertSeconds = 0;
+  private wasAlert = false;
+  private lastSeen: (PolicePoint & { at: number; vx: number; vz: number }) | null = null;
+  private components: number[] = [];
+  private junctionStops: number[] = [];
 
   constructor(primary: THREE.Group, readonly difficulty: DifficultyProfile,
     private world: PatrolWorld, scene: THREE.Scene) {
-    this.patrols = [{ object: primary, rig: null, route: [], step: 0, phase: 0, nextRoute: 0, blockedUntil: 0 }];
+    this.patrols = [{ object: primary, rig: null, route: [], step: 0, phase: 0, nextRoute: 0, blockedUntil: 0,
+      home: { x: 0, z: 0 }, visible: false, informed: false, mode: 'post' }];
     for (let i = 1; i < difficulty.policeCount; i++) {
       const rig = createHumanRig({ outfit: 'police', compact: true, scale: 1.18, seed: 700 + i });
       rig.group.name = `campaign-police-${i}`;
       scene.add(rig.group);
-      this.patrols.push({ object: rig.group, rig, route: [], step: 0, phase: 0, nextRoute: 0, blockedUntil: 0 });
+      this.patrols.push({ object: rig.group, rig, route: [], step: 0, phase: 0, nextRoute: 0, blockedUntil: 0,
+        home: { x: 0, z: 0 }, visible: false, informed: false, mode: 'post' });
     }
+    // A* falls back to a straight line between disconnected nodes. Avoid that fallback.
+    for (const node of world.graph.nodes) {
+      if (this.components[node.id] !== undefined) continue;
+      const pending = [node.id]; this.components[node.id] = node.id;
+      for (let i = 0; i < pending.length; i++) for (const id of world.graph.nodes[pending[i]].neighbors) {
+        if (this.components[id] === undefined) { this.components[id] = node.id; pending.push(id); }
+      }
+    }
+    this.junctionStops = [...new Set((world.junctions ?? []).map(p => world.graph.findNearestNode(p.x, p.z)))]
+      .filter(id => this.validStop(world.graph.nodes[id].x, world.graph.nodes[id].z));
   }
 
   get count() { return this.patrols.length; }
@@ -65,9 +94,14 @@ export class CampaignPolice {
       selected.push(best);
       const patrol = this.patrols[i];
       patrol.object.position.set(best.x, 0, best.z);
-      patrol.object.rotation.y = 0;
+      patrol.object.rotation.y = -Math.atan2(playerX - best.x, best.z - playerZ);
       patrol.route = []; patrol.step = 0; patrol.nextRoute = 0; patrol.blockedUntil = 0;
+      patrol.home = { x: best.x, z: best.z }; patrol.visible = false;
+      patrol.informed = false;
+      patrol.mode = this.difficulty.patrolRoutes ? 'patrol' : 'post';
     }
+    this.lastSeen = null; this.playerVisible = false; this.senseIn = 0;
+    this.alertSeconds = 0; this.wasAlert = false; this.clock = 0; this.primarySpeed = 0;
   }
 
   nearestDistance(x: number, z: number) {
@@ -77,62 +111,112 @@ export class CampaignPolice {
     return distance;
   }
 
-  private planRoute(patrol: Patrol, playerX?: number, playerZ?: number) {
+  private planRoute(patrol: Patrol) {
     const { x, z } = patrol.object.position;
+    const start = this.world.graph.findNearestNode(x, z);
     let candidates = this.world.graph.nodes.filter((n) => {
       const distance = Math.hypot(n.x - x, n.z - z);
-      const nearPlayer = playerX !== undefined && playerZ !== undefined
-        ? Math.hypot(n.x - playerX, n.z - playerZ) <= Math.max(45, this.difficulty.policeVision + 20)
-        : true;
-      return distance >= 15 && distance < 65 && nearPlayer && !this.world.isRoad(n.x, n.z);
+      return distance >= 15 && distance < 65 &&
+        this.components[n.id] === this.components[start] && this.validStop(n.x, n.z);
     });
     if (!candidates.length) {
       candidates = this.world.graph.nodes.filter((n) => {
         const distance = Math.hypot(n.x - x, n.z - z);
-        return distance >= 20 && distance < 70 && !this.world.isRoad(n.x, n.z);
+        return distance >= 20 && distance < 70 && this.components[n.id] === this.components[start] && this.validStop(n.x, n.z);
       });
     }
     if (!candidates.length) { patrol.nextRoute = 2; return; }
+    const junctions = candidates.filter(n => this.junctionStops.includes(n.id));
+    if (junctions.length) candidates = junctions;
     const destination = candidates[(this.routeSequence++ * 31) % candidates.length];
     patrol.route = this.world.graph.findAStarPath(this.world.graph.findNearestNode(x, z), destination.id);
     patrol.step = 0; patrol.nextRoute = 2;
   }
 
-  private planPostNearPlayer(patrol: Patrol, playerX: number, playerZ: number, index: number) {
-    const { x, z } = patrol.object.position;
-    const minD = this.difficulty.policeVision + 6;
-    const maxD = this.difficulty.policeVision + 18;
-    const angle = (index / Math.max(1, this.patrols.length)) * Math.PI * 2;
-    const targetX = playerX + Math.sin(angle) * ((minD + maxD) * 0.5);
-    const targetZ = playerZ + Math.cos(angle) * ((minD + maxD) * 0.5);
-    let bestId = -1;
-    let bestScore = Infinity;
-    for (const n of this.world.graph.nodes) {
-      if (this.world.isRoad(n.x, n.z)) continue;
-      const dp = Math.hypot(n.x - playerX, n.z - playerZ);
-      if (dp < minD || dp > maxD) continue;
-      const score = Math.hypot(n.x - targetX, n.z - targetZ);
-      if (score < bestScore) {
-        bestScore = score;
-        bestId = n.id;
-      }
-    }
-    if (bestId >= 0) {
-      patrol.route = this.world.graph.findAStarPath(this.world.graph.findNearestNode(x, z), bestId);
-      patrol.step = 0;
-      patrol.nextRoute = 2.5;
-    } else {
-      patrol.nextRoute = 1.5;
-    }
-  }
-
   private planChaseRoute(patrol: Patrol, playerX: number, playerZ: number) {
     const { x, z } = patrol.object.position;
     const startId = this.world.graph.findNearestNode(x, z);
-    const goalId = this.world.graph.findNearestNode(playerX, playerZ);
-    patrol.route = this.world.graph.findAStarPath(startId, goalId);
+    let goalId = -1, distance = Infinity;
+    for (const node of this.world.graph.nodes) {
+      const d = Math.hypot(node.x - playerX, node.z - playerZ);
+      if (this.components[node.id] === this.components[startId] && d < distance && this.validStop(node.x, node.z)) {
+        goalId = node.id; distance = d;
+      }
+    }
+    const goal = this.world.graph.nodes[goalId], previous = patrol.route[patrol.route.length - 1];
+    if (goal && previous && previous.x === goal.x && previous.z === goal.z && patrol.step < patrol.route.length) {
+      patrol.nextRoute = 0.9; return;
+    }
+    patrol.route = goalId < 0 ? [] : this.world.graph.findAStarPath(startId, goalId);
     patrol.step = 0;
+    if (patrol.route.length > 1) {
+      const a = patrol.route[0], b = patrol.route[1], dx = b.x - a.x, dz = b.z - a.z;
+      const length = dx * dx + dz * dz;
+      const t = length ? ((x - a.x) * dx + (z - a.z) * dz) / length : 0;
+      if (t >= 0 && t <= 1 && Math.hypot(x - a.x - t * dx, z - a.z - t * dz) < 1.5 &&
+        this.clearSight(patrol.object.position, b)) patrol.step = 1;
+    }
     patrol.nextRoute = 0.9;
+  }
+
+  get lastKnownPosition(): PolicePoint | null { return this.lastSeen ? { x: this.lastSeen.x, z: this.lastSeen.z } : null; }
+
+  private clearSight(from: PolicePoint, to: PolicePoint) {
+    return policeLineOfSight(from, to, this.world.sightObstacles?.(from, to) ??
+      this.world.obstacles((from.x + to.x) / 2, (from.z + to.z) / 2));
+  }
+
+  canArrest(player: PolicePoint) {
+    return this.patrols.some(p => Math.hypot(p.object.position.x - player.x, p.object.position.z - player.z) < 2.1 &&
+      this.clearSight(p.object.position, player));
+  }
+
+  private sense(player: PolicePoint, range: number, remember: boolean) {
+    this.playerVisible = false;
+    for (const p of this.patrols) {
+      p.visible = inPoliceView(p.object.position, -p.object.rotation.y, player, range) && this.clearSight(p.object.position, player);
+      if (p.visible && remember) p.informed = true;
+      this.playerVisible ||= p.visible;
+    }
+    if (this.playerVisible && remember) {
+      const previous = this.lastSeen, elapsed = previous ? this.clock - previous.at : 0;
+      let vx = elapsed > 0 ? (player.x - previous!.x) / elapsed : 0;
+      let vz = elapsed > 0 ? (player.z - previous!.z) / elapsed : 0;
+      const speed = Math.hypot(vx, vz); if (speed > 8) { vx *= 8 / speed; vz *= 8 / speed; }
+      this.lastSeen = { x: player.x, z: player.z, at: this.clock, vx, vz };
+    }
+  }
+
+  private interceptPoint(patrol: Patrol): PolicePoint {
+    const seen = this.lastSeen!, speed = Math.hypot(seen.vx, seen.vz);
+    if (speed < 0.5) return seen;
+    const lead = Math.min(22, Math.max(8, speed * 3));
+    const target = { x: seen.x + seen.vx / speed * lead, z: seen.z + seen.vz / speed * lead };
+    const start = this.world.graph.findNearestNode(patrol.object.position.x, patrol.object.position.z);
+    let best: PolicePoint = seen, score = Infinity;
+    for (const id of this.junctionStops) {
+      const n = this.world.graph.nodes[id], dx = n.x - seen.x, dz = n.z - seen.z;
+      if (this.components[id] !== this.components[start] || dx * seen.vx + dz * seen.vz <= 0 || Math.hypot(dx, dz) > 35) continue;
+      const d = Math.hypot(n.x - target.x, n.z - target.z); if (d < score) { best = n; score = d; }
+    }
+    return best;
+  }
+
+  private planSearch(patrol: Patrol) {
+    const seen = this.lastSeen!;
+    const end = patrol.route[patrol.route.length - 1];
+    const reached = end && Math.hypot(patrol.object.position.x - end.x, patrol.object.position.z - end.z) < 1.2;
+    if (!reached && Math.hypot(patrol.object.position.x - seen.x, patrol.object.position.z - seen.z) > 3) {
+      this.planChaseRoute(patrol, seen.x, seen.z); return;
+    }
+    if (!policeTactics(this.difficulty.dayNumber).search) { patrol.nextRoute = 1; return; }
+    const start = this.world.graph.findNearestNode(patrol.object.position.x, patrol.object.position.z);
+    const candidates = this.world.graph.nodes.filter(n => this.components[n.id] === this.components[start] &&
+      Math.hypot(n.x - seen.x, n.z - seen.z) > 4 && Math.hypot(n.x - seen.x, n.z - seen.z) < 18 && this.validStop(n.x, n.z));
+    if (candidates.length) {
+      const target = candidates[(this.routeSequence++ * 31) % candidates.length];
+      this.planChaseRoute(patrol, target.x, target.z);
+    } else patrol.nextRoute = 1;
   }
 
   update(
@@ -142,23 +226,51 @@ export class CampaignPolice {
     weatherSpeed: number,
     camera: THREE.Vector3,
     heat = 0,
-    cooldown = 0
+    cooldown = 0,
+    visibility = 1
   ) {
+    if (!(dt > 0) || !Number.isFinite(dt)) return;
     const heated = heat >= 18 && cooldown <= 0;
+    this.clock += dt;
+    if (this.wasAlert && !alert) {
+      this.lastSeen = null; this.senseIn = 0;
+      for (const p of this.patrols) { p.route = []; p.nextRoute = 0; p.informed = false; }
+    }
+    this.wasAlert = alert; this.alertSeconds = alert ? this.alertSeconds + dt : 0;
+    this.senseIn -= dt;
+    if (this.senseIn <= 0) {
+      this.sense(player, this.difficulty.policeVision * visibility, alert || heated);
+      this.senseIn = 0.1;
+    }
+    const tactics = policeTactics(this.difficulty.dayNumber);
+    const pursuing = (alert || heated && this.playerVisible) && this.lastSeen !== null;
     for (let i = 0; i < this.patrols.length; i++) {
       const patrol = this.patrols[i], object = patrol.object;
       if (i === 0) this.primarySpeed = 0;
       patrol.nextRoute = Math.max(0, patrol.nextRoute - dt);
       patrol.blockedUntil = Math.max(0, patrol.blockedUntil - dt);
-      const distToPlayer = Math.hypot(player.x - object.position.x, player.z - object.position.z);
+      const memory = this.lastSeen;
+      let mode: PoliceMode = this.difficulty.patrolRoutes ? 'patrol' : 'post';
+      if (pursuing && memory) {
+        const distance = Math.hypot(object.position.x - memory.x, object.position.z - memory.z);
+        if (patrol.visible) mode = 'chase';
+        else if (this.playerVisible && tactics.backup && this.alertSeconds >= 1.5 + i * 0.6 &&
+          distance < (tactics.intercept ? 120 : 80)) {
+          mode = tactics.intercept && i === this.patrols.length - 1 ? 'intercept' : 'backup';
+          patrol.informed = true;
+        } else if (alert && patrol.informed && distance < (tactics.backup ? 120 : 65)) mode = 'search';
+      }
+      if (mode !== patrol.mode) { patrol.route = []; patrol.step = 0; patrol.nextRoute = 0; patrol.mode = mode; }
       let dx = 0, dz = 0, speed = 0;
 
-      if (alert) {
-        speed = 3.55 * weatherSpeed;
-        const useDirect = distToPlayer <= 14 && patrol.blockedUntil <= 0;
+      if (mode === 'chase' || mode === 'backup' || mode === 'intercept' || mode === 'search') {
+        speed = (mode === 'search' ? 2.8 : POLICE_CHASE_SPEED) * weatherSpeed;
+        const distToSighting = Math.hypot(memory!.x - object.position.x, memory!.z - object.position.z);
+        const useDirect = mode === 'chase' && patrol.visible && distToSighting <= 14 &&
+          patrol.blockedUntil <= 0 && this.clearSight(object.position, memory!);
         if (useDirect) {
-          dx = player.x - object.position.x;
-          dz = player.z - object.position.z;
+          dx = memory!.x - object.position.x;
+          dz = memory!.z - object.position.z;
           patrol.route = [];
         } else {
           while (
@@ -167,54 +279,37 @@ export class CampaignPolice {
           ) {
             patrol.step++;
           }
-          if (patrol.step >= patrol.route.length || patrol.nextRoute <= 0) {
-            this.planChaseRoute(patrol, player.x, player.z);
+          if (patrol.step >= patrol.route.length || (mode !== 'search' && patrol.nextRoute <= 0)) {
+            if (patrol.nextRoute <= 0) {
+              if (mode === 'search') this.planSearch(patrol);
+              else {
+                const target = mode === 'intercept' ? this.interceptPoint(patrol) : memory!;
+                this.planChaseRoute(patrol, target.x, target.z);
+              }
+            }
           }
           const target = patrol.route[patrol.step];
-          if (target && distToPlayer > 3.2) {
+          if (target) {
             dx = target.x - object.position.x;
             dz = target.z - object.position.z;
-          } else {
-            dx = player.x - object.position.x;
-            dz = player.z - object.position.z;
           }
         }
-      } else if (heated) {
-        // Vendor has Wanted heat: officers converge along footpaths toward the vendor to inspect/spot.
-        speed = (this.difficulty.patrolRoutes ? 2.5 : 2.15) * weatherSpeed;
-        while (
-          patrol.step < patrol.route.length &&
-          Math.hypot(patrol.route[patrol.step].x - object.position.x, patrol.route[patrol.step].z - object.position.z) < 1.0
-        ) {
-          patrol.step++;
-        }
-        if (patrol.step >= patrol.route.length || patrol.nextRoute <= 0) {
-          this.planChaseRoute(patrol, player.x, player.z);
-        }
-        const target = patrol.route[patrol.step];
-        if (target && distToPlayer > 6) {
-          dx = target.x - object.position.x;
-          dz = target.z - object.position.z;
-        } else {
-          dx = player.x - object.position.x;
-          dz = player.z - object.position.z;
-        }
-      } else if (this.difficulty.patrolRoutes) {
+      } else if (mode === 'patrol') {
         while (patrol.step < patrol.route.length && Math.hypot(patrol.route[patrol.step].x - object.position.x,
           patrol.route[patrol.step].z - object.position.z) < 0.7) patrol.step++;
-        if (patrol.step >= patrol.route.length && patrol.nextRoute <= 0) this.planRoute(patrol, player.x, player.z);
+        if (patrol.step >= patrol.route.length && patrol.nextRoute <= 0) this.planRoute(patrol);
         const target = patrol.route[patrol.step];
         if (target) { dx = target.x - object.position.x; dz = target.z - object.position.z; speed = 1.35 * weatherSpeed; }
-      } else if (distToPlayer > this.difficulty.policeVision + 18 || patrol.step < patrol.route.length) {
-        // Levels 1–2: keep footpath post within neighborhood of the vendor, then wait until vendor heats up.
+      } else if (patrol.home && Math.hypot(object.position.x - patrol.home.x, object.position.z - patrol.home.z) > 8) {
+        // After a chase, early-day officers return to their post rather than tracking a hidden vendor.
         while (
           patrol.step < patrol.route.length &&
           Math.hypot(patrol.route[patrol.step].x - object.position.x, patrol.route[patrol.step].z - object.position.z) < 0.8
         ) {
           patrol.step++;
         }
-        if (patrol.step >= patrol.route.length && patrol.nextRoute <= 0 && distToPlayer > this.difficulty.policeVision + 18) {
-          this.planPostNearPlayer(patrol, player.x, player.z, i);
+        if (patrol.step >= patrol.route.length && patrol.nextRoute <= 0) {
+          this.planChaseRoute(patrol, patrol.home.x, patrol.home.z);
         }
         const target = patrol.route[patrol.step];
         if (target) {
@@ -267,7 +362,7 @@ export class CampaignPolice {
           }
           if (alert) {
             patrol.blockedUntil = 1.4;
-            patrol.nextRoute = 0;
+            patrol.nextRoute = 0.4;
           }
         }
 
@@ -276,18 +371,23 @@ export class CampaignPolice {
         patrol.phase += travelled * 2.2;
         if (patrol.rig) animateHuman(patrol.rig, patrol.phase, Math.min(1, travelled / dt / 5), false, dt);
         if (!alert && travelled < step * 0.1) { patrol.route = []; patrol.nextRoute = Math.min(patrol.nextRoute, 0.5); }
-      } else if (patrol.rig) animateHuman(patrol.rig, patrol.phase, 0, false, dt);
+      } else {
+        if (mode === 'post' || mode === 'search') object.rotation.y += dt * 0.65;
+        if (patrol.rig) animateHuman(patrol.rig, patrol.phase, 0, false, dt);
+      }
       if (i > 0) object.visible = Math.hypot(object.position.x - camera.x, object.position.z - camera.z) < 90;
     }
   }
 
-  positions() { return this.patrols.map(({ object }) => ({ x: object.position.x, z: object.position.z, heading: -object.rotation.y })); }
+  positions() { return this.patrols.map(({ object, mode }) => ({ x: object.position.x, z: object.position.z,
+    heading: -object.rotation.y, mode, visionHalfAngle: POLICE_VISION_HALF_ANGLE })); }
 
   /** Caller retires GPU resources with its existing shared-resource-aware disposer. */
   detachExtras(): THREE.Object3D[] {
     const extras = this.patrols.slice(1).map((p) => p.object);
     for (const extra of extras) extra.removeFromParent();
     this.patrols = [];
+    this.lastSeen = null; this.playerVisible = false;
     return extras;
   }
 }

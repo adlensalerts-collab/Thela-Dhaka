@@ -14,10 +14,12 @@ Which file owns which feature. Sizes as of Hotfix 8.1. Files over ~20 KB: read v
 | Run statistics | `src/game/stats.ts` | `StatsTracker`, `RunStats` |
 | Solo-vendor campaign, defeat rules, day progression and Endless | `src/game/campaign.ts` | `Campaign`, `vendorFailure`, `campaignTarget` (engine integration in `simulation.ts`) |
 | Campaign difficulty anchors, interpolation and briefing data | `src/game/difficulty.ts` | `difficultyForDay`, `dayBriefing` |
-| Bounded solo police population and basic footpath patrols | `src/game/campaignPolice.ts` | `CampaignPolice` (engine applies population at day/mode reset) |
+| Bounded solo police, road-junction patrol destinations, sighting memory, search, backup and interception | `src/game/campaignPolice.ts` | `CampaignPolice` (engine applies population at day/mode reset) |
+| Police field of view, obstacle occlusion, chase speed and tactical unlocks | `src/game/policePerception.ts` | `inPoliceView`, `policeLineOfSight`, `policeTactics` |
 | Pedestrians (activities, crossings, hotspot customers, near/far detail; legacy rage remains dormant) | `src/game/pedestrians.ts` | `PedestrianManager.summonCustomers`, `updateDetail`, `setTimeOfDay`, `setRoadProbes`, `setBrowsePoints`, `dispose` |
 | Time-of-day crowd density and hotspot pull | `src/game/crowd/crowdSchedule.ts` | `activeFraction` |
 | Active hotspot windows, demand and nearest-site selection | `src/game/hotspots.ts` | `scheduleHotspots`, `hotspotPeriod`, `nearbyHotspot` (shared by engine, crowd, HUD and radar) |
+| Dynamic hotspot event labels | `src/game/hotspotEvents.ts` | `activeHotspotEvent` (engine populates the nearby vendor badge) |
 | Instanced far-crowd representation | `src/game/crowd/crowdImpostors.ts` | `CrowdImpostors` |
 | Footpath route graph + A* | `src/game/pathfinding.ts` | `SidewalkGraph` |
 | Weather | `src/game/world/weather.ts` | `WeatherSystem` |
