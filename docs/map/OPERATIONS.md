@@ -12,6 +12,7 @@ Names only — never copy values from `.env*` files or tokens into docs or promp
 | Crowd schedule, behavior, crossings and instancing checks | `npx --yes vite-node@3 scripts/crowd.test.ts` | Needs Vite's `import.meta.env`; verifies the real footpath graph and 120-person pool |
 | Radar projection and payload checks | `npx tsx --test scripts/radar.test.ts` | Heading transforms, circular bounds, nearest-actor caps and off-screen service bearings |
 | Hotspot schedule checks | `npx tsx --test scripts/hotspots.test.ts` | Exact window boundaries, peak/night waves, sparse districts, immutable schedules and nearest active site |
+| Police perception and pursuit checks | `npx --yes vite-node@3 scripts/police.test.ts` | Facing/weather, exact wall occlusion, last sighting, tactical unlocks, backup, interception, speed balance, disconnected routes and resets |
 | Production build (full service, base `/`) | `npm run build` | `vite build` → `dist/` (`index.html` + `character-preview.html`) |
 | Production build (GitHub Pages, base `/Thela-Dhaka/`) | `GITHUB_PAGES=true VITE_STATIC_HOST=true npm run build` | Loads `.env.pages` for `VITE_SERVER_URL` unless overridden in shell env |
 | Production server | `npm start` | `tsx server.ts --production`: serves `dist/`, `GET /healthz`, and `/socket.io/` without loading Vite/HMR; exits non-zero if `dist/index.html` is missing |

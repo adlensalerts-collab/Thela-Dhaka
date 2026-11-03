@@ -1,5 +1,5 @@
 export interface RadarPoint { x: number; z: number }
-export interface RadarActor extends RadarPoint { heading?: number; vision?: number }
+export interface RadarActor extends RadarPoint { heading?: number; vision?: number; visionHalfAngle?: number }
 export interface RadarSnapshot {
   people: RadarPoint[];
   vehicles: RadarActor[];

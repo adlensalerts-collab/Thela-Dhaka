@@ -88,13 +88,10 @@ export function GameRadar({ state }: { state: GameState }) {
       const raw = project(police), point = radarEdge(raw);
       if (!raw.inside && !state.alert) continue;
       if (raw.inside && police.vision) {
-        // Current AI sees radially. Show its actual range as well as its facing wedge.
-        context.beginPath(); context.arc(raw.x, raw.y, police.vision * scale, 0, Math.PI * 2);
-        context.fillStyle = '#dc26260b'; context.fill();
-        context.strokeStyle = '#b91c1c88'; context.lineWidth = 0.8; context.setLineDash([2, 3]); context.stroke(); context.setLineDash([]);
         const direction = (police.heading ?? 0) - heading - Math.PI / 2;
+        const halfAngle = police.visionHalfAngle ?? Math.PI / 5;
         context.beginPath(); context.moveTo(raw.x, raw.y);
-        context.arc(raw.x, raw.y, police.vision * scale, direction - Math.PI / 5, direction + Math.PI / 5);
+        context.arc(raw.x, raw.y, police.vision * scale, direction - halfAngle, direction + halfAngle);
         context.closePath(); context.fillStyle = '#dc262626'; context.fill();
       }
       context.beginPath(); context.arc(point.x, point.y, 3.5 + (state.alert ? pulse : 0), 0, Math.PI * 2);
