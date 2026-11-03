@@ -2,7 +2,7 @@ import React from 'react';
 import { AlertTriangle, ShieldCheck, DollarSign, RefreshCw, Home, Sliders } from 'lucide-react';
 import { GameState } from '../game/simulation';
 import { RunStats } from '../game/stats';
-import { StatsScreen } from './StatsScreen';
+import { StatsScreen, StatsCards } from './StatsScreen';
 import { CampaignEnding } from './CampaignEnding';
 
 interface EventModalProps {
@@ -17,7 +17,10 @@ interface EventModalProps {
   onTakeIllicit: () => void;
   onResume: () => void;
   onRestart: () => void;
-  onContinueCampaign: () => void;
+  onNextDay?: () => void;
+  onRetryDay?: () => void;
+  onStartEndless?: () => void;
+  onNewCampaign?: () => void;
   onMainMenu: () => void;
   onOpenSettings?: () => void;
 }
@@ -34,7 +37,10 @@ export const EventModal: React.FC<EventModalProps> = ({
   onTakeIllicit,
   onResume,
   onRestart,
-  onContinueCampaign,
+  onNextDay,
+  onRetryDay,
+  onStartEndless,
+  onNewCampaign,
   onMainMenu,
   onOpenSettings
 }) => {
@@ -45,21 +51,37 @@ export const EventModal: React.FC<EventModalProps> = ({
     isOnline ?? (state?.mode === 'online_vendor' || state?.mode === 'online_police');
 
   if (type === 'over' || type === 'victory') {
+    const isSoloVendor = !online && (stats?.mode ?? state?.mode) === 'vendor';
+    const campaignResult = stats?.campaignResult ?? state?.campaign?.result ?? null;
+
+    if (isSoloVendor && campaignResult) {
+      return (
+        <div className="absolute inset-0 z-40 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 sm:p-6">
+          <div className="w-full max-w-3xl max-h-[92dvh] overflow-y-auto">
+            <CampaignEnding
+              result={campaignResult}
+              onNextDay={onNextDay ?? onRestart}
+              onRetryDay={onRetryDay ?? onRestart}
+              onStartEndless={onStartEndless ?? onNextDay ?? onRestart}
+              onNewCampaign={onNewCampaign ?? onRestart}
+              onMainMenu={onMainMenu}
+            >
+              <StatsCards stats={stats ?? null} showDayTargetBar={false} />
+            </CampaignEnding>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="absolute inset-0 z-40 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 sm:p-6">
-        {stats?.mode === 'vendor' && stats.campaign ? (
-          <CampaignEnding result={stats.campaign} endedAt={stats.dayClockText}
-            onNextDay={onContinueCampaign} onRetryDay={onContinueCampaign}
-            onStartEndless={onContinueCampaign} onNewCampaign={onRestart} onMainMenu={onMainMenu}>
-            <StatsScreen stats={stats} cardsOnly onRestart={onRestart} onMainMenu={onMainMenu} />
-          </CampaignEnding>
-        ) : <StatsScreen
+        <StatsScreen
           stats={stats ?? null}
           isOnline={online}
           rematchPending={rematchPending}
           onRestart={onRestart}
           onMainMenu={onMainMenu}
-        />}
+        />
       </div>
     );
   }

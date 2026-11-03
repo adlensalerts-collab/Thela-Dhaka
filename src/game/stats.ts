@@ -1,23 +1,25 @@
-import type { CampaignResult } from './campaign';
 import {
   DAY_FOOD_COST,
   DAY_RENT_COST,
+  clampDayElapsedSeconds,
   computeDayProfit,
   computeLiveHudProfit,
   computeTotalExpenses,
+  formatDayClock,
   getDayProfitTarget,
   normalizeDayNumber
 } from './day';
+import type { CampaignResult } from './campaign';
 
 export type RunResult =
   | 'jailed'
   | 'bribe_unaffordable'
   | 'destroyed'
-  | 'bankrupt'
   | 'mob_beaten'
   | 'victory'
   | 'day_passed'
   | 'day_failed'
+  | 'bankrupt'
   | null;
 export type RunMode = 'vendor' | 'police' | 'online_vendor' | 'online_police';
 
@@ -27,8 +29,6 @@ export interface BestSaleRecord {
 }
 
 export interface RunStats {
-  dayClockText?: string;
-  campaign?: CampaignResult;
   // Money
   earned: number;
   spentRestock: number;
@@ -65,10 +65,13 @@ export interface RunStats {
   staminaLevel: number;
   dayNumber: number;
   dayTarget: number;
+  dayElapsedSeconds: number;
+  dayClockText: string;
   dayPassed: boolean;
   dayCostsSettled: boolean;
   mode: RunMode;
   result: RunResult;
+  campaignResult?: CampaignResult | null;
 
   // Police mode
   arrests: number;
@@ -111,6 +114,8 @@ export interface RunStats {
     staminaLevel: number;
     dayNumber: number;
     dayTarget: number;
+    dayElapsedSeconds: number;
+    dayClockText: string;
     dayPassed: boolean;
     dayCostsSettled: boolean;
     mode: RunMode;
@@ -150,8 +155,11 @@ export class StatsTracker {
   staminaLevel = 1;
   dayNumber = 1;
   dayTarget = getDayProfitTarget(1);
+  dayElapsedSeconds = 0;
+  dayClockText = formatDayClock(0);
   mode: RunMode = 'vendor';
   result: RunResult = null;
+  campaignResult: CampaignResult | null = null;
 
   arrests = 0;
 
@@ -187,8 +195,11 @@ export class StatsTracker {
     this.staminaLevel = mode === 'vendor' || mode === 'online_vendor' ? 1 : 3;
     this.dayNumber = normalizeDayNumber(dayNumber);
     this.dayTarget = getDayProfitTarget(this.dayNumber);
+    this.dayElapsedSeconds = 0;
+    this.dayClockText = formatDayClock(0);
     this.mode = mode;
     this.result = null;
+    this.campaignResult = null;
 
     this.arrests = 0;
   }
@@ -196,7 +207,7 @@ export class StatsTracker {
   recordSale(product: string, price: number) {
     this.earned += price;
     this.itemsSold += 1;
-    this.salesByProduct[product] = (this.salesByProduct[product] ?? 0) + 1;
+    this.salesByProduct[product] = (this.salesByProduct?.[product] ?? 0) + 1;
     if (!this.bestSale || price > this.bestSale.price) {
       this.bestSale = { product, price };
     }
@@ -232,7 +243,16 @@ export class StatsTracker {
     overrides?: Partial<
       Pick<
         RunStats,
-        'cartLevel' | 'staminaLevel' | 'dayNumber' | 'dayTarget' | 'mode' | 'result' | 'arrests'
+        | 'cartLevel'
+        | 'staminaLevel'
+        | 'dayNumber'
+        | 'dayTarget'
+        | 'dayElapsedSeconds'
+        | 'dayClockText'
+        | 'mode'
+        | 'result'
+        | 'campaignResult'
+        | 'arrests'
       >
     >
   ): RunStats {
@@ -243,15 +263,23 @@ export class StatsTracker {
       this.dayTarget = getDayProfitTarget(this.dayNumber);
     }
     if (overrides?.dayTarget !== undefined) this.dayTarget = overrides.dayTarget;
+    if (overrides?.dayElapsedSeconds !== undefined) {
+      this.dayElapsedSeconds = clampDayElapsedSeconds(overrides.dayElapsedSeconds);
+      this.dayClockText = formatDayClock(this.dayElapsedSeconds);
+    }
+    if (overrides?.dayClockText !== undefined) {
+      this.dayClockText = overrides.dayClockText;
+    }
     if (overrides?.mode !== undefined) this.mode = overrides.mode;
     if (overrides?.result !== undefined) this.result = overrides.result;
+    if (overrides?.campaignResult !== undefined) {
+      this.campaignResult = overrides.campaignResult ?? null;
+    }
     if (overrides?.arrests !== undefined) this.arrests = overrides.arrests;
 
     const totalSpent = this.currentTotalSpent();
     const profit = this.currentProfit();
-    const dayPassed =
-      this.result === 'day_passed' ||
-      (this.result !== 'day_failed' && profit >= this.dayTarget);
+    const dayPassed = this.result === 'day_passed' || this.result === 'victory';
     const salesByProductCopy = { ...this.salesByProduct };
     const bestSaleCopy = this.bestSale ? { ...this.bestSale } : null;
 
@@ -287,10 +315,13 @@ export class StatsTracker {
       staminaLevel: this.staminaLevel,
       dayNumber: this.dayNumber,
       dayTarget: this.dayTarget,
+      dayElapsedSeconds: this.dayElapsedSeconds,
+      dayClockText: this.dayClockText,
       dayPassed,
       dayCostsSettled: this.dayCostsSettled,
       mode: this.mode,
       result: this.result,
+      campaignResult: this.campaignResult,
 
       arrests: this.arrests,
 
@@ -331,6 +362,8 @@ export class StatsTracker {
         staminaLevel: this.staminaLevel,
         dayNumber: this.dayNumber,
         dayTarget: this.dayTarget,
+        dayElapsedSeconds: this.dayElapsedSeconds,
+        dayClockText: this.dayClockText,
         dayPassed,
         dayCostsSettled: this.dayCostsSettled,
         mode: this.mode,
@@ -339,3 +372,4 @@ export class StatsTracker {
     };
   }
 }
+

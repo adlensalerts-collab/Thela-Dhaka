@@ -219,14 +219,61 @@ export function assignKey(
 }
 
 /**
+ * Maps a KeyboardEvent.key value to a canonical KeyboardEvent.code fallback
+ * when e.code is missing or remapped by keyboard layout/environment.
+ */
+export function keyToFallbackCode(key: string | undefined): string | null {
+  if (!key) return null;
+  if (key === ' ' || key === 'Spacebar') return 'Space';
+  if (key === 'ArrowUp' || key === 'Up') return 'ArrowUp';
+  if (key === 'ArrowDown' || key === 'Down') return 'ArrowDown';
+  if (key === 'ArrowLeft' || key === 'Left') return 'ArrowLeft';
+  if (key === 'ArrowRight' || key === 'Right') return 'ArrowRight';
+  if (key === 'Shift') return 'ShiftLeft';
+  if (key === 'Escape' || key === 'Esc') return 'Escape';
+  if (key.length === 1) {
+    const upper = key.toUpperCase();
+    if (upper >= 'A' && upper <= 'Z') return `Key${upper}`;
+    if (upper >= '0' && upper <= '9') return `Digit${upper}`;
+  }
+  return null;
+}
+
+/**
  * Given a KeyboardEvent.code and the current bindings, returns the matching ActionName if bound.
  */
 export function actionForCode(code: string, bindings?: KeyBindings): ActionName | null {
+  if (!code) return null;
   const b = bindings || loadBindings();
   for (const [action, keys] of Object.entries(b) as [ActionName, string[]][]) {
-    if (keys.includes(code)) {
+    if (Array.isArray(keys) && keys.includes(code)) {
       return action;
     }
   }
   return null;
 }
+
+/**
+ * Resolves a KeyboardEvent (using both e.code and e.key fallback) to its bound ActionName.
+ */
+export function actionForEvent(
+  e: { code?: string; key?: string },
+  bindings?: KeyBindings
+): ActionName | null {
+  const b = bindings || loadBindings();
+  if (e.code) {
+    const byCode = actionForCode(e.code, b);
+    if (byCode) return byCode;
+  }
+  const fallbackCode = keyToFallbackCode(e.key);
+  if (fallbackCode) {
+    const byKey = actionForCode(fallbackCode, b);
+    if (byKey) return byKey;
+    if (fallbackCode === 'ShiftLeft') {
+      const byRightShift = actionForCode('ShiftRight', b);
+      if (byRightShift) return byRightShift;
+    }
+  }
+  return null;
+}
+

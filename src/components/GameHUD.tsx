@@ -76,6 +76,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
   const dayTarget = Math.max(1, state.dayTarget ?? 600);
   const dayProgressPct = Math.min(100, Math.max(0, Math.round((Math.max(0, dayProfit) / dayTarget) * 100)));
   const dayTargetReached = dayProfit >= dayTarget;
+  const activeDistrictId = state.districtId ?? state.campaign?.district ?? REAL_MAP_ID;
 
   const [showTouchControls, setShowTouchControls] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
@@ -145,11 +146,11 @@ export const GameHUD: React.FC<GameHUDProps> = ({
     setControlHeld('turnRight', dx > deadzone);
   };
 
-  // Memoized static minimap background rendering (only creates once)
+  // Memoized static minimap background rendering (updates when district or role changes)
   useEffect(() => {
     const size = 160;
     if (USE_REAL_MAP) {
-      const mm = createDistrictMinimap(getDistrict(state.campaign?.district ?? REAL_MAP_ID), size, isVendor ? 'vendor' : 'police');
+      const mm = createDistrictMinimap(getDistrict(activeDistrictId), size, isVendor ? 'vendor' : 'police');
       bgCanvasRef.current = mm.canvas;
       mapXZRef.current = mm.toMap;
       return;
@@ -209,7 +210,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
       }
     }
     bgCanvasRef.current = bg;
-  }, [isVendor, state.campaign?.district]);
+  }, [isVendor, activeDistrictId]);
 
   // Update blips on minimap efficiently
   useEffect(() => {
@@ -840,7 +841,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
         {/* Minimap */}
         <div className="bg-black/60 backdrop-blur-md border border-teal-600/40 rounded-2xl p-1.5 sm:p-2 shadow-xl pointer-events-auto overflow-hidden shrink-0">
           <canvas ref={minimapRef} width={160} height={160} className="rounded-xl w-16 h-16 sm:w-28 sm:h-28 md:w-36 md:h-36" />
-          <div className="text-[9px] sm:text-[10px] text-center text-gray-400 mt-0.5 sm:mt-1 uppercase font-semibold truncate max-w-[4rem] sm:max-w-none">{USE_REAL_MAP ? getDistrict(REAL_MAP_ID).name : 'Gulistan'} Map</div>
+          <div className="text-[9px] sm:text-[10px] text-center text-gray-400 mt-0.5 sm:mt-1 uppercase font-semibold truncate max-w-[4rem] sm:max-w-none">{USE_REAL_MAP ? getDistrict(activeDistrictId).name : 'Gulistan'} Map</div>
           <div className="hidden sm:block text-[8px] text-center text-gray-500 leading-tight">© OpenStreetMap contributors</div>
         </div>
 

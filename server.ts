@@ -42,6 +42,7 @@ function buildAllowedOrigins(port: number, isProduction: boolean): Set<string> {
     process.env.PUBLIC_ORIGIN,
     process.env.RENDER_EXTERNAL_URL,
     process.env.APP_URL,
+    process.env.SHARED_APP_URL,
   ];
 
   for (const source of rawSources) {
@@ -50,6 +51,9 @@ function buildAllowedOrigins(port: number, isProduction: boolean): Set<string> {
       const normalized = normalizeOrigin(part);
       if (normalized) {
         allowed.add(normalized);
+        if (normalized.startsWith('https://ais-dev-')) {
+          allowed.add(normalized.replace('https://ais-dev-', 'https://ais-pre-'));
+        }
       }
     }
   }

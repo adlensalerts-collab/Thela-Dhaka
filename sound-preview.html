@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="bn">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Thela Dhaka — ঢাকার রাস্তার শব্দ · Street Sound Preview</title>
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: #0d1f1e;
+        color: #eef5f3;
+        font: 15px system-ui, -apple-system, sans-serif;
+      }
+      main {
+        max-width: 980px;
+        margin: 0 auto;
+        padding: 24px;
+      }
+      h1 {
+        font-size: 24px;
+        margin: 0 0 6px;
+        color: #fbbf24;
+      }
+      p.lead {
+        color: #b5cfc9;
+        line-height: 1.5;
+        margin: 0 0 20px;
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: 1fr 320px;
+        gap: 20px;
+        align-items: start;
+      }
+      @media (max-width: 760px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+      }
+      .panel {
+        background: #132c2a;
+        border: 1px solid #2b5450;
+        border-radius: 16px;
+        padding: 18px;
+      }
+      .panel h2 {
+        font-size: 15px;
+        margin: 0 0 12px;
+        color: #7dd3fc;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .sound-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+        gap: 10px;
+      }
+      button {
+        font: inherit;
+        padding: 12px 14px;
+        background: #1b3f3c;
+        color: #f3faf8;
+        border: 1px solid #386b66;
+        border-radius: 12px;
+        cursor: pointer;
+        text-align: left;
+        transition: background 0.15s, border-color 0.15s, transform 0.08s;
+      }
+      button:hover {
+        background: #23524e;
+        border-color: #fbbf24;
+      }
+      button:active {
+        transform: scale(0.98);
+      }
+      button .bn {
+        display: block;
+        font-weight: 700;
+        color: #fde68a;
+        font-size: 15px;
+      }
+      button .en {
+        display: block;
+        font-size: 12px;
+        color: #b5cfc9;
+        margin-top: 2px;
+      }
+      .sliders {
+        margin-top: 18px;
+        display: grid;
+        gap: 14px;
+      }
+      label.slider-row {
+        display: grid;
+        gap: 6px;
+        color: #d6ebe7;
+        font-size: 14px;
+      }
+      .slider-header {
+        display: flex;
+        justify-content: space-between;
+        font-weight: 600;
+      }
+      input[type="range"] {
+        width: 100%;
+        accent-color: #fbbf24;
+        cursor: pointer;
+      }
+      #pad-wrap {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 10px;
+      }
+      #spatial-pad {
+        width: 280px;
+        height: 280px;
+        max-width: 100%;
+        border: 1px solid #386b66;
+        border-radius: 14px;
+        background: #0b1918;
+        cursor: crosshair;
+        touch-action: none;
+      }
+      .coords {
+        font-family: ui-monospace, monospace;
+        font-size: 12px;
+        color: #a7f3d0;
+      }
+      #status {
+        margin-top: 16px;
+        min-height: 22px;
+        color: #fbbf24;
+        font-size: 13px;
+      }
+      a {
+        color: #5eead4;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>ঢাকার রাস্তার শব্দ · Dhaka Street Sound Preview</h1>
+      <p class="lead">
+        প্রসিডিউরাল ওয়েব অডিও প্রিভিউ — যেকোনো বাটনে বা ২ডি প্যাডে ক্লিক করলে অডিও চালু হবে।
+        Click any sound button or the 2D position pad to start Web Audio and test distance falloff (0–60 m) and stereo panning.
+      </p>
+
+      <div class="layout">
+        <section class="panel" aria-label="Street sounds and sliders">
+          <h2>একক শব্দ · One-Shot Street Sounds</h2>
+          <div class="sound-grid">
+            <button type="button" data-sound="rickshaw_bell">
+              <span class="bn">রিকশার বেল</span>
+              <span class="en">Rickshaw bell (tring-tring)</span>
+            </button>
+            <button type="button" data-sound="cng_horn">
+              <span class="bn">সিএনজি হর্ন</span>
+              <span class="en">CNG horn (nasal toot)</span>
+            </button>
+            <button type="button" data-sound="bus_horn">
+              <span class="bn">বাসের হর্ন</span>
+              <span class="en">Bus air horn (deep dual-saw)</span>
+            </button>
+            <button type="button" data-sound="car_horn">
+              <span class="bn">গাড়ির হর্ন</span>
+              <span class="en">Car horn (400/500 Hz dual-tone)</span>
+            </button>
+            <button type="button" data-sound="vendor_bell">
+              <span class="bn">ফেরিওয়ালার ঘণ্টা</span>
+              <span class="en">Vendor hand-bell (brass shake)</span>
+            </button>
+            <button type="button" data-sound="crowd_murmur">
+              <span class="bn">ভিড়ের গুঞ্জন (একবার)</span>
+              <span class="en">Crowd murmur burst</span>
+            </button>
+          </div>
+
+          <div class="sliders">
+            <label class="slider-row" for="murmur-slider">
+              <span class="slider-header">
+                <span>ভিড়ের গুঞ্জন · Looping Crowd Murmur</span>
+                <output id="murmur-value">0%</output>
+              </span>
+              <input id="murmur-slider" type="range" min="0" max="1" step="0.01" value="0" />
+            </label>
+
+            <label class="slider-row" for="master-slider">
+              <span class="slider-header">
+                <span>মূল ভলিউম · Master Volume</span>
+                <output id="master-value">85%</output>
+              </span>
+              <input id="master-slider" type="range" min="0" max="1" step="0.01" value="0.85" />
+            </label>
+          </div>
+
+          <p id="status" role="status">
+            অডিও শুরু করতে যেকোনো বাটনে ক্লিক করুন · Click any button to start audio.
+          </p>
+        </section>
+
+        <section class="panel" aria-label="2D spatial position pad">
+          <h2>দূরত্ব ও দিক · 2D Position Pad (±60 m)</h2>
+          <div id="pad-wrap">
+            <canvas id="spatial-pad" width="280" height="280" aria-label="2D sound position around listener at centre"></canvas>
+            <div class="coords" id="coords-readout">Source: (0.0 m, -12.0 m) · Dist: 12.0 m</div>
+            <p style="margin:0;font-size:12px;color:#99b8b2;text-align:center">
+              মাঝখানের বিন্দুটি শ্রোতা (Listener)। চারপাশে ক্লিক করে শব্দের অবস্থান বদলান।
+              Click anywhere in the square to move the sound source around the listener dot at the centre.
+            </p>
+          </div>
+        </section>
+      </div>
+
+      <p style="margin-top:20px;font-size:13px;color:#99b8b2">
+        <a href="./">খেলায় ফিরে যান · Return to the game</a>
+      </p>
+    </main>
+    <script type="module" src="/src/dev/soundPreview.ts"></script>
+  </body>
+</html>
