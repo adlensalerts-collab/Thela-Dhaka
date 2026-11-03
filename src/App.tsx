@@ -140,6 +140,7 @@ export default function App() {
     );
 
     engineRef.current = engine;
+    (window as any).__thelaEngine = engine;
     engine.start();
     engine.publishState(true);
 
@@ -376,7 +377,7 @@ export default function App() {
     setOnlineError(null);
     leaveCurrentRoom(false);
     engineRef.current.resumeAudio();
-    engineRef.current.setMode(role);
+    engineRef.current.setMode(role, 1);
     setView('playing');
     setNotice(role === 'vendor' ? 'Sell products, then escape police!' : 'Patrol streets and catch the vendor!');
   };
@@ -651,9 +652,15 @@ export default function App() {
               });
               return;
             }
+            const dayToReplay =
+              runStats?.dayNumber ??
+              engine.lastRunStats?.dayNumber ??
+              engine.state?.dayNumber ??
+              gameState?.dayNumber ??
+              1;
             setRematchPending(false);
             setRunStats(null);
-            engine.setMode(mode);
+            engine.setMode(mode, dayToReplay);
             setModalType(null);
           }}
           onMainMenu={() => {

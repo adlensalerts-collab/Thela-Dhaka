@@ -23,7 +23,8 @@ import {
   Heart,
   Flame,
   Camera,
-  Gamepad2
+  Gamepad2,
+  Clock
 } from 'lucide-react';
 import { GameState } from '../game/simulation';
 import { GameSettingsData, formatCode } from '../game/keybindings';
@@ -68,6 +69,13 @@ export const GameHUD: React.FC<GameHUDProps> = ({
   // world (x, z) → minimap pixels; real map uses the district transform, grid map the old ±120 one
   const mapXZRef = useRef<(x: number, z: number) => [number, number]>((x, z) => [((x + 120) / 240) * 160, ((z + 120) / 240) * 160]);
   const isVendor = state.mode === 'vendor' || state.mode === 'online_vendor';
+  const isSoloVendor = state.mode === 'vendor';
+  const dayNumber = state.dayNumber ?? 1;
+  const dayClockText = state.dayClockText ?? '06:00';
+  const dayProfit = state.dayProfit ?? -90;
+  const dayTarget = Math.max(1, state.dayTarget ?? 600);
+  const dayProgressPct = Math.min(100, Math.max(0, Math.round((Math.max(0, dayProfit) / dayTarget) * 100)));
+  const dayTargetReached = dayProfit >= dayTarget;
 
   const [showTouchControls, setShowTouchControls] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
@@ -352,6 +360,59 @@ export const GameHUD: React.FC<GameHUDProps> = ({
           </div>
 
           <div className="hidden sm:block h-8 w-px bg-teal-800/60" />
+
+          {isSoloVendor && (
+            <>
+              {/* Working Day & Clock */}
+              <div className="flex flex-col">
+                <span className="text-[9px] sm:text-[10px] text-teal-300 uppercase tracking-wider font-semibold whitespace-nowrap">
+                  Day {String(dayNumber).padStart(2, '0')} · দিন {dayNumber}
+                </span>
+                <span className="text-sm sm:text-base font-extrabold text-white font-mono tabular-nums leading-tight flex items-center gap-1 whitespace-nowrap">
+                  <Clock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                  <span>{dayClockText}</span>
+                  <span className="text-[10px] text-gray-400 font-normal">/22:00</span>
+                </span>
+              </div>
+
+              <div className="hidden sm:block h-8 w-px bg-teal-800/60" />
+
+              {/* Daily Net Profit & Target */}
+              <div className="flex flex-col min-w-[128px] sm:min-w-[156px]">
+                <div className="flex justify-between items-center text-[9px] sm:text-[10px] uppercase tracking-wider mb-0.5 gap-1.5 whitespace-nowrap">
+                  <span className="text-gray-300 font-semibold">নিট লাভ · Profit</span>
+                  <span
+                    className={`font-mono tabular-nums font-extrabold ${
+                      dayTargetReached
+                        ? 'text-emerald-400'
+                        : dayProfit >= 0
+                        ? 'text-amber-300'
+                        : 'text-rose-400'
+                    }`}
+                  >
+                    {dayProfit >= 0 ? `৳${dayProfit}` : `-৳${Math.abs(dayProfit)}`} / ৳{dayTarget}
+                  </span>
+                </div>
+                <div className="w-full h-1.5 sm:h-2 bg-gray-900/90 rounded-full overflow-hidden border border-teal-800/40">
+                  <div
+                    className={`h-full transition-all duration-200 rounded-full ${
+                      dayTargetReached
+                        ? 'bg-emerald-400'
+                        : dayProfit >= 0
+                        ? 'bg-amber-400'
+                        : 'bg-rose-500'
+                    }`}
+                    style={{ width: `${dayProgressPct}%` }}
+                  />
+                </div>
+                <span className="text-[8.5px] sm:text-[9px] text-teal-200/80 leading-none mt-0.5 whitespace-nowrap">
+                  ভাড়া+খাবার ৳৯০ সহ · incl. ৳90 rent/food
+                </span>
+              </div>
+
+              <div className="hidden sm:block h-8 w-px bg-teal-800/60" />
+            </>
+          )}
 
           {/* Wallet / Cash */}
           <div className="flex flex-col">

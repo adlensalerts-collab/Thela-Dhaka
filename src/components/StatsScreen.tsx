@@ -35,11 +35,19 @@ export const StatsScreen: React.FC<StatsScreenProps> = ({
   const result = stats?.result ?? 'jailed';
   const isPolice =
     stats?.mode === 'police' || stats?.mode === 'online_police';
+  const isSoloVendor = (stats?.mode ?? 'vendor') === 'vendor';
   const online =
     isOnline ?? (stats?.mode === 'online_vendor' || stats?.mode === 'online_police');
 
+  const dayNumber = stats?.dayNumber ?? 1;
+  const dayTarget = Math.max(1, stats?.dayTarget ?? 600);
+
   const headerText =
-    result === 'bribe_unaffordable'
+    result === 'day_passed'
+      ? 'Day passed / দিন সফল'
+      : result === 'day_failed'
+      ? 'Day failed / দিন ব্যর্থ'
+      : result === 'bribe_unaffordable'
       ? "ঘুষের টাকা ছিল না · Couldn't pay the bribe"
       : result === 'destroyed'
       ? 'ঠেলা ভেঙে গেছে · Cart Destroyed'
@@ -50,7 +58,7 @@ export const StatsScreen: React.FC<StatsScreenProps> = ({
       : 'জেলে গেলেন · Jailed';
 
   const headerAccent =
-    result === 'victory'
+    result === 'victory' || result === 'day_passed'
       ? 'text-emerald-300 border-emerald-500/40 bg-emerald-950/50'
       : 'text-amber-300 border-red-500/40 bg-red-950/50';
 
@@ -60,6 +68,8 @@ export const StatsScreen: React.FC<StatsScreenProps> = ({
   const spentBribes = stats?.spentBribes ?? 0;
   const spentCartUpgrades = stats?.spentCartUpgrades ?? 0;
   const spentStaminaUpgrades = stats?.spentStaminaUpgrades ?? 0;
+  const spentRent = stats?.spentRent ?? 0;
+  const spentFood = stats?.spentFood ?? 0;
   const profit =
     stats?.profit ??
     earned -
@@ -67,7 +77,15 @@ export const StatsScreen: React.FC<StatsScreenProps> = ({
         spentRepair +
         spentBribes +
         spentCartUpgrades +
-        spentStaminaUpgrades);
+        spentStaminaUpgrades +
+        spentRent +
+        spentFood);
+
+  const targetProgressPct = Math.min(
+    100,
+    Math.max(0, Math.round((Math.max(0, profit) / dayTarget) * 100))
+  );
+  const reachedTarget = profit >= dayTarget;
 
   const productEntries = Object.entries(stats?.salesByProduct ?? {}) as Array<[string, number]>;
   const maxProductCount = Math.max(
@@ -85,16 +103,25 @@ export const StatsScreen: React.FC<StatsScreenProps> = ({
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-teal-800/60 pb-4">
         <div>
           <span className="text-[11px] uppercase tracking-widest text-teal-300/80 font-semibold">
-            খেলার পরিসংখ্যান · Run Statistics
+            {isSoloVendor
+              ? `Day ${String(dayNumber).padStart(2, '0')} · দিন ${dayNumber} · ২২:০০ সমাপ্তি`
+              : 'খেলার পরিসংখ্যান · Run Statistics'}
           </span>
           <h2 className="text-xl sm:text-2xl font-extrabold text-white mt-0.5">
             {headerText}
           </h2>
         </div>
-        <div
-          className={`px-3.5 py-1.5 rounded-xl border text-xs font-bold self-start sm:self-auto ${headerAccent}`}
-        >
-          {isPolice ? 'পুলিশ টহল · Police Patrol' : 'ঠেলা বিক্রেতা · Street Vendor'}
+        <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+          {isSoloVendor && (
+            <div className="px-3 py-1.5 rounded-xl border border-teal-500/40 bg-teal-900/50 text-teal-200 text-xs font-bold font-mono">
+              Day {String(dayNumber).padStart(2, '0')} / দিন {dayNumber}
+            </div>
+          )}
+          <div
+            className={`px-3.5 py-1.5 rounded-xl border text-xs font-bold ${headerAccent}`}
+          >
+            {isPolice ? 'পুলিশ টহল · Police Patrol' : 'ঠেলা বিক্রেতা · Street Vendor'}
+          </div>
         </div>
       </div>
 
@@ -133,24 +160,67 @@ export const StatsScreen: React.FC<StatsScreenProps> = ({
                 <span>স্ট্যামিনা আপগ্রেড · Stamina Upgrades</span>
                 <span className="font-mono text-gray-200">-৳{spentStaminaUpgrades}</span>
               </div>
+              {isSoloVendor && (
+                <>
+                  <div className="flex justify-between text-gray-300">
+                    <span>ঠেলা ভাড়া · Rent</span>
+                    <span className="font-mono text-gray-200">-৳{spentRent}</span>
+                  </div>
+                  <div className="flex justify-between text-gray-300">
+                    <span>খাবার খরচ · Food</span>
+                    <span className="font-mono text-gray-200">-৳{spentFood}</span>
+                  </div>
+                </>
+              )}
             </div>
           </div>
 
-          <div className="pt-2.5 border-t border-teal-800/60 flex items-baseline justify-between">
-            <span className="text-xs font-bold text-amber-300">
-              নিট লাভ · Profit
-            </span>
-            <span
-              className={`text-xl sm:text-2xl font-extrabold font-mono text-amber-400 ${
-                profit > 0
-                  ? '!text-emerald-400'
-                  : profit < 0
-                  ? '!text-red-400'
-                  : 'text-amber-400'
-              }`}
-            >
-              {profit >= 0 ? `৳${profit}` : `-৳${Math.abs(profit)}`}
-            </span>
+          <div className="pt-2.5 border-t border-teal-800/60 space-y-2">
+            <div className="flex items-baseline justify-between">
+              <span className="text-xs font-bold text-amber-300">
+                নিট লাভ · Profit
+              </span>
+              <span
+                className={`text-xl sm:text-2xl font-extrabold font-mono text-amber-400 ${
+                  profit > 0
+                    ? '!text-emerald-400'
+                    : profit < 0
+                    ? '!text-red-400'
+                    : 'text-amber-400'
+                }`}
+              >
+                {profit >= 0 ? `৳${profit}` : `-৳${Math.abs(profit)}`}
+              </span>
+            </div>
+
+            {isSoloVendor && (
+              <div className="space-y-1 pt-1 border-t border-teal-800/40">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-teal-200 font-semibold">
+                    লক্ষ্যমাত্রা · Day Target
+                  </span>
+                  <span
+                    className={`font-mono font-bold ${
+                      reachedTarget ? 'text-emerald-300' : 'text-amber-300'
+                    }`}
+                  >
+                    {profit >= 0 ? `৳${profit}` : `-৳${Math.abs(profit)}`} / ৳{dayTarget} ({targetProgressPct}%)
+                  </span>
+                </div>
+                <div className="w-full h-2 bg-teal-900/80 rounded-full overflow-hidden border border-teal-700/50">
+                  <div
+                    className={`h-full rounded-full transition-all duration-300 ${
+                      reachedTarget
+                        ? 'bg-emerald-400'
+                        : profit >= 0
+                        ? 'bg-amber-400'
+                        : 'bg-rose-500'
+                    }`}
+                    style={{ width: `${targetProgressPct}%` }}
+                  />
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -306,6 +376,14 @@ export const StatsScreen: React.FC<StatsScreenProps> = ({
           </div>
 
           <div className="space-y-1.5 text-xs pt-0.5">
+            {isSoloVendor && (
+              <div className="flex justify-between text-gray-200">
+                <span>কাজের দিন · Working Day</span>
+                <span className="font-mono font-bold text-amber-300">
+                  Day {String(dayNumber).padStart(2, '0')} · দিন {dayNumber}
+                </span>
+              </div>
+            )}
             <div className="flex justify-between text-gray-200">
               <span>অতিক্রান্ত দূরত্ব · Distance</span>
               <span className="font-mono font-bold text-teal-300">
@@ -352,6 +430,10 @@ export const StatsScreen: React.FC<StatsScreenProps> = ({
             ? rematchPending
               ? 'Waiting for opponent... / প্রতিপক্ষের অপেক্ষায়...'
               : 'Request rematch / পুনরায় খেলার অনুরোধ'
+            : result === 'day_passed'
+            ? 'Play day again / দিনটি আবার খেলুন'
+            : result === 'day_failed'
+            ? 'Retry day / দিনটি আবার চেষ্টা করুন'
             : 'Play Again / আবার খেলুন'}
         </button>
         <button

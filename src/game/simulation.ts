@@ -51,7 +51,22 @@ const HOTSPOT_COOLDOWN_SECONDS = 18;
 const PEDESTRIAN_VIEW_DISTANCE = 90;
 import { StaminaSystem } from './stamina';
 import { WeatherSystem, type WeatherType } from './world/weather';
-import { StatsTracker, type RunStats } from './stats';
+import { StatsTracker, type RunStats, type RunResult } from './stats';
+import {
+  DAY_DURATION_SECONDS,
+  DAY_FIXED_COST,
+  DAY_FOOD_COST,
+  DAY_OPENING_CAP,
+  DAY_OPENING_CASH,
+  DAY_OPENING_STOCK,
+  DAY_RENT_COST,
+  clampDayElapsedSeconds,
+  evaluateDayOutcome,
+  formatDayClock,
+  getDayProfitTarget,
+  isDayComplete,
+  normalizeDayNumber
+} from './day';
 import { RemoteActor } from './net/remoteActor';
 import { CrowdCharacterLOD } from './world/characterVisual';
 
@@ -84,6 +99,22 @@ export interface GameState {
   stall: THREE.Group | null;
   policeCash: number;
   time: number;
+  /** Solo-vendor working-day number (1-indexed, distinct from cart upgrade `level`). */
+  dayNumber: number;
+  /** Active gameplay seconds elapsed in the current working day (0..720). */
+  dayElapsedSeconds: number;
+  /** Formatted HH:MM working-day clock (06:00..22:00). */
+  dayClockText: string;
+  /** Required net profit target for the current working day. */
+  dayTarget: number;
+  /** Live net profit (for solo vendor, includes pending ৳90 rent+food before closing settlement). */
+  dayProfit: number;
+  /** Total sales income earned during the current working day. */
+  dayEarned: number;
+  /** Pending daily rent+food cost (৳90 before closing, ৳0 once settled). */
+  dayPendingCosts: number;
+  /** Whether the daily ৳50 rent + ৳40 food has been settled for this day. */
+  dayCostsSettled: boolean;
   heading: number;
   speed: number;
   score: number;
@@ -164,6 +195,7 @@ export class GameEngine {
   stamina = new StaminaSystem();
   stats = new StatsTracker();
   lastRunStats: RunStats | null = null;
+  dayEnded: boolean = false;
   remote = new RemoteActor();
   crowdCharacters = new CrowdCharacterLOD();
   remoteActive = false;
@@ -261,15 +293,18 @@ export class GameEngine {
     this.startAudio();
   }
 
-  getInitialState(mode: GameState['mode']): GameState {
+  getInitialState(mode: GameState['mode'], dayNumber = 1): GameState {
     const isVendor = mode === 'vendor' || mode === 'online_vendor';
+    const isSoloVendor = mode === 'vendor';
+    const normalizedDay = normalizeDayNumber(dayNumber);
+    const dayTarget = getDayProfitTarget(normalizedDay);
     return {
       mode,
       stage: 'playing',
-      cash: 250,
+      cash: DAY_OPENING_CASH,
       level: 1,
-      cap: 10,
-      stock: 10,
+      cap: DAY_OPENING_CAP,
+      stock: DAY_OPENING_STOCK,
       sales: 0,
       total: 0,
       heat: 0,
@@ -283,6 +318,14 @@ export class GameEngine {
       stall: null,
       policeCash: 0,
       time: 0,
+      dayNumber: normalizedDay,
+      dayElapsedSeconds: 0,
+      dayClockText: formatDayClock(0),
+      dayTarget,
+      dayProfit: isSoloVendor ? -DAY_FIXED_COST : 0,
+      dayEarned: 0,
+      dayPendingCosts: isSoloVendor ? DAY_FIXED_COST : 0,
+      dayCostsSettled: false,
       heading: 0,
       speed: 0,
       score: 0,
@@ -1121,8 +1164,52 @@ export class GameEngine {
     ];
   }
 
-  setMode(mode: GameState['mode']) {
-    this.state = this.getInitialState(mode);
+  syncDayAccountingState() {
+    if (!this.state) return;
+    const isSoloVendor = this.state.mode === 'vendor';
+    this.state.dayNumber = this.stats.dayNumber;
+    this.state.dayTarget = this.stats.dayTarget;
+    this.state.dayEarned = this.stats.earned;
+    this.state.dayCostsSettled = this.stats.dayCostsSettled;
+    this.state.dayPendingCosts =
+      isSoloVendor && !this.stats.dayCostsSettled ? DAY_FIXED_COST : 0;
+    this.state.dayProfit = isSoloVendor
+      ? this.stats.liveHudProfit()
+      : this.stats.currentProfit();
+  }
+
+  private cancelActiveTimers() {
+    if (this.state?.sale) {
+      if (this.state.sale.customer) {
+        this.state.sale.customer.isEngagedInSale = false;
+        this.state.sale.customer.summonUntil = 0;
+      }
+      this.state.sale = null;
+    }
+    if (this.state) {
+      this.state.repairing = null;
+      this.state.restocking = null;
+    }
+    if (this.saleIndicator && this.human) {
+      this.saleIndicator.update(this.human.position, null, 0);
+    }
+  }
+
+  restartDay() {
+    const mode = this.state?.mode ?? 'vendor';
+    const dayNumber = this.state?.dayNumber ?? 1;
+    this.setMode(mode, dayNumber);
+  }
+
+  setMode(mode: GameState['mode'], dayNumber = 1) {
+    this.cancelActiveTimers();
+    if (this.state?.stall) {
+      this.scene.remove(this.state.stall);
+      this.obstacles = this.obstacles.filter((o) => o.tag !== 'big_stall');
+    }
+    const normalizedDay = normalizeDayNumber(dayNumber);
+    this.dayEnded = false;
+    this.state = this.getInitialState(mode, normalizedDay);
     const isVendor = mode === 'vendor' || mode === 'online_vendor';
     this.human.visible = isVendor || mode === 'online_police';
     this.officer.visible = true;
@@ -1134,6 +1221,12 @@ export class GameEngine {
     this.hotspotCooldown = 0;
     this.summonPoint = null;
     this.pedestrianManager?.releaseSummoned();
+    if (this.pedestrianManager) {
+      for (const ped of this.pedestrianManager.pedestrians) {
+        ped.isEngagedInSale = false;
+        ped.summonUntil = 0;
+      }
+    }
     if (this.world) setServiceMode(this.world, isVendor ? 'vendor' : 'police');
     if (this.world) {
       const sp = this.world.spawn;
@@ -1170,10 +1263,12 @@ export class GameEngine {
     this.mouseMovedRecently = 0;
     this.damage.reset();
     this.stamina.reset(isVendor ? 1 : 3);
-    this.stats.reset(mode);
+    this.stats.reset(mode, normalizedDay);
     this.lastRunStats = null;
+    this.syncDayAccountingState();
     this.weather?.reset();
     this.clearInputs();
+    this.clock.getDelta();
     this.acc = 0;
     this.playBeep(520, 0.2);
     setTimeout(() => this.renderer.domElement.focus(), 15);
@@ -1194,6 +1289,9 @@ export class GameEngine {
   }
 
   beginSale() {
+    if (!this.state || this.state.stage !== 'playing' || (this.state.mode === 'vendor' && this.dayEnded)) {
+      return;
+    }
     const isVendor = this.state.mode === 'vendor' || this.state.mode === 'online_vendor';
     if (
       !isVendor ||
@@ -1232,6 +1330,9 @@ export class GameEngine {
   }
 
   completeSale() {
+    if (!this.state || this.state.stage !== 'playing' || (this.state.mode === 'vendor' && this.dayEnded)) {
+      return;
+    }
     const s = this.state.sale;
     if (!s) return;
     if (s.customer) {
@@ -1243,6 +1344,7 @@ export class GameEngine {
     this.state.stock--;
     this.state.sales++;
     this.stats.recordSale(s.product, s.price);
+    this.syncDayAccountingState();
     this.state.heat = Math.min(100, this.state.heat + 18 + this.state.level * 3.7);
     this.state.sale = null;
     this.playBeep(880, 0.2, 'triangle');
@@ -1258,6 +1360,9 @@ export class GameEngine {
   }
 
   upgradeCart() {
+    if (!this.state || this.state.stage !== 'playing' || (this.state.mode === 'vendor' && this.dayEnded)) {
+      return;
+    }
     const isVendor = this.state.mode === 'vendor' || this.state.mode === 'online_vendor';
     if (!isVendor) return;
     if (!this.atGarageForUpgrade()) return;
@@ -1276,12 +1381,16 @@ export class GameEngine {
     this.state.stock += 3;
     this.stats.spentCartUpgrades += cost;
     this.stats.cartLevel = this.state.level;
+    this.syncDayAccountingState();
     this.playBeep(750, 0.25);
     this.onEvent('notify', `Cart level ${this.state.level}! Capacity ${this.state.cap}.`);
     this.publishState(true);
   }
 
   upgradeStamina() {
+    if (!this.state || this.state.stage !== 'playing' || (this.state.mode === 'vendor' && this.dayEnded)) {
+      return;
+    }
     const isVendor = this.state.mode === 'vendor' || this.state.mode === 'online_vendor';
     if (!isVendor) return;
     if (!this.atGarageForUpgrade()) return;
@@ -1299,6 +1408,7 @@ export class GameEngine {
       this.state.cash -= paid;
       this.stats.spentStaminaUpgrades += paid;
       this.stats.staminaLevel = this.stamina.level;
+      this.syncDayAccountingState();
       this.state.stamina = Math.round(this.stamina.stamina);
       this.state.staminaLevel = this.stamina.level;
       this.state.staminaUpgradeCost = this.stamina.nextUpgradeCost;
@@ -1310,6 +1420,9 @@ export class GameEngine {
   }
 
   restockCart() {
+    if (!this.state || this.state.stage !== 'playing' || (this.state.mode === 'vendor' && this.dayEnded)) {
+      return;
+    }
     const isVendor = this.state.mode === 'vendor' || this.state.mode === 'online_vendor';
     if (!isVendor || this.state.sale || this.state.repairing || this.state.restocking) return;
     const { entrance, distance } = this.nearestAarotInfo(this.human.position.x, this.human.position.z);
@@ -1340,6 +1453,9 @@ export class GameEngine {
   }
 
   placeStall() {
+    if (!this.state || this.state.stage !== 'playing' || (this.state.mode === 'vendor' && this.dayEnded)) {
+      return;
+    }
     const isVendor = this.state.mode === 'vendor' || this.state.mode === 'online_vendor';
     if (!isVendor) return;
     if (this.state.level < 10) {
@@ -1509,22 +1625,39 @@ export class GameEngine {
     this.onEvent('police_decision');
   }
 
-  endRun(result: 'jailed' | 'bribe_unaffordable' | 'destroyed' | 'victory') {
-    if (this.state.sale) {
-      if (this.state.sale.customer) {
-        this.state.sale.customer.isEngagedInSale = false;
-        this.state.sale.customer.summonUntil = 0;
-      }
-      this.state.sale = null;
+  /**
+   * Complete the solo-vendor working day at 22:00 (720 active seconds).
+   * Cancels pending timers, settles ৳50 rent + ৳40 food once, freezes stats, and ends the day.
+   */
+  private completeWorkingDay() {
+    if (this.dayEnded || !this.state || this.state.mode !== 'vendor' || this.state.stage !== 'playing') {
+      return;
     }
-    this.state.repairing = null;
-    this.state.restocking = null;
+    this.dayEnded = true;
+    this.state.dayElapsedSeconds = DAY_DURATION_SECONDS;
+    this.state.dayClockText = formatDayClock(DAY_DURATION_SECONDS);
+    this.cancelActiveTimers();
+
+    if (this.stats.settleDayCosts(DAY_RENT_COST, DAY_FOOD_COST)) {
+      this.state.cash -= DAY_FIXED_COST;
+    }
+    this.syncDayAccountingState();
+
+    const outcome = evaluateDayOutcome(this.stats.currentProfit(), this.state.dayNumber);
+    this.endRun(outcome.result);
+  }
+
+  endRun(result: Exclude<RunResult, null>) {
+    this.cancelActiveTimers();
     this.state.damage = this.damage.damage;
     this.state.stage = 'over';
     this.clearInputs();
+    this.syncDayAccountingState();
     const snapshot = this.stats.snapshot({
       cartLevel: this.state.level,
       staminaLevel: this.state.staminaLevel,
+      dayNumber: this.state.dayNumber,
+      dayTarget: this.state.dayTarget,
       mode: this.state.mode,
       result,
       arrests: this.state.arrests
@@ -1535,6 +1668,9 @@ export class GameEngine {
   }
 
   payBribe(): boolean {
+    if (!this.state || (this.state.mode === 'vendor' && this.dayEnded)) {
+      return false;
+    }
     const cost = 90 + this.state.level * 45;
     if (this.state.cash < cost) {
       this.endRun('bribe_unaffordable');
@@ -1568,6 +1704,7 @@ export class GameEngine {
     }
     this.stats.spentBribes += cost;
     this.stats.bribesPaid++;
+    this.syncDayAccountingState();
     this.resumeGame();
     this.onEvent('notify', 'ঘুষ দিয়ে ছাড়া পেলেন · ৳' + cost);
     return true;
@@ -1627,6 +1764,7 @@ export class GameEngine {
 
   handleAction(action: string) {
     if (!this.state || this.state.stage !== 'playing' || this.isMenuOrModalOpen) return;
+    if (this.state.mode === 'vendor' && this.dayEnded) return;
     const isVendor = this.state.mode === 'vendor' || this.state.mode === 'online_vendor';
     const isPolice = this.state.mode === 'police' || this.state.mode === 'online_police';
 
@@ -1719,8 +1857,20 @@ export class GameEngine {
   }
 
   simulate(dt: number) {
-    if (!this.state || this.state.stage !== 'playing') return;
+    if (!this.state || this.state.stage !== 'playing' || this.isMenuOrModalOpen) return;
+    if (this.state.mode === 'vendor' && this.dayEnded) return;
+    if (!(dt > 0) || !Number.isFinite(dt)) return;
     this.state.time += dt;
+    if (this.state.mode === 'vendor') {
+      const nextElapsed = this.state.dayElapsedSeconds + dt;
+      this.state.dayElapsedSeconds = clampDayElapsedSeconds(nextElapsed);
+      this.state.dayClockText = formatDayClock(this.state.dayElapsedSeconds);
+      if (isDayComplete(nextElapsed)) {
+        this.stats.timePlayedSeconds += dt;
+        this.completeWorkingDay();
+        return;
+      }
+    }
     this.damage.tick(dt);
 
     // Dampen physics recoil & timers
@@ -2153,6 +2303,8 @@ export class GameEngine {
       if (this.state.stall && Math.random() < dt * 0.08) {
         this.state.cash += 45;
         this.state.total += 45;
+        this.stats.recordSale('বড় দোকান · Stall', 45);
+        this.syncDayAccountingState();
         this.publishState(true);
       }
     }
@@ -2217,6 +2369,7 @@ export class GameEngine {
             this.state.policeCash -= costPaid;
           }
           this.stats.spentRepair += costPaid;
+          this.syncDayAccountingState();
           this.state.damage = 0;
           this.state.repairCost = 0;
           this.playBeep(480, 0.2);
@@ -2240,6 +2393,7 @@ export class GameEngine {
         if (this.state.cash >= rs.cost) {
           this.state.cash -= rs.cost;
           this.stats.spentRestock += rs.cost;
+          this.syncDayAccountingState();
           this.state.stock = this.state.cap;
           this.playBeep(450, 0.15);
           this.onEvent('notify', `রিস্টক সম্পন্ন · ${rs.needed}টি পণ্য · ৳${rs.cost}`);
@@ -2279,6 +2433,7 @@ export class GameEngine {
       this.state.weatherTraction = Math.round(this.weather.traction * 100);
       this.state.weatherVisibility = Math.round(this.weather.visibilityFactor * 100);
     }
+    this.syncDayAccountingState();
 
     // Throttled publish to React HUD
     this.publishState(false);

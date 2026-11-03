@@ -10,6 +10,7 @@ Which file owns which feature. Sizes as of Hotfix 8.1. Files over ~20 KB: read v
 | Collision (circle/box/polygon, sliding) | `src/game/collision.ts` | `resolveMovement`, `checkCircleVsObstacle`, `circleVsPolygon`, `PolyObstacle` |
 | Vehicle damage + repair cost | `src/game/damage.ts` | `DamageSystem`, `checkVehicleImpact` |
 | Sprint stamina + levels | `src/game/stamina.ts` | `StaminaSystem`, `STAMINA_LEVELS` |
+| Working-day clock + daily profit targets & rent/food accounting | `src/game/day.ts` | `DAY_DURATION_SECONDS`, `DAY_RENT_COST`, `DAY_FOOD_COST`, `formatDayClock`, `getDayProfitTarget`, `evaluateDayOutcome` |
 | Run statistics | `src/game/stats.ts` | `StatsTracker`, `RunStats` |
 | Pedestrians (crowd AI, hotspot customers, AI Studio's dormant rage code) — **26 KB** | `src/game/pedestrians.ts` | `PedestrianManager.summonCustomers`, `releaseSummoned`, `setHotspots` |
 | Footpath route graph + A* | `src/game/pathfinding.ts` | `SidewalkGraph` |

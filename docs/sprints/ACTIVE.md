@@ -45,7 +45,7 @@ Built and tested by Claude. Wiring (M-W) done by Claude: maps are bundled into t
 
 | # | Sprint | Status | Deliverable |
 |---|---|---|---|
-| G1 | Day clock + day end | ⏳ | 06:00–22:00 clock (~12 min), day targets, rent/food costs, day passed/failed → statistics screen |
+| G1 | Day clock + day end | 🔄 (implemented in `src/game/day.ts`, `stats.ts`, `simulation.ts`, `GameHUD.tsx`, `StatsScreen.tsx`, and `App.tsx`; `npm run lint`, `npm run build`, Pages build, and deterministic clock/target/accounting/reset/SSR checks pass; headless browser check remains) | 06:00–22:00 clock (~12 min), day targets, rent/food costs, day passed/failed → statistics screen |
 | G2 | Game over + victory | ⏳ | Jailed / bankrupt / wrecked game-over rules; Level 10 victory (own a shop in New Market); Endless mode |
 | G3 | Levels & difficulty | ⏳ | Level table (police count, vision, traffic, rage sensitivity, customer patience); districts by level; level-up screen |
 

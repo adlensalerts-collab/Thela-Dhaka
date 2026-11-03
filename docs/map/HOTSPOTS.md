@@ -13,11 +13,11 @@ Find the region with `grep -n "<anchor>" <file>`, then read a slice (`sed -n 'ST
 | Hotspot customers | `  updateHotspotCrowd(` |
 | Helpers: obstacles near point, bounds, services, footpath placement | `  nearObstacles(` · `  mapBound(` · `  nearestGarageInfo(` · `  footpathPoint(` |
 | Input listeners / key handling | `  initListeners() {` |
-| Mode start + spawn positions + police service mode | `  setMode(mode` |
+| Mode start + spawn positions + police service mode | `  syncDayAccountingState()` · `  restartDay()` · `  setMode(mode` |
 | Selling | `  beginSale() {` · `  completeSale() {` |
 | Upgrades (garage-only) | `atGarageForUpgrade(` · `  upgradeCart() {` · `  upgradeStamina() {` |
 | Restock / stall | `  restockCart() {` · `  placeStall() {` |
-| Arrest, bribe, jail, run end | `  arrestVendor() {` · `  payBribe()` · `  goToJail()` · `  endRun(` |
+| Arrest, bribe, jail, working-day completion, run end | `  arrestVendor() {` · `  completeWorkingDay()` · `  payBribe()` · `  goToJail()` · `  endRun(` |
 | Action dispatch (incl. repair/treatment) | `  handleAction(action` |
 | Per-frame simulation | `  simulate(dt` — regions inside by comment: `// Vehicle (tank-style) movement` · `// Dynamic Traffic collision` · `// AI Police pursuit` · `// Update A* Sidewalk Pedestrian crowd` · `// Sale timer check` · `// Traffic motion` · `// Timed garage repair check` · `// Timed aarot restock check` · `// Sync damage, garage & aarot proximity` |
 | Skeletal gait hooks (vendor, officer, NPC vendor) | `// Update walk cycles & limb poses` |

@@ -1,4 +1,22 @@
-export type RunResult = 'jailed' | 'bribe_unaffordable' | 'destroyed' | 'mob_beaten' | 'victory' | null;
+import {
+  DAY_FOOD_COST,
+  DAY_RENT_COST,
+  computeDayProfit,
+  computeLiveHudProfit,
+  computeTotalExpenses,
+  getDayProfitTarget,
+  normalizeDayNumber
+} from './day';
+
+export type RunResult =
+  | 'jailed'
+  | 'bribe_unaffordable'
+  | 'destroyed'
+  | 'mob_beaten'
+  | 'victory'
+  | 'day_passed'
+  | 'day_failed'
+  | null;
 export type RunMode = 'vendor' | 'police' | 'online_vendor' | 'online_police';
 
 export interface BestSaleRecord {
@@ -14,6 +32,8 @@ export interface RunStats {
   spentBribes: number;
   spentCartUpgrades: number;
   spentStaminaUpgrades: number;
+  spentRent: number;
+  spentFood: number;
   profit: number;
 
   // Selling
@@ -39,6 +59,10 @@ export interface RunStats {
   timePlayedSeconds: number;
   cartLevel: number;
   staminaLevel: number;
+  dayNumber: number;
+  dayTarget: number;
+  dayPassed: boolean;
+  dayCostsSettled: boolean;
   mode: RunMode;
   result: RunResult;
 
@@ -53,6 +77,9 @@ export interface RunStats {
     spentBribes: number;
     spentCartUpgrades: number;
     spentStaminaUpgrades: number;
+    spentRent: number;
+    spentFood: number;
+    totalSpent: number;
     profit: number;
   };
   selling: {
@@ -78,6 +105,10 @@ export interface RunStats {
     timePlayedSeconds: number;
     cartLevel: number;
     staminaLevel: number;
+    dayNumber: number;
+    dayTarget: number;
+    dayPassed: boolean;
+    dayCostsSettled: boolean;
     mode: RunMode;
     result: RunResult;
   };
@@ -90,6 +121,9 @@ export class StatsTracker {
   spentBribes = 0;
   spentCartUpgrades = 0;
   spentStaminaUpgrades = 0;
+  spentRent = 0;
+  spentFood = 0;
+  dayCostsSettled = false;
 
   itemsSold = 0;
   salesByProduct: Record<string, number> = {};
@@ -110,18 +144,23 @@ export class StatsTracker {
   timePlayedSeconds = 0;
   cartLevel = 1;
   staminaLevel = 1;
+  dayNumber = 1;
+  dayTarget = getDayProfitTarget(1);
   mode: RunMode = 'vendor';
   result: RunResult = null;
 
   arrests = 0;
 
-  reset(mode: RunMode = 'vendor') {
+  reset(mode: RunMode = 'vendor', dayNumber = 1) {
     this.earned = 0;
     this.spentRestock = 0;
     this.spentRepair = 0;
     this.spentBribes = 0;
     this.spentCartUpgrades = 0;
     this.spentStaminaUpgrades = 0;
+    this.spentRent = 0;
+    this.spentFood = 0;
+    this.dayCostsSettled = false;
 
     this.itemsSold = 0;
     this.salesByProduct = {};
@@ -142,6 +181,8 @@ export class StatsTracker {
     this.timePlayedSeconds = 0;
     this.cartLevel = 1;
     this.staminaLevel = mode === 'vendor' || mode === 'online_vendor' ? 1 : 3;
+    this.dayNumber = normalizeDayNumber(dayNumber);
+    this.dayTarget = getDayProfitTarget(this.dayNumber);
     this.mode = mode;
     this.result = null;
 
@@ -157,22 +198,56 @@ export class StatsTracker {
     }
   }
 
+  /**
+   * Settle daily fixed costs (rent + food) at most once per working day.
+   * Returns true if settled on this call, false if already settled.
+   */
+  settleDayCosts(rent = DAY_RENT_COST, food = DAY_FOOD_COST): boolean {
+    if (this.dayCostsSettled) {
+      return false;
+    }
+    this.dayCostsSettled = true;
+    this.spentRent += rent;
+    this.spentFood += food;
+    return true;
+  }
+
+  currentTotalSpent(): number {
+    return computeTotalExpenses(this);
+  }
+
+  currentProfit(): number {
+    return computeDayProfit(this);
+  }
+
+  liveHudProfit(): number {
+    return computeLiveHudProfit(this, this.dayCostsSettled);
+  }
+
   snapshot(
-    overrides?: Partial<Pick<RunStats, 'cartLevel' | 'staminaLevel' | 'mode' | 'result' | 'arrests'>>
+    overrides?: Partial<
+      Pick<
+        RunStats,
+        'cartLevel' | 'staminaLevel' | 'dayNumber' | 'dayTarget' | 'mode' | 'result' | 'arrests'
+      >
+    >
   ): RunStats {
     if (overrides?.cartLevel !== undefined) this.cartLevel = overrides.cartLevel;
     if (overrides?.staminaLevel !== undefined) this.staminaLevel = overrides.staminaLevel;
+    if (overrides?.dayNumber !== undefined) {
+      this.dayNumber = normalizeDayNumber(overrides.dayNumber);
+      this.dayTarget = getDayProfitTarget(this.dayNumber);
+    }
+    if (overrides?.dayTarget !== undefined) this.dayTarget = overrides.dayTarget;
     if (overrides?.mode !== undefined) this.mode = overrides.mode;
     if (overrides?.result !== undefined) this.result = overrides.result;
     if (overrides?.arrests !== undefined) this.arrests = overrides.arrests;
 
-    const totalSpent =
-      this.spentRestock +
-      this.spentRepair +
-      this.spentBribes +
-      this.spentCartUpgrades +
-      this.spentStaminaUpgrades;
-    const profit = this.earned - totalSpent;
+    const totalSpent = this.currentTotalSpent();
+    const profit = this.currentProfit();
+    const dayPassed =
+      this.result === 'day_passed' ||
+      (this.result !== 'day_failed' && profit >= this.dayTarget);
     const salesByProductCopy = { ...this.salesByProduct };
     const bestSaleCopy = this.bestSale ? { ...this.bestSale } : null;
 
@@ -183,6 +258,8 @@ export class StatsTracker {
       spentBribes: this.spentBribes,
       spentCartUpgrades: this.spentCartUpgrades,
       spentStaminaUpgrades: this.spentStaminaUpgrades,
+      spentRent: this.spentRent,
+      spentFood: this.spentFood,
       profit,
 
       itemsSold: this.itemsSold,
@@ -204,6 +281,10 @@ export class StatsTracker {
       timePlayedSeconds: this.timePlayedSeconds,
       cartLevel: this.cartLevel,
       staminaLevel: this.staminaLevel,
+      dayNumber: this.dayNumber,
+      dayTarget: this.dayTarget,
+      dayPassed,
+      dayCostsSettled: this.dayCostsSettled,
       mode: this.mode,
       result: this.result,
 
@@ -216,12 +297,15 @@ export class StatsTracker {
         spentBribes: this.spentBribes,
         spentCartUpgrades: this.spentCartUpgrades,
         spentStaminaUpgrades: this.spentStaminaUpgrades,
+        spentRent: this.spentRent,
+        spentFood: this.spentFood,
+        totalSpent,
         profit
       },
       selling: {
         itemsSold: this.itemsSold,
-        salesByProduct: salesByProductCopy,
-        bestSale: bestSaleCopy,
+        salesByProduct: { ...salesByProductCopy },
+        bestSale: bestSaleCopy ? { ...bestSaleCopy } : null,
         salesInterrupted: this.salesInterrupted
       },
       trouble: {
@@ -241,6 +325,10 @@ export class StatsTracker {
         timePlayedSeconds: this.timePlayedSeconds,
         cartLevel: this.cartLevel,
         staminaLevel: this.staminaLevel,
+        dayNumber: this.dayNumber,
+        dayTarget: this.dayTarget,
+        dayPassed,
+        dayCostsSettled: this.dayCostsSettled,
         mode: this.mode,
         result: this.result
       }
