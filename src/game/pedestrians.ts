@@ -804,35 +804,59 @@ export class PedestrianManager {
    * vendor at (x, z) and wait up to `waitSeconds` to buy. Returns how many are coming.
    */
   summonCustomers(x: number, z: number, max: number, radius: number, waitSeconds = 25): number {
-    const free = this.pedestrians
+    const goal = this.graph.findNearestNode(x, z);
+    const routeLength = (fromX: number, fromZ: number, route: Array<{ x: number; z: number }>) => {
+      let walk = route.length ? Math.hypot(route[0].x - fromX, route[0].z - fromZ) : 0;
+      for (let k = 1; k < route.length; k++) walk += Math.hypot(route[k].x - route[k - 1].x, route[k].z - route[k - 1].z);
+      return walk;
+    };
+    // Sprint 10: only people with a fairly direct walk come over (the real footpath network can
+    // turn 55 m as the crow flies into a 400 m detour around a block).
+    const direct = (fromX: number, fromZ: number, startNode: number) => {
+      const route = this.graph.findAStarPath(startNode, goal);
+      const straight = Math.hypot(fromX - x, fromZ - z);
+      const walk = routeLength(fromX, fromZ, route);
+      return walk <= Math.max(straight * 1.8, straight + 35) ? { route, walk } : null;
+    };
+    const chosen: Array<{ p: PedestrianNPC; route: Array<{ x: number; z: number }> }> = [];
+    const nearby = this.pedestrians
       .filter((p) => p.active && p.groupId === 0 && !p.isEngagedInSale && !p.summonUntil && (p.state === 'walking' || p.state === 'idle'))
       .map((p) => ({ p, d: Math.hypot(p.mesh.position.x - x, p.mesh.position.z - z) }))
       .filter((e) => e.d <= radius && e.d > 1.5)
-      .sort((a, b) => a.d - b.d)
-      .slice(0, max);
+      .sort((a, b) => a.d - b.d);
+    for (const { p } of nearby) {
+      if (chosen.length >= max) break;
+      const ok = direct(p.mesh.position.x, p.mesh.position.z, this.graph.findNearestNode(p.mesh.position.x, p.mesh.position.z));
+      if (ok) chosen.push({ p, route: ok.route });
+    }
     // Not enough people nearby: bring in pedestrians who are out of view (> 90 m), placing them on
-    // a footpath 45-70 m away so they visibly walk in (never seen teleporting).
-    if (free.length < max) {
+    // a footpath 45-60 m away so they visibly walk in (never seen teleporting).
+    if (chosen.length < max) {
       // Parked (off-street) people count as far away: bringing them in also refills the street.
       const far = this.pedestrians
         .filter((p) => p.groupId === 0 && !p.isEngagedInSale && !p.summonUntil && p.state !== 'hostile' && p.state !== 'injured'
           && (!p.active || Math.hypot(p.mesh.position.x - x, p.mesh.position.z - z) > 90));
       const ring = this.graph.nodes.filter((n) => { const d = Math.hypot(n.x - x, n.z - z); return d >= 45 && d <= 60; });
+      // shuffle the ring, then keep only spots with a direct walk to the thela
+      for (let i = ring.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [ring[i], ring[j]] = [ring[j], ring[i]]; }
+      const spots: Array<{ n: (typeof ring)[number]; route: Array<{ x: number; z: number }> }> = [];
+      for (const n of ring) {
+        if (spots.length >= max - chosen.length) break;
+        const ok = direct(n.x, n.z, n.id);
+        if (ok) spots.push({ n, route: ok.route });
+      }
       for (const p of far) {
-        if (free.length >= max || !ring.length) break;
-        const n = ring[Math.floor(Math.random() * ring.length)];
-        p.mesh.position.set(n.x, p.mesh.position.y, n.z);
-        p.currentNodeId = n.id;
+        const spot = spots.shift();
+        if (!spot || chosen.length >= max) break;
+        p.mesh.position.set(spot.n.x, p.mesh.position.y, spot.n.z);
+        p.currentNodeId = spot.n.id;
         p.active = true;
-        free.push({ p, d: Math.hypot(n.x - x, n.z - z) });
+        chosen.push({ p, route: spot.route });
       }
     }
-    const goal = this.graph.findNearestNode(x, z);
-    free.forEach(({ p }, idx) => {
-      const ang = (idx / Math.max(1, free.length)) * Math.PI * 1.4 - Math.PI * 0.7 + Math.PI;   // fan out around the cart
+    chosen.forEach(({ p, route }, idx) => {
+      const ang = (idx / Math.max(1, chosen.length)) * Math.PI * 1.4 - Math.PI * 0.7 + Math.PI;   // fan out around the cart
       const tx = x + Math.sin(ang) * 2.4, tz = z + Math.cos(ang) * 2.4;
-      const start = this.graph.findNearestNode(p.mesh.position.x, p.mesh.position.z);
-      const route = this.graph.findAStarPath(start, goal);
       p.path = [...route, { x: tx, z: tz }];
       p.pathIndex = 0;
       p.targetNodeId = goal;
@@ -841,13 +865,11 @@ export class PedestrianManager {
       p.texting = false;
       p.crossCheckedIndex = -1;
       // waiting time starts on arrival: allow for the walk (they hurry, ~2.6 m/s)
-      let walk = 0;
-      for (let k = 1; k < p.path.length; k++) walk += Math.hypot(p.path[k].x - p.path[k - 1].x, p.path[k].z - p.path[k - 1].z);
-      walk += Math.hypot(p.path[0].x - p.mesh.position.x, p.path[0].z - p.mesh.position.z);
+      const walk = routeLength(p.mesh.position.x, p.mesh.position.z, p.path);
       p.summonUntil = this.clock + walk / 2.6 + waitSeconds;
       p.summonX = x; p.summonZ = z;
     });
-    return free.length;
+    return chosen.length;
   }
 
   /** Vendor left the spot: waiting customers go back to wandering. */
@@ -908,6 +930,13 @@ export class PedestrianManager {
         this.startActivity(p, 'look', 0.8 + Math.random() * 0.8, x, z);
       }
       return;
+    }
+    // People chatting close by break off and turn to watch as well.
+    for (const p of this.pedestrians) {
+      if (p.active && p.activity === 'chat' && !p.isEngagedInSale && near(p, 15)) {
+        this.clearActivity(p);
+        this.startActivity(p, 'look', 3 + Math.random() * 2, x, z);
+      }
     }
     const watchers = this.pedestrians
       .filter((p) => this.isFree(p, true) && near(p, 30))

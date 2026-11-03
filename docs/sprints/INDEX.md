@@ -25,3 +25,6 @@ One line per closed sprint. Open work: `docs/sprints/ACTIVE.md`.
 | 8 | Roads & textures: shared signs, matte surface wear, worn markings and street/facade details | ✅ | `a3235b5` `32aae00` `f38c133` | [archive](archive/S8-roads-textures.md) |
 | 9 | Realistic characters: clothed skeletal heroes, cart-grip IK, near-crowd LOD | ✅ | `10f27ca` `22c445a` | [archive](archive/S9-realistic-characters.md) |
 | G1 | Day clock + day end (06:00–22:00, targets, rent/food) | ✅ | `15f9f9b` | [archive](archive/SG1-day-clock-day-end.md) |
+| G2 | Game over + victory: jailed/bankrupt/wrecked, day 10 shop ending, Endless, day-6 Gulistan switch | ✅ | `5c51215` `807ecce` (restored in `98f11a3`) | [archive](archive/SG2-game-over-victory.md) |
+| G3 | Levels & difficulty: day profiles, 1–5 police, traffic, patience, next-day briefing | ✅ | `bb45aa0` `c40190c` `98f11a3` | [archive](archive/SG3-levels-difficulty.md) |
+| 10 | More NPCs + behaviour: 60–120 people, instanced far crowd, activities, crossings, time-of-day density, footpath network fix | ✅ | `3f3361f` `b5c2ae8` + follow-up fix | [archive](archive/S10-npc-behaviour.md) |

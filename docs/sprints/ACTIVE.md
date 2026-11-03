@@ -43,30 +43,27 @@ Built and tested by Claude. Wiring (M-W) done by Claude: maps are bundled into t
 
 **Game loop (game-design §2–§6)**
 
-| # | Sprint | Status | Deliverable |
-|---|---|---|---|
-| G2 | Game over + victory | 🔄 (rules package `campaign.ts`, `CampaignEnding.tsx`, `scripts/campaign.test.tsx` uploaded in `ba9d1db`; 13 tests + lint + builds pass; **not wired yet**. Wiring split into G2a engine hooks → G2b ending screen + next/retry/Endless → G2c day-6 district switch. Spec: `SPRINT-G2.md`) | Jailed / bankrupt / wrecked game-over rules; Level 10 victory (own a shop in New Market); Endless mode |
-| G3 | Levels & difficulty | ⏳ | Level table (police count, vision, traffic, rage sensitivity, customer patience); districts by level; level-up screen |
+G1–G3 done (see `INDEX.md`). Next game-loop work comes from Sprints 13–15.
+
 
 **Graphics**
 
-| # | Sprint | Status | Deliverable |
-|---|---|---|---|
-| 10 | More NPCs + behaviour | ⏳ | Remove the 10–15 pedestrian cap; 60–120 people with distance-based detail; groups chatting, phones, browsing stalls, crossing at junctions, reacting to horns/accidents, haggling; density by time and hotspots |
+Sprints 8–10 done (see `INDEX.md`). Candidate follow-up: women's outfits for the crowd (none exist in `humans.ts`).
+
 
 **Sound**
 
 | # | Sprint | Status | Deliverable |
 |---|---|---|---|
-| 11 | Bengali sound pack | ⏳ | Bangla voice lines (vendor calls, customer haggling, police, angry crowd), rickshaw bells, horns, crowd chatter. Voice lines recorded by Zunaid (script + file names provided) |
+| 11 | Bengali sound pack | 🔄 (11a ✅ `36dfa82`: procedural street sounds `src/game/audio/streetSounds.ts` — rickshaw bell, CNG/bus/car horns, vendor bell, crowd murmur; 12-voice cap, 60 m falloff; preview `sound-preview.html`. Not wired into the game yet. Next: 11b wire into traffic/crowd/vendor events + `pedestrianManager.notifyEvent('horn')`; 11c Bangla voice lines recorded by Zunaid) | Bangla voice lines (vendor calls, customer haggling, police, angry crowd), rickshaw bells, horns, crowd chatter. Voice lines recorded by Zunaid (script + file names provided) |
 
 **Features**
 
 | # | Sprint | Status | Deliverable |
 |---|---|---|---|
 | 12 | GTA-style minimap | ⏳ | Round, rotating radar drawn from the real road map: people, police (vision cones), markets, garages, aarots, cars, pulsing hotspots, angry-crowd zones |
-| 13 | Hotspots | ⏳ | Crowd gatherings driven by the day clock (office rush, bazaar hour, school release, evening market) |
-| 14 | Smarter police | ⏳ | Patrol routes on the road graph, line of sight, search last known position, backup, cutting off at junctions; fix chase speed (police 3.55 vs vendor 4.85 m/s) |
+| 13 | Hotspots | ⏳ (partly covered by Sprint 10: hotspot pull by time of day) | Crowd gatherings driven by the day clock (office rush, bazaar hour, school release, evening market) |
+| 14 | Smarter police | ⏳ (G3 added 1–5 officers and simple footpath patrols from day 3) | Patrol routes on the road graph, line of sight, search last known position, backup, cutting off at junctions; fix chase speed (police 3.55 vs vendor 4.85 m/s) |
 | 15 | Public rage | ⏳ | Rage meter, angry crowd, mob chase and capture (non-graphic), escape rules, police interplay (game-design §5) |
 | 16 | Multiplayer on the real map | ⏳ | Online 1v1 on New Market/Gulistan with day clock, rage and hotspots in sync |
 

@@ -82,8 +82,10 @@ test('120 people: behaviours appear, nobody loiters on the road, detail tiers ho
     }
   }
   // accident beside the busiest walker cluster near the camera
-  const near = m.pedestrians.filter((p) => p.active && Math.hypot(p.mesh.position.x - cam[0], p.mesh.position.z - cam[1]) < 40);
-  const at = near[0]?.mesh.position ?? { x: cam[0], z: cam[1] };
+  const near = m.pedestrians.filter((p) => p.active && Math.hypot(p.mesh.position.x - cam[0], p.mesh.position.z - cam[1]) < 60);
+  const crowdAround = (q: (typeof near)[number]) => near.filter((o) => Math.hypot(o.mesh.position.x - q.mesh.position.x, o.mesh.position.z - q.mesh.position.z) < 30).length;
+  const busiest = near.sort((a, b) => crowdAround(b) - crowdAround(a))[0];
+  const at = busiest?.mesh.position ?? { x: cam[0], z: cam[1] };
   m.notifyEvent('accident', at.x, at.z);
   for (let f = 0; f < 30 * 12; f++) {
     m.update(dt); m.updateDetail(cam[0], cam[1], 16);
