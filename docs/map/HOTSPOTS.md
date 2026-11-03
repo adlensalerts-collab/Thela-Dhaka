@@ -10,7 +10,7 @@ Find the region with `grep -n "<anchor>" <file>`, then read a slice (`sed -n 'ST
 | Initial state values | `getInitialState(` |
 | World build (real map branch, grid fallback, carts, pedestrians) | `  initWorld() {` |
 | Quality → shadows, chunk view distance, pixel ratio | `  applyQuality(level` · `updatePixelRatio(` |
-| Hotspot customers | `  updateHotspotCrowd(` |
+| Time-window refresh and hotspot customers | `  private refreshHotspotSchedule()` · `  updateHotspotCrowd(` |
 | Helpers: obstacles near point, bounds, services, footpath placement | `  nearObstacles(` · `  mapBound(` · `  nearestGarageInfo(` · `  footpathPoint(` |
 | Input listeners / key handling | `  initListeners() {` |
 | Mode start + spawn positions + police service mode | `  syncDayAccountingState()` · `  restartDay()` · `  setMode(mode` |

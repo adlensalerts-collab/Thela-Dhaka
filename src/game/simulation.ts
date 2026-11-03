@@ -43,6 +43,7 @@ import { ObstacleGrid } from './map/obstacleGrid';
 import { difficultyForDay, type DifficultyProfile } from './difficulty';
 import { CampaignPolice } from './campaignPolice';
 import { nearbyRadarPoints, type RadarSnapshot } from './ui/radar';
+import { hotspotPeriod, scheduleHotspots, nearbyHotspot, type HotspotSchedule } from './hotspots';
 
 /** M-W — play on the real OpenStreetMap district (false = old grid city, kept as a fallback). */
 export const USE_REAL_MAP = true;
@@ -175,6 +176,7 @@ export interface GameState {
   difficulty?: DifficultyProfile;
   policePositions?: Array<{ x: number; z: number }>;
   radar?: RadarSnapshot;
+  hotspotSchedule?: HotspotSchedule;
 }
 
 // Module-level reusable math objects for zero garbage collection during 60 FPS loop
@@ -213,6 +215,8 @@ export class GameEngine {
   private worldSceneObjects: Set<THREE.Object3D> = new Set();
   graphTraffic: GraphTraffic | null = null;
   hotspotDwell = 0;
+  private hotspotScheduleKey = '';
+  private dwellingHotspot: string | null = null;
   hotspotCooldown = 0;
   summonPoint: { x: number; z: number } | null = null;
   damage = new DamageSystem();
@@ -980,21 +984,41 @@ export class GameEngine {
    * Hotspot crowd: a vendor who stands still inside a hotspot (market, busy junction…) for a few
    * seconds draws nearby pedestrians, who walk over and wait to buy. Moving away sends them back.
    */
+  private refreshHotspotSchedule() {
+    if (!this.world || !this.state || !this.pedestrianManager) return;
+    const minutes = this.state.mode === 'vendor' ? getDayClockMinutes(this.state.dayElapsedSeconds) : Number.NaN;
+    const key = `${this.currentDistrictId}:${hotspotPeriod(minutes)}:${minutes < 660 ? 'morning' : 'later'}`;
+    if (key === this.hotspotScheduleKey) return;
+    this.hotspotScheduleKey = key;
+    this.state.hotspotSchedule = scheduleHotspots(this.world.district.sites.hotspots, minutes);
+    this.state.hotspotName = null;
+    this.state.hotspotDwell = 0;
+    this.pedestrianManager.setHotspots([...this.state.hotspotSchedule.active]);
+    this.pedestrianManager.releaseSummoned(); // Existing engaged sales finish normally.
+    this.hotspotDwell = 0;
+    this.hotspotCooldown = 0;
+    this.dwellingHotspot = null;
+    this.summonPoint = null;
+  }
+
   updateHotspotCrowd(dt: number, p: THREE.Object3D) {
     const isVendor = this.state.mode === 'vendor' || this.state.mode === 'online_vendor';
     if (!this.world || !isVendor || !this.pedestrianManager) { this.state.hotspotName = null; this.state.hotspotDwell = 0; return; }
     this.hotspotCooldown = Math.max(0, this.hotspotCooldown - dt);
-    let spot: { name: string } | null = null;
-    for (const h of this.world.district.sites.hotspots) {
-      if (Math.hypot(h.x - p.position.x, h.z - p.position.z) <= HOTSPOT_RADIUS) { spot = h; break; }
-    }
+    this.refreshHotspotSchedule();
+    const schedule = this.state.hotspotSchedule;
+    const spot = nearbyHotspot(schedule?.active ?? [], p.position.x, p.position.z, HOTSPOT_RADIUS);
+    const spotKey = spot ? `${spot.x}:${spot.z}` : null;
+    if (spotKey !== this.dwellingHotspot) { this.hotspotDwell = 0; this.dwellingHotspot = spotKey; }
     this.state.hotspotName = spot ? (spot.name === 'Junction' ? 'ব্যস্ত মোড় · Busy junction' : spot.name) : null;
     const still = Math.abs(this.currentSpeed) < 0.4;
     const busy = !!(this.state.sale || this.state.repairing || this.state.restocking || this.state.alert);
-    if (spot && still && !busy && this.state.stock > 0 && this.hotspotCooldown <= 0) {
+    if (spot && still && !busy && this.state.stock > 0 && this.hotspotCooldown <= 0 &&
+        this.pedestrianManager.summonedCount < 8) {
       this.hotspotDwell += dt;
       if (this.hotspotDwell >= HOTSPOT_DWELL_SECONDS) {
-        const n = this.pedestrianManager.summonCustomers(p.position.x, p.position.z, 3, 55,
+        const wave = Math.min(schedule?.waveSize ?? 3, 8 - this.pedestrianManager.summonedCount);
+        const n = this.pedestrianManager.summonCustomers(p.position.x, p.position.z, wave, 55,
           this.state.difficulty?.customerPatience ?? 25);
         if (n > 0) {
           this.summonPoint = { x: p.position.x, z: p.position.z };
@@ -1003,9 +1027,9 @@ export class GameEngine {
           this.streetSounds?.play('vendor_bell', p.position.x, p.position.z);
         }
         this.hotspotDwell = 0;
-        this.hotspotCooldown = HOTSPOT_COOLDOWN_SECONDS;
+        this.hotspotCooldown = schedule?.cooldownSeconds ?? HOTSPOT_COOLDOWN_SECONDS;
       }
-    } else if (!still) {
+    } else {
       this.hotspotDwell = 0;
     }
     this.state.hotspotDwell = Math.min(1, this.hotspotDwell / HOTSPOT_DWELL_SECONDS);
@@ -1418,6 +1442,8 @@ export class GameEngine {
     this.remoteSpeed = 0;
     this.hotspotDwell = 0;
     this.hotspotCooldown = 0;
+    this.hotspotScheduleKey = '';
+    this.dwellingHotspot = null;
     this.summonPoint = null;
     this.pedestrianManager?.releaseSummoned();
     if (this.pedestrianManager) {
@@ -1470,6 +1496,7 @@ export class GameEngine {
     this.clock.getDelta();
     this.acc = 0;
     this.applyCampaignDifficulty();
+    this.refreshHotspotSchedule();
     this.playBeep(520, 0.2);
     setTimeout(() => {
       try {
@@ -2149,6 +2176,7 @@ export class GameEngine {
     if (force || now - this.lastHudPublishTime >= 95) {
       this.lastHudPublishTime = now;
       if (this.state) {
+        this.refreshHotspotSchedule();
         this.state.policePositions = this.state.mode === 'vendor' ? this.campaignPolice?.positions() : undefined;
         const player = { x: this.state.playerX, z: this.state.playerZ };
         const police = this.state.mode === 'vendor' ? this.campaignPolice?.positions() ?? []
@@ -2596,6 +2624,7 @@ export class GameEngine {
 
     // Update A* Sidewalk Pedestrian crowd
     if (this.pedestrianManager) {
+      this.refreshHotspotSchedule();
       this.pedestrianManager.setTimeOfDay(this.state.mode === 'vendor'
         ? getDayClockMinutes(this.state.dayElapsedSeconds) : Number.NaN);
       this.pedestrianManager.update(dt);
