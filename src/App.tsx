@@ -377,6 +377,7 @@ export default function App() {
     setOnlineError(null);
     leaveCurrentRoom(false);
     engineRef.current.resumeAudio();
+    engineRef.current.newCampaign();
     engineRef.current.setMode(role, 1);
     setView('playing');
     setNotice(role === 'vendor' ? 'Sell products, then escape police!' : 'Patrol streets and catch the vendor!');
@@ -634,6 +635,17 @@ export default function App() {
             setModalType(null);
           }}
           onResume={handleResume}
+          onContinueCampaign={() => {
+            const engine = engineRef.current;
+            if (!engine) return;
+            try {
+              if (!engine.continueCampaign()) return;
+              setRunStats(null);
+              setModalType(null);
+            } catch (error) {
+              showToast(error instanceof Error ? error.message : 'Could not start the next day. Please retry.');
+            }
+          }}
           onRestart={() => {
             const engine = engineRef.current;
             if (!engine) return;
@@ -660,10 +672,12 @@ export default function App() {
               1;
             setRematchPending(false);
             setRunStats(null);
+            if (mode === 'vendor') engine.newCampaign();
             engine.setMode(mode, dayToReplay);
             setModalType(null);
           }}
           onMainMenu={() => {
+            engineRef.current?.newCampaign();
             leaveCurrentRoom(true);
             setView('menu');
           }}

@@ -37,6 +37,7 @@ import { getDistrict } from './map/districtData';
 import { VIEW_DISTANCE } from './map/chunks';
 import { auditDistrict } from './map/minimap';
 import type { DistrictId } from './map/district';
+import { ObstacleGrid } from './map/obstacleGrid';
 
 /** M-W — play on the real OpenStreetMap district (false = old grid city, kept as a fallback). */
 export const USE_REAL_MAP = true;
@@ -71,7 +72,8 @@ import { RemoteActor } from './net/remoteActor';
 import { CrowdCharacterLOD } from './world/characterVisual';
 import {
   Campaign,
-  type CampaignOutcome,
+  campaignDistrict,
+  campaignTarget,
   type CampaignState,
   type VendorCondition
 } from './campaign';
@@ -202,6 +204,8 @@ export class GameEngine {
   stamina = new StaminaSystem();
   stats = new StatsTracker();
   campaign: Campaign | null = null;
+  private districtObjects: THREE.Object3D[] = [];
+  private campaignResetPending = false;
   lastRunStats: RunStats | null = null;
   dayEnded: boolean = false;
   brokenCartNoticeCooldown: number = 0;
@@ -660,6 +664,7 @@ export class GameEngine {
     };
 
     if (USE_REAL_MAP) {
+      const previousObjects = new Set(this.scene.children);
       // Real district (roads, footpaths, buildings, trees, poles, stalls, garages, aarots, collision)
       this.world = buildDistrictWorld(this.scene, getDistrict(REAL_MAP_ID));
       this.obstacles = this.world.obstacles;
@@ -673,6 +678,7 @@ export class GameEngine {
         })),
         (x, z) => this.world?.roads.nearest(x, z)?.dist ?? 30
       );
+      this.districtObjects = this.scene.children.filter((o) => !previousObjects.has(o));
     } else {
     // Ground
     block(this.scene, 265, 0.7, 265, mat.soil, 0, -0.45, 0, false);
@@ -856,6 +862,7 @@ export class GameEngine {
 
     // Initialize Dhaka sidewalk waypoint network and pool of 14 A* pedestrian NPCs
     this.sidewalkGraph = this.world ? this.world.footpaths : new SidewalkGraph();
+    const beforePedestrians = new Set(this.scene.children);
     this.pedestrianManager = new PedestrianManager(
       this.scene,
       this.sidewalkGraph,
@@ -863,6 +870,7 @@ export class GameEngine {
     );
     if (this.world) this.pedestrianManager.bounds = { ...this.world.bounds };
     if (this.world) this.pedestrianManager.setHotspots(this.world.district.sites.hotspots);
+    this.districtObjects.push(...this.scene.children.filter((o) => !beforePedestrians.has(o)));
 
     if ((import.meta as any).env?.DEV) {
       if (this.world) auditDistrict(this.world);
@@ -1215,6 +1223,88 @@ export class GameEngine {
 
   newCampaign() {
     this.campaign = null;
+    this.campaignResetPending = false;
+  }
+
+  /** Result-driven transition, guarded against stale/double UI clicks. */
+  continueCampaign(): boolean {
+    if (this.state.mode !== 'vendor' || !this.campaign ||
+        (!this.campaignResetPending && this.state.stage !== 'over')) return false;
+    if (!this.campaignResetPending) {
+      const snap = this.campaign.snapshot();
+      const outcome = snap.result?.outcome;
+      if (!['day_passed', 'day_failed', 'victory'].includes(outcome ?? '')) return false;
+      const nextDay = snap.dayNumber + (outcome === 'day_failed' ? 0 : 1);
+      campaignTarget(nextDay);
+      // Build the next district before advancing, so a failed build can be retried.
+      this.switchDistrict(campaignDistrict(nextDay));
+      if (outcome === 'day_passed') this.campaign.nextDay();
+      else if (outcome === 'victory') this.campaign.startEndless();
+      else this.campaign.retryDay();
+      this.campaignResetPending = true;
+    }
+    this.setMode('vendor', this.campaign.snapshot().dayNumber);
+    this.campaignResetPending = false;
+    return true;
+  }
+
+  /** Stage district systems before replacing any active world; heroes/lights stay alive. */
+  private switchDistrict(id: DistrictId) {
+    if (!USE_REAL_MAP || this.world?.district.id === id) return;
+    const staging = new THREE.Scene();
+    let world: DistrictWorld, traffic: GraphTraffic, pedestrians: PedestrianManager;
+    try {
+      world = buildDistrictWorld(staging, getDistrict(id));
+      world.chunks.setViewDistance(VIEW_DISTANCE[this.qualityLevel]);
+      traffic = new GraphTraffic(staging, world.roads, 36);
+      pedestrians = new PedestrianManager(staging, world.footpaths, PEDESTRIANS_BY_QUALITY[this.qualityLevel]);
+      pedestrians.bounds = { ...world.bounds };
+      pedestrians.setHotspots(world.district.sites.hotspots);
+      if (import.meta.env.DEV) auditDistrict(world);
+    } catch (error) {
+      this.releaseDistrictObjects([...staging.children]);
+      throw error;
+    }
+    this.crowdCharacters.dispose();
+    this.crowdCharacters = new CrowdCharacterLOD();
+    const previous = this.districtObjects;
+    this.districtObjects = [...staging.children];
+    for (const object of previous) object.removeFromParent();
+    for (const object of this.districtObjects) this.scene.add(object);
+    this.world = world;
+    this.graphTraffic = traffic;
+    this.traffic = traffic.vehicles;
+    this.obstacles = world.obstacles;
+    this.sidewalkGraph = world.footpaths;
+    this.pedestrianManager = pedestrians;
+    this.ambientAudio.setDistrict(world.district.sites.hotspots.map((h, i) => ({
+      id: `hot_${i}`, name: h.name, bnName: h.name,
+      type: h.kind === 'junction' ? 'traffic' : ['marketplace', 'mall', 'department_store'].includes(h.kind) ? 'streetMarket' : 'crowd',
+      x: h.x, z: h.z, innerRadius: 10, outerRadius: h.kind === 'junction' ? 45 : 70, maxWeight: 1
+    })), (x, z) => this.world?.roads.nearest(x, z)?.dist ?? 30);
+    this.releaseDistrictObjects(previous);
+  }
+
+  private releaseDistrictObjects(objects: THREE.Object3D[]) {
+    const retained = new Set<THREE.BufferGeometry | THREE.Material | THREE.Texture>();
+    const resources = (object: THREE.Object3D, add: (resource: THREE.BufferGeometry | THREE.Material | THREE.Texture) => void) => {
+      const mesh = object as THREE.Mesh;
+      if (mesh.geometry) add(mesh.geometry);
+      for (const material of mesh.material ? (Array.isArray(mesh.material) ? mesh.material : [mesh.material]) : []) {
+        add(material);
+        for (const value of Object.values(material)) if (value instanceof THREE.Texture) add(value);
+      }
+    };
+    this.scene.traverse((o) => resources(o, (r) => retained.add(r)));
+    const retired = new Set<THREE.BufferGeometry | THREE.Material | THREE.Texture>();
+    for (const object of objects) {
+      object.removeFromParent();
+      object.traverse((o) => {
+        resources(o, (r) => { if (!retained.has(r)) retired.add(r); });
+        if (o instanceof THREE.InstancedMesh) o.dispose();
+      });
+    }
+    for (const resource of retired) resource.dispose();
   }
 
   restartDay() {
@@ -1228,10 +1318,15 @@ export class GameEngine {
     if (this.state?.stall) {
       this.scene.remove(this.state.stall);
       this.obstacles = this.obstacles.filter((o) => o.tag !== 'big_stall');
+      if (this.world) {
+        this.world.obstacles = this.obstacles;
+        this.world.grid = new ObstacleGrid();
+        this.world.grid.addAll(this.obstacles);
+      }
     }
     const normalizedDay = normalizeDayNumber(dayNumber);
     if (mode === 'vendor') {
-      if (normalizedDay === 1 && !this.campaign) {
+      if (!this.campaign) {
         this.campaign = new Campaign();
       }
     } else {
@@ -1239,6 +1334,7 @@ export class GameEngine {
     }
     const effectiveDay =
       mode === 'vendor' && this.campaign ? this.campaign.snapshot().dayNumber : normalizedDay;
+    this.switchDistrict(mode === 'vendor' && this.campaign ? this.campaign.snapshot().district : REAL_MAP_ID);
     this.dayEnded = false;
     this.brokenCartNoticeCooldown = 0;
     this.failureCheckAccum = 0;
@@ -1724,21 +1820,27 @@ export class GameEngine {
     this.endRun(outcome.result);
   }
 
-  endRun(result: Exclude<RunResult, null> | CampaignOutcome) {
+  endRun(result: Exclude<RunResult, null>) {
+    if (this.state.stage === 'over' || this.state.stage === 'victory') return;
+    if (this.state.mode === 'vendor') this.dayEnded = true;
     this.cancelActiveTimers();
     this.state.damage = this.damage.damage;
     this.state.stage = 'over';
     this.clearInputs();
     this.syncDayAccountingState();
-    const snapshot = this.stats.snapshot({
-      cartLevel: this.state.level,
-      staminaLevel: this.state.staminaLevel,
-      dayNumber: this.state.dayNumber,
-      dayTarget: this.state.dayTarget,
-      mode: this.state.mode,
-      result: result as Exclude<RunResult, null>,
-      arrests: this.state.arrests
-    });
+    const snapshot: RunStats = {
+      ...this.stats.snapshot({
+        cartLevel: this.state.level,
+        staminaLevel: this.state.staminaLevel,
+        dayNumber: this.state.dayNumber,
+        dayTarget: this.state.dayTarget,
+        mode: this.state.mode,
+        result,
+        arrests: this.state.arrests
+      }),
+      dayClockText: this.state.dayClockText,
+      campaign: this.state.mode === 'vendor' ? this.campaign?.snapshot().result ?? undefined : undefined
+    };
     this.lastRunStats = snapshot;
     this.publishState(true);
     this.onEvent('game_over', snapshot);

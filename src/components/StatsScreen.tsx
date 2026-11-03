@@ -9,6 +9,7 @@ import {
   Home
 } from 'lucide-react';
 import { RunStats } from '../game/stats';
+import { formatDayClock } from '../game/day';
 
 interface StatsScreenProps {
   stats: RunStats | null;
@@ -16,6 +17,7 @@ interface StatsScreenProps {
   rematchPending?: boolean;
   onRestart: () => void;
   onMainMenu: () => void;
+  cardsOnly?: boolean;
 }
 
 function formatDuration(totalSeconds: number): string {
@@ -30,7 +32,8 @@ export const StatsScreen: React.FC<StatsScreenProps> = ({
   isOnline,
   rematchPending = false,
   onRestart,
-  onMainMenu
+  onMainMenu,
+  cardsOnly = false
 }) => {
   const result = stats?.result ?? 'jailed';
   const isPolice =
@@ -98,13 +101,13 @@ export const StatsScreen: React.FC<StatsScreenProps> = ({
   const timePlayed = formatDuration(stats?.timePlayedSeconds ?? 0);
 
   return (
-    <div className="bg-[#0f2422]/95 border border-teal-500/40 rounded-3xl p-5 sm:p-7 max-w-3xl w-full shadow-2xl text-left space-y-5 max-h-[92vh] overflow-y-auto backdrop-blur-md">
+    <div className={cardsOnly ? 'space-y-5' : 'bg-[#0f2422]/95 border border-teal-500/40 rounded-3xl p-5 sm:p-7 max-w-3xl w-full shadow-2xl text-left space-y-5 max-h-[92vh] overflow-y-auto backdrop-blur-md'}>
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-teal-800/60 pb-4">
+      {!cardsOnly && <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-teal-800/60 pb-4">
         <div>
           <span className="text-[11px] uppercase tracking-widest text-teal-300/80 font-semibold">
             {isSoloVendor
-              ? `Day ${String(dayNumber).padStart(2, '0')} · দিন ${dayNumber} · ২২:০০ সমাপ্তি`
+              ? `Day ${String(dayNumber).padStart(2, '0')} · দিন ${dayNumber} · ${stats?.dayClockText ?? formatDayClock(stats?.timePlayedSeconds ?? 0)} সমাপ্তি`
               : 'খেলার পরিসংখ্যান · Run Statistics'}
           </span>
           <h2 className="text-xl sm:text-2xl font-extrabold text-white mt-0.5">
@@ -123,8 +126,7 @@ export const StatsScreen: React.FC<StatsScreenProps> = ({
             {isPolice ? 'পুলিশ টহল · Police Patrol' : 'ঠেলা বিক্রেতা · Street Vendor'}
           </div>
         </div>
-      </div>
-
+      </div>}
       {/* 4-Card Responsive Grid (2 columns desktop, 1 on mobile) */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* Card 1: Money */}
@@ -415,7 +417,7 @@ export const StatsScreen: React.FC<StatsScreenProps> = ({
       </div>
 
       {/* Action Buttons */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+      {!cardsOnly && <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
         <button
           onClick={onRestart}
           disabled={online && rematchPending}
@@ -443,7 +445,7 @@ export const StatsScreen: React.FC<StatsScreenProps> = ({
           <Home className="w-4 h-4" />
           Main Menu / মেনু
         </button>
-      </div>
+      </div>}
     </div>
   );
 };

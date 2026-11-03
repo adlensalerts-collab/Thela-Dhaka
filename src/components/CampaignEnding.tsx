@@ -13,6 +13,7 @@ const HEADINGS: Record<CampaignOutcome, string> = {
 
 export interface CampaignEndingProps {
   result: CampaignResult;
+  endedAt?: string;
   /** G1's day-statistics content; pass cards only, without its outer modal/buttons. */
   children?: ReactNode;
   onNextDay: () => void;
@@ -26,7 +27,7 @@ const money = (value: number) => `${value < 0 ? '-' : ''}৳${Math.abs(value).to
 
 /** Standalone G2 result shell. Does not change existing online/police screens. */
 export function CampaignEnding({
-  result, children, onNextDay, onRetryDay, onStartEndless, onNewCampaign, onMainMenu,
+  result, endedAt, children, onNextDay, onRetryDay, onStartEndless, onNewCampaign, onMainMenu,
 }: CampaignEndingProps) {
   const won = result.outcome === 'victory';
   const passed = result.outcome === 'day_passed';
@@ -40,7 +41,7 @@ export function CampaignEnding({
   return (
     <section aria-label="Campaign result" className="w-full max-w-3xl max-h-[92vh] overflow-y-auto rounded-3xl border border-teal-500/40 bg-[#0f2422]/95 p-5 text-left text-white shadow-2xl sm:p-7">
       <p className="text-xs font-semibold text-teal-300">
-        {result.endless ? 'অন্তহীন · Endless' : 'ঠেলা থেকে দোকান · From cart to shop'} · Day {result.dayNumber}
+        {result.endless ? 'অন্তহীন · Endless' : 'ঠেলা থেকে দোকান · From cart to shop'} · Day {result.dayNumber}{endedAt && ` · ${endedAt} সমাপ্তি`}
       </p>
       <h2 className="mt-2 text-xl font-extrabold sm:text-2xl">{HEADINGS[result.outcome]}</h2>
       {won && <ShopEnding />}

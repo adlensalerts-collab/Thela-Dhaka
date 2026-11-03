@@ -14,6 +14,7 @@ Find the region with `grep -n "<anchor>" <file>`, then read a slice (`sed -n 'ST
 | Helpers: obstacles near point, bounds, services, footpath placement | `  nearObstacles(` · `  mapBound(` · `  nearestGarageInfo(` · `  footpathPoint(` |
 | Input listeners / key handling | `  initListeners() {` |
 | Mode start + spawn positions + police service mode | `  syncDayAccountingState()` · `  restartDay()` · `  setMode(mode` |
+| Campaign continuation, staged district swap and retired-resource cleanup | `  continueCampaign()` · `  private switchDistrict(` · `  private releaseDistrictObjects(` |
 | Selling | `  beginSale() {` · `  completeSale() {` |
 | Upgrades (garage-only) | `atGarageForUpgrade(` · `  upgradeCart() {` · `  upgradeStamina() {` |
 | Restock / stall | `  restockCart() {` · `  placeStall() {` |

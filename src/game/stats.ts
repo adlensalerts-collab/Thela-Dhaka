@@ -1,3 +1,4 @@
+import type { CampaignResult } from './campaign';
 import {
   DAY_FOOD_COST,
   DAY_RENT_COST,
@@ -12,6 +13,7 @@ export type RunResult =
   | 'jailed'
   | 'bribe_unaffordable'
   | 'destroyed'
+  | 'bankrupt'
   | 'mob_beaten'
   | 'victory'
   | 'day_passed'
@@ -25,6 +27,8 @@ export interface BestSaleRecord {
 }
 
 export interface RunStats {
+  dayClockText?: string;
+  campaign?: CampaignResult;
   // Money
   earned: number;
   spentRestock: number;

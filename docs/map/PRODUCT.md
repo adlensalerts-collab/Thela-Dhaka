@@ -12,7 +12,7 @@ Which file owns which feature. Sizes as of Hotfix 8.1. Files over ~20 KB: read v
 | Sprint stamina + levels | `src/game/stamina.ts` | `StaminaSystem`, `STAMINA_LEVELS` |
 | Working-day clock + daily profit targets & rent/food accounting | `src/game/day.ts` | `DAY_DURATION_SECONDS`, `DAY_RENT_COST`, `DAY_FOOD_COST`, `formatDayClock`, `getDayProfitTarget`, `evaluateDayOutcome` |
 | Run statistics | `src/game/stats.ts` | `StatsTracker`, `RunStats` |
-| Solo-vendor campaign decisions, defeat checks, day progression and Endless (G2 package; awaiting wiring) | `src/game/campaign.ts` | `Campaign`, `vendorFailure`, `campaignTarget` |
+| Solo-vendor campaign, defeat rules, day progression and Endless | `src/game/campaign.ts` | `Campaign`, `vendorFailure`, `campaignTarget` (engine integration in `simulation.ts`) |
 | Pedestrians (crowd AI, hotspot customers, AI Studio's dormant rage code) — **26 KB** | `src/game/pedestrians.ts` | `PedestrianManager.summonCustomers`, `releaseSummoned`, `setHotspots` |
 | Footpath route graph + A* | `src/game/pathfinding.ts` | `SidewalkGraph` |
 | Weather | `src/game/world/weather.ts` | `WeatherSystem` |
@@ -67,7 +67,7 @@ Which file owns which feature. Sizes as of Hotfix 8.1. Files over ~20 KB: read v
 | Title screen (role, solo/online, OSM credit) | `src/components/TitleScreen.tsx` |
 | Settings (keys, mouse, display, graphics) — **22 KB** | `src/components/SettingsModal.tsx` |
 | End-of-run statistics | `src/components/StatsScreen.tsx` |
-| Campaign result shell and New Market shop ending (G2 package; awaiting wiring) | `src/components/CampaignEnding.tsx` |
+| Solo campaign result, totals and New Market shop ending | `src/components/CampaignEnding.tsx` (selected by `EventModal.tsx`; day cards from `StatsScreen.tsx`) |
 | Pause / bribe / arrest modals | `src/components/EventModal.tsx` |
 
 ## Not part of the game

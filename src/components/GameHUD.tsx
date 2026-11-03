@@ -149,7 +149,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
   useEffect(() => {
     const size = 160;
     if (USE_REAL_MAP) {
-      const mm = createDistrictMinimap(getDistrict(REAL_MAP_ID), size, isVendor ? 'vendor' : 'police');
+      const mm = createDistrictMinimap(getDistrict(state.campaign?.district ?? REAL_MAP_ID), size, isVendor ? 'vendor' : 'police');
       bgCanvasRef.current = mm.canvas;
       mapXZRef.current = mm.toMap;
       return;
@@ -209,7 +209,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
       }
     }
     bgCanvasRef.current = bg;
-  }, [isVendor]);
+  }, [isVendor, state.campaign?.district]);
 
   // Update blips on minimap efficiently
   useEffect(() => {
