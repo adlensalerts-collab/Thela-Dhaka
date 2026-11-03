@@ -546,8 +546,10 @@ export const GameHUD: React.FC<GameHUDProps> = ({
       {isVendor && state.hotspotName && (
         <div style={{ bottom: bottomHudHeight + (showTouchControls ? 168 : 16) }} className="absolute right-2 sm:right-4 pointer-events-none bg-black/65 backdrop-blur-md border border-orange-500/50 rounded-xl px-3 py-1.5 text-[11px] text-orange-200 font-semibold whitespace-nowrap max-w-[calc(100vw-1rem)] overflow-hidden">
           <div className="truncate">🔥 হট স্পট · {state.hotspotName}</div>
-          {state.hotspotSchedule?.period !== 'legacy' && state.hotspotSchedule && (
-            <div className="text-[10px] truncate">{state.hotspotSchedule.label} · {state.hotspotSchedule.endsAt} পর্যন্ত</div>
+          {state.hotspotEvent && (
+            <div className="text-[10px] font-semibold text-amber-300 truncate">
+              {state.hotspotEvent.labelBn} · {state.hotspotEvent.labelEn}
+            </div>
           )}
           <div className="text-[10px] text-orange-300/80 truncate">দাঁড়িয়ে থাকুন — ক্রেতা আসবে · Stand still to draw customers</div>
           <div className="mt-1 h-1 w-full bg-gray-800 rounded-full overflow-hidden">

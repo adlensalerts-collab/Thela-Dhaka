@@ -76,7 +76,7 @@ export class WeatherSystem {
   private lighting: LightingRig | null;
 
   current: WeatherType = 'sunny';
-  private timer: number = 45; // seconds until next weather shift
+  private currentDay: number = 1;
 
   // Smoothly interpolated live parameters
   fogDensity: number = WEATHER_PROFILES.sunny.fogDensity;
@@ -138,14 +138,22 @@ export class WeatherSystem {
     return WEATHER_PROFILES[this.current];
   }
 
-  reset(): void {
-    this.setWeather('sunny', true);
-    this.timer = 42 + Math.random() * 18;
+  reset(dayNumber = 1): WeatherProfile {
+    if (dayNumber <= 1) {
+      this.currentDay = 1;
+      return this.setWeather('sunny', true);
+    }
+    if (dayNumber !== this.currentDay) {
+      this.currentDay = dayNumber;
+      const candidates = WEATHER_ORDER.filter((w) => w !== this.current);
+      const next = candidates[Math.floor(Math.random() * candidates.length)];
+      return this.setWeather(next, true);
+    }
+    return this.setWeather(this.current, true);
   }
 
   setWeather(next: WeatherType, immediate = false): WeatherProfile {
     this.current = next;
-    this.timer = 45 + Math.random() * 22;
     const p = WEATHER_PROFILES[next];
 
     if (immediate) {
@@ -172,21 +180,10 @@ export class WeatherSystem {
   }
 
   /**
-   * Advances the weather timer, interpolates fog/sky/traction parameters,
-   * and animates falling rain around (playerX, playerZ).
-   * Returns the new WeatherProfile if a periodic transition occurred on this tick.
+   * Interpolates fog/sky/traction parameters and animates falling rain around (playerX, playerZ).
+   * Weather is fixed for the working day and only changes when a new day starts or when manually cycled.
    */
   update(dt: number, playerX: number, playerZ: number): WeatherProfile | null {
-    let transitioned: WeatherProfile | null = null;
-
-    this.timer -= dt;
-    if (this.timer <= 0) {
-      // Pick a different weather condition weighted naturally for Dhaka
-      const candidates = WEATHER_ORDER.filter((w) => w !== this.current);
-      const next = candidates[Math.floor(Math.random() * candidates.length)];
-      transitioned = this.setWeather(next, false);
-    }
-
     const target = WEATHER_PROFILES[this.current];
     const rate = 1.4;
 
@@ -206,7 +203,7 @@ export class WeatherSystem {
     this.applyEnvironment();
     this.updateRain(dt, playerX, playerZ);
 
-    return transitioned;
+    return null;
   }
 
   private applyEnvironment(): void {
