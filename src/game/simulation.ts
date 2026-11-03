@@ -44,7 +44,8 @@ export const USE_REAL_MAP = true;
 export const REAL_MAP_ID: DistrictId = 'newmarket';
 
 /** Pedestrians per quality preset (crowd NPCs use the compact ~6-draw-call model). */
-const PEDESTRIANS_BY_QUALITY = { low: 20, medium: 30, high: 40, ultra: 50 } as const;
+const PEDESTRIANS_BY_QUALITY = { low: 60, medium: 80, high: 100, ultra: 120 } as const;
+const NEAR_PEDESTRIANS_BY_QUALITY = { low: 10, medium: 16, high: 22, ultra: 28 } as const;
 /** Hotspot crowd: stand still this long inside a hotspot and customers walk over. */
 const HOTSPOT_RADIUS = 30;
 const HOTSPOT_DWELL_SECONDS = 4;
@@ -64,6 +65,7 @@ import {
   clampDayElapsedSeconds,
   evaluateDayOutcome,
   formatDayClock,
+  getDayClockMinutes,
   getDayProfitTarget,
   isDayComplete,
   normalizeDayNumber
@@ -869,7 +871,10 @@ export class GameEngine {
       this.world ? PEDESTRIANS_BY_QUALITY[this.qualityLevel] ?? 30 : 14
     );
     if (this.world) this.pedestrianManager.bounds = { ...this.world.bounds };
-    if (this.world) this.pedestrianManager.setHotspots(this.world.district.sites.hotspots);
+    if (this.world) {
+      this.pedestrianManager.setHotspots(this.world.district.sites.hotspots);
+      this.wireCrowd(this.pedestrianManager, this.world, this.graphTraffic);
+    }
 
     for (const child of this.scene.children) {
       if (
@@ -888,6 +893,19 @@ export class GameEngine {
     }
   }
 
+  private wireCrowd(crowd: PedestrianManager, world: DistrictWorld, traffic: GraphTraffic | null | undefined) {
+    crowd.setBrowsePoints(world.district.sites.stalls.map((s) => ({
+      x: s.entrance?.[0] ?? s.x, z: s.entrance?.[1] ?? s.z,
+      fx: -(s.front?.[0] ?? 0), fz: -(s.front?.[1] ?? 1)
+    })));
+    crowd.setRoadProbes({
+      isOnCarriageway: (x, z) => world.roads.isOnCarriageway(x, z),
+      vehicleNear: (x, z, r) => !!traffic && traffic.vehicles.some((v) =>
+        Math.abs(v.mesh.position.x - x) < r && Math.abs(v.mesh.position.z - z) < r &&
+        Math.hypot(v.mesh.position.x - x, v.mesh.position.z - z) < r)
+    });
+  }
+
   /**
    * Switches the active real-map district when the campaign day moves between
    * New Market (Days 1–5) and Gulistan (Days 6+).
@@ -896,6 +914,7 @@ export class GameEngine {
     if (!USE_REAL_MAP || (this.world && this.currentDistrictId === targetDistrictId)) {
       return;
     }
+    this.pedestrianManager?.dispose();
     this.crowdCharacters.dispose();
     this.crowdCharacters = new CrowdCharacterLOD();
     for (const pt of this.particles) {
@@ -942,6 +961,7 @@ export class GameEngine {
     );
     this.pedestrianManager.bounds = { ...this.world.bounds };
     this.pedestrianManager.setHotspots(this.world.district.sites.hotspots);
+    this.wireCrowd(this.pedestrianManager, this.world, this.graphTraffic);
 
     for (const child of this.scene.children) {
       if (
@@ -2289,6 +2309,7 @@ export class GameEngine {
       const added = this.damage.applyImpact(trafficHit);
       this.state.damage = this.damage.damage;
       if (added > 0) {
+        this.pedestrianManager?.notifyEvent('accident', p.position.x, p.position.z);
         this.stats.collisions++;
         this.stats.damageTaken += added;
         if (isVendor && this.damage.broken) {
@@ -2521,11 +2542,9 @@ export class GameEngine {
     if (this.pedestrianManager) {
       this.pedestrianManager.update(dt);
       this.updateHotspotCrowd(dt, p);
-      // Hide pedestrians far from the camera (they keep walking; they just aren't drawn)
+      this.pedestrianManager.setTimeOfDay(this.state.mode === 'vendor' ? getDayClockMinutes(this.state.dayElapsedSeconds) : Number.NaN);
       const cam = this.camera.position;
-      for (const ped of this.pedestrianManager.pedestrians) {
-        ped.mesh.visible = Math.hypot(ped.mesh.position.x - cam.x, ped.mesh.position.z - cam.z) < PEDESTRIAN_VIEW_DISTANCE;
-      }
+      this.pedestrianManager.updateDetail(cam.x, cam.z, NEAR_PEDESTRIANS_BY_QUALITY[this.qualityLevel] ?? 16, PEDESTRIAN_VIEW_DISTANCE);
 
       this.crowdCharacters.update(this.customers, this.camera.position, this.qualityLevel, dt);
 
@@ -2903,6 +2922,7 @@ export class GameEngine {
 
   stop() {
     this.isDestroyed = true;
+    this.pedestrianManager?.dispose();
     this.crowdCharacters.dispose();
     for (const actor of [this.human, this.officer, this.npcVendor]) actor?.userData.rig?.visual?.dispose();
     cancelAnimationFrame(this.animId);

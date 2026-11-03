@@ -21,6 +21,7 @@ interface EventModalProps {
   onRetryDay?: () => void;
   onStartEndless?: () => void;
   onNewCampaign?: () => void;
+  onContinueCampaign?: (action?: 'next' | 'retry' | 'endless' | 'new') => void;
   onMainMenu: () => void;
   onOpenSettings?: () => void;
 }
@@ -41,6 +42,7 @@ export const EventModal: React.FC<EventModalProps> = ({
   onRetryDay,
   onStartEndless,
   onNewCampaign,
+  onContinueCampaign,
   onMainMenu,
   onOpenSettings
 }) => {
@@ -52,7 +54,8 @@ export const EventModal: React.FC<EventModalProps> = ({
 
   if (type === 'over' || type === 'victory') {
     const isSoloVendor = !online && (stats?.mode ?? state?.mode) === 'vendor';
-    const campaignResult = stats?.campaignResult ?? state?.campaign?.result ?? null;
+    const campaignResult =
+      stats?.campaign ?? stats?.campaignResult ?? state?.campaign?.result ?? null;
 
     if (isSoloVendor && campaignResult) {
       return (
@@ -60,10 +63,21 @@ export const EventModal: React.FC<EventModalProps> = ({
           <div className="w-full max-w-3xl max-h-[92dvh] overflow-y-auto">
             <CampaignEnding
               result={campaignResult}
-              onNextDay={onNextDay ?? onRestart}
-              onRetryDay={onRetryDay ?? onRestart}
-              onStartEndless={onStartEndless ?? onNextDay ?? onRestart}
-              onNewCampaign={onNewCampaign ?? onRestart}
+              endedAt={stats?.dayClockText ?? state?.dayClockText}
+              onNextDay={
+                onNextDay ?? (onContinueCampaign ? () => onContinueCampaign('next') : onRestart)
+              }
+              onRetryDay={
+                onRetryDay ?? (onContinueCampaign ? () => onContinueCampaign('retry') : onRestart)
+              }
+              onStartEndless={
+                onStartEndless ??
+                onNextDay ??
+                (onContinueCampaign ? () => onContinueCampaign('endless') : onRestart)
+              }
+              onNewCampaign={
+                onNewCampaign ?? (onContinueCampaign ? () => onContinueCampaign('new') : onRestart)
+              }
               onMainMenu={onMainMenu}
             >
               <StatsCards stats={stats ?? null} showDayTargetBar={false} />

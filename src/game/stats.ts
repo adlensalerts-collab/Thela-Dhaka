@@ -71,6 +71,7 @@ export interface RunStats {
   dayCostsSettled: boolean;
   mode: RunMode;
   result: RunResult;
+  campaign?: CampaignResult | null;
   campaignResult?: CampaignResult | null;
 
   // Police mode
@@ -159,6 +160,7 @@ export class StatsTracker {
   dayClockText = formatDayClock(0);
   mode: RunMode = 'vendor';
   result: RunResult = null;
+  campaign: CampaignResult | null = null;
   campaignResult: CampaignResult | null = null;
 
   arrests = 0;
@@ -199,6 +201,7 @@ export class StatsTracker {
     this.dayClockText = formatDayClock(0);
     this.mode = mode;
     this.result = null;
+    this.campaign = null;
     this.campaignResult = null;
 
     this.arrests = 0;
@@ -251,6 +254,7 @@ export class StatsTracker {
         | 'dayClockText'
         | 'mode'
         | 'result'
+        | 'campaign'
         | 'campaignResult'
         | 'arrests'
       >
@@ -272,8 +276,13 @@ export class StatsTracker {
     }
     if (overrides?.mode !== undefined) this.mode = overrides.mode;
     if (overrides?.result !== undefined) this.result = overrides.result;
+    if (overrides?.campaign !== undefined) {
+      this.campaign = overrides.campaign ?? null;
+      this.campaignResult = this.campaign;
+    }
     if (overrides?.campaignResult !== undefined) {
       this.campaignResult = overrides.campaignResult ?? null;
+      this.campaign = this.campaignResult;
     }
     if (overrides?.arrests !== undefined) this.arrests = overrides.arrests;
 
@@ -321,6 +330,7 @@ export class StatsTracker {
       dayCostsSettled: this.dayCostsSettled,
       mode: this.mode,
       result: this.result,
+      campaign: this.campaign,
       campaignResult: this.campaignResult,
 
       arrests: this.arrests,
