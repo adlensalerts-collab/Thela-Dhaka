@@ -4,9 +4,10 @@ import { GameState } from '../game/simulation';
 import { RunStats } from '../game/stats';
 import { StatsScreen, StatsCards } from './StatsScreen';
 import { CampaignEnding } from './CampaignEnding';
+import { LevelBriefing } from './LevelBriefing';
 
 interface EventModalProps {
-  type: 'bribe' | 'arrest_decision' | 'paused' | 'over' | 'victory' | null;
+  type: 'bribe' | 'arrest_decision' | 'paused' | 'over' | 'victory' | 'level_up' | null;
   state: GameState | null;
   stats?: RunStats | null;
   isOnline?: boolean;
@@ -21,6 +22,7 @@ interface EventModalProps {
   onRetryDay?: () => void;
   onStartEndless?: () => void;
   onNewCampaign?: () => void;
+  onContinueCampaign?: (action?: 'next' | 'retry' | 'endless' | 'new') => void;
   onMainMenu: () => void;
   onOpenSettings?: () => void;
 }
@@ -41,6 +43,7 @@ export const EventModal: React.FC<EventModalProps> = ({
   onRetryDay,
   onStartEndless,
   onNewCampaign,
+  onContinueCampaign,
   onMainMenu,
   onOpenSettings
 }) => {
@@ -49,6 +52,15 @@ export const EventModal: React.FC<EventModalProps> = ({
   const bribeCost = state ? 90 + state.level * 45 : 150;
   const online =
     isOnline ?? (state?.mode === 'online_vendor' || state?.mode === 'online_police');
+
+  if (type === 'level_up') {
+    const result = stats?.campaignResult ?? state?.campaign?.result;
+    if (!result || (result.outcome !== 'day_passed' && result.outcome !== 'victory')) return null;
+    return <div className="absolute inset-0 z-40 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 sm:p-6">
+      <LevelBriefing dayNumber={result.dayNumber + 1}
+        onStart={(result.outcome === 'victory' ? onStartEndless : onNextDay) ?? onRestart} onMainMenu={onMainMenu} />
+    </div>;
+  }
 
   if (type === 'over' || type === 'victory') {
     const isSoloVendor = !online && (stats?.mode ?? state?.mode) === 'vendor';
@@ -60,10 +72,11 @@ export const EventModal: React.FC<EventModalProps> = ({
           <div className="w-full max-w-3xl max-h-[92dvh] overflow-y-auto">
             <CampaignEnding
               result={campaignResult}
-              onNextDay={onNextDay ?? onRestart}
-              onRetryDay={onRetryDay ?? onRestart}
-              onStartEndless={onStartEndless ?? onNextDay ?? onRestart}
-              onNewCampaign={onNewCampaign ?? onRestart}
+              endedAt={stats?.dayClockText}
+              onNextDay={onNextDay ?? (onContinueCampaign ? () => onContinueCampaign('next') : onRestart)}
+              onRetryDay={onRetryDay ?? (onContinueCampaign ? () => onContinueCampaign('retry') : onRestart)}
+              onStartEndless={onStartEndless ?? onNextDay ?? (onContinueCampaign ? () => onContinueCampaign('endless') : onRestart)}
+              onNewCampaign={onNewCampaign ?? (onContinueCampaign ? () => onContinueCampaign('new') : onRestart)}
               onMainMenu={onMainMenu}
             >
               <StatsCards stats={stats ?? null} showDayTargetBar={false} />

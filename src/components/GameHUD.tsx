@@ -241,15 +241,15 @@ export const GameHUD: React.FC<GameHUDProps> = ({
     }
 
     // Police blip (vendor modes only): shown when alert or within 40 units of player
-    if (isVendor) {
+    if (isVendor) for (const officer of state.policePositions ?? [{ x: state.officerX ?? 0, z: state.officerZ ?? 0 }]) {
       const distToOfficer = Math.hypot(
-        (state.officerX ?? 0) - (state.playerX ?? 0),
-        (state.officerZ ?? 0) - (state.playerZ ?? 0)
+        officer.x - (state.playerX ?? 0),
+        officer.z - (state.playerZ ?? 0)
       );
       if (state.alert || distToOfficer <= 40) {
         const blinkOn = !state.alert || Math.floor(Date.now() / 220) % 2 === 0;
         if (blinkOn) {
-          const [omx, omy] = toMapXZ(state.officerX ?? 0, state.officerZ ?? 0);
+          const [omx, omy] = toMapXZ(officer.x, officer.z);
           const ox = clamp(omx, 6, size - 6);
           const oy = clamp(omy, 6, size - 6);
           cx.beginPath();
@@ -286,7 +286,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
     cx.strokeStyle = '#c5a059';
     cx.lineWidth = 2;
     cx.strokeRect(1, 1, size - 2, size - 2);
-  }, [state.playerX, state.playerZ, state.heading, state.officerX, state.officerZ, state.alert, state.angryPeds, isVendor]);
+  }, [state.playerX, state.playerZ, state.heading, state.officerX, state.officerZ, state.policePositions, state.alert, state.angryPeds, isVendor]);
 
   const stars = Math.min(5, Math.ceil(state.heat / 20));
 

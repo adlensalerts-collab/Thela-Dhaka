@@ -33,7 +33,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
 
   const [view, setView] = useState<'menu' | 'playing'>('menu');
-  const [modalType, setModalType] = useState<'bribe' | 'arrest_decision' | 'paused' | 'over' | 'victory' | null>(null);
+  const [modalType, setModalType] = useState<'bribe' | 'arrest_decision' | 'paused' | 'over' | 'victory' | 'level_up' | null>(null);
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [runStats, setRunStats] = useState<RunStats | null>(null);
   const [notice, setNotice] = useState('Welcome to Thela Dhaka · ঢাকার ঠেলা');
@@ -398,11 +398,19 @@ export default function App() {
   const handleCampaignTransition = (action: 'next' | 'retry' | 'endless' | 'new') => {
     const engine = engineRef.current;
     if (!engine) return;
-    setRematchPending(false);
-    setRunStats(null);
-    setModalType(null);
-    engine.resumeAudio();
-    engine.continueCampaign(action);
+    if ((action === 'next' || action === 'endless') && modalType !== 'level_up') {
+      setModalType('level_up');
+      return;
+    }
+    try {
+      engine.resumeAudio();
+      if (!engine.continueCampaign(action)) return;
+      setRematchPending(false);
+      setRunStats(null);
+      setModalType(null);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Could not start the next day. Please retry.');
+    }
   };
 
   const handleCreateRoom = (role: 'vendor' | 'police', name: string) => {
@@ -681,7 +689,7 @@ export default function App() {
               return;
             }
             if (mode === 'vendor' && engine.campaign) {
-              handleCampaignTransition('retry');
+              handleCampaignTransition('new');
               return;
             }
             const dayToReplay =

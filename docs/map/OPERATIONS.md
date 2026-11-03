@@ -8,6 +8,8 @@ Names only — never copy values from `.env*` files or tokens into docs or promp
 | Dev server (game + multiplayer) | `npm run dev` | `tsx server.ts`: Express + Vite middleware + Socket.io on `PORT` (default `3000`) |
 | Type check ("lint") | `npm run lint` | `tsc --noEmit`. **The only real error check** — `vite build` does not type-check |
 | Campaign rules and ending UI checks | `npx tsx --test scripts/campaign.test.tsx scripts/campaign-ui.test.tsx` | Solo campaign boundaries, result actions, captured ending time and online/police UI isolation |
+| Campaign difficulty and level briefing checks | `npx tsx --test scripts/difficulty.test.tsx` | Design anchors, interpolation, bounded Endless populations, district/target preview and paused briefing routing |
+| Crowd schedule, behavior, crossings and instancing checks | `npx --yes vite-node@3 scripts/crowd.test.ts` | Needs Vite's `import.meta.env`; verifies the real footpath graph and 120-person pool |
 | Production build (full service, base `/`) | `npm run build` | `vite build` → `dist/` (`index.html` + `character-preview.html`) |
 | Production build (GitHub Pages, base `/Thela-Dhaka/`) | `GITHUB_PAGES=true VITE_STATIC_HOST=true npm run build` | Loads `.env.pages` for `VITE_SERVER_URL` unless overridden in shell env |
 | Production server | `npm start` | `tsx server.ts --production`: serves `dist/`, `GET /healthz`, and `/socket.io/` without loading Vite/HMR; exits non-zero if `dist/index.html` is missing |

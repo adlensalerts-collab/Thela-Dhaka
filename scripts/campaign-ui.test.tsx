@@ -9,14 +9,15 @@ import { StatsScreen } from '../src/components/StatsScreen';
 
 const noop = () => {};
 const callbacks = { onPayBribe: noop, onGoToJail: noop, onRecordArrest: noop, onTakeIllicit: noop,
-  onResume: noop, onRestart: noop, onContinueCampaign: noop, onMainMenu: noop };
+  onResume: noop, onRestart: noop, onNextDay: noop, onRetryDay: noop,
+  onStartEndless: noop, onNewCampaign: noop, onMainMenu: noop };
 const healthy = { cash: 1000, stock: 10, otherSellableStock: 0, restockCost: 0, damage: 0,
   repairCost: 0, pendingSale: false, pendingRepair: false, pendingRestock: false };
 
 test('solo campaign uses its result shell with one heading, two actions and the actual jail time', () => {
   const tracker = new StatsTracker(); tracker.reset('vendor');
   const campaign = new Campaign();
-  const stats = { ...tracker.snapshot({ result: 'jailed' }), dayClockText: '10:00', campaign: campaign.arrested('jailed', 0) };
+  const stats = { ...tracker.snapshot({ result: 'jailed' }), dayClockText: '10:00', campaignResult: campaign.arrested('jailed', 0) };
   const markup = renderToStaticMarkup(<EventModal type="over" state={null} stats={stats} {...callbacks} />);
   assert.equal((markup.match(/<h2/g) ?? []).length, 1);
   assert.equal((markup.match(/<button/g) ?? []).length, 2);
@@ -51,7 +52,7 @@ test('passed day routes to Next day and day ten routes to shop/Endless, without 
     tracker.reset('vendor', day);
     tracker.earned = campaign.snapshot().target + 90; tracker.settleDayCosts();
     const result = campaign.closeDay(healthy, tracker.currentProfit());
-    const stats = { ...tracker.snapshot({ result: result.outcome }), campaign: result, dayClockText: '22:00' };
+    const stats = { ...tracker.snapshot({ result: result.outcome }), campaignResult: result, dayClockText: '22:00' };
     const markup = renderToStaticMarkup(<EventModal type="over" state={null} stats={stats} {...callbacks} />);
     assert.equal((markup.match(/<button/g) ?? []).length, 2);
     assert.match(markup, day === 10 ? /Endless mode/ : /Next day/);
