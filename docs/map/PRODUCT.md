@@ -17,6 +17,7 @@ Which file owns which feature. Sizes as of Hotfix 8.1. Files over ~20 KB: read v
 | Bounded solo police population and basic footpath patrols | `src/game/campaignPolice.ts` | `CampaignPolice` (engine applies population at day/mode reset) |
 | Pedestrians (activities, crossings, hotspot customers, near/far detail; legacy rage remains dormant) | `src/game/pedestrians.ts` | `PedestrianManager.summonCustomers`, `updateDetail`, `setTimeOfDay`, `setRoadProbes`, `setBrowsePoints`, `dispose` |
 | Time-of-day crowd density and hotspot pull | `src/game/crowd/crowdSchedule.ts` | `activeFraction` |
+| Active hotspot windows, demand and nearest-site selection | `src/game/hotspots.ts` | `scheduleHotspots`, `hotspotPeriod`, `nearbyHotspot` (shared by engine, crowd, HUD and radar) |
 | Instanced far-crowd representation | `src/game/crowd/crowdImpostors.ts` | `CrowdImpostors` |
 | Footpath route graph + A* | `src/game/pathfinding.ts` | `SidewalkGraph` |
 | Weather | `src/game/world/weather.ts` | `WeatherSystem` |

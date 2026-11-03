@@ -156,6 +156,9 @@ export class PedestrianManager {
       this.hotspotGroups.push({ kind: h.kind ?? 'junction', nodes: group });
     }
     this.hotspotNodes = [...set];
+    // S13: a time-window change must invalidate destinations even if the camera stays still.
+    this.focusHotspots = [];
+    this.focusCenter = null;
   }
 
   /** Sprint 10 crowd streaming: keep trips within this radius of the camera (the map is 900 m wide). */

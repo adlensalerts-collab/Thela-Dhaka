@@ -60,8 +60,8 @@ export function GameRadar({ state }: { state: GameState }) {
     const [px, py] = map.toMap(player.x, player.z), zoom = map.metresPerPixel * scale;
     context.drawImage(map.canvas, -px * zoom, -py * zoom, map.canvas.width * zoom, map.canvas.height * zoom);
     context.restore();
-    // Hotspot pulses are navigation hints; they do not invent time-of-day hotspot behavior.
-    for (const spot of map.district?.sites.hotspots ?? []) {
+    // The same active schedule drives crowd destinations, customer waves and these pulses.
+    for (const spot of state.hotspotSchedule?.active ?? map.district?.sites.hotspots ?? []) {
       const point = project(spot); if (!point.inside) continue;
       context.beginPath(); context.arc(point.x, point.y, 6 + pulse * 5, 0, Math.PI * 2);
       context.fillStyle = `rgba(16,185,129,${0.12 + pulse * 0.12})`; context.fill();
