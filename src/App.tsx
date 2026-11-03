@@ -33,7 +33,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
 
   const [view, setView] = useState<'menu' | 'playing'>('menu');
-  const [modalType, setModalType] = useState<'bribe' | 'arrest_decision' | 'paused' | 'over' | 'victory' | 'level_up' | null>(null);
+  const [modalType, setModalType] = useState<'bribe' | 'arrest_decision' | 'paused' | 'over' | 'victory' | null>(null);
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [runStats, setRunStats] = useState<RunStats | null>(null);
   const [notice, setNotice] = useState('Welcome to Thela Dhaka · ঢাকার ঠেলা');
@@ -181,11 +181,21 @@ export default function App() {
     socket.on('connect_error', () => {
       if (disposed) return;
       setConnectionStatus('unavailable');
+      const hadOnlineContext =
+        Boolean(roomCodeRef.current) ||
+        Boolean(waitingRoomRef.current) ||
+        Boolean(pendingRoomActionRef.current) ||
+        isOnlineMode();
       updatePendingRoomAction(null);
       updateWaitingRoom(null);
       setRematchPending(false);
       updateRoomCode('');
-      engine.pauseGame();
+      if (hadOnlineContext) {
+        setRunStats(null);
+        setModalType(null);
+        engine.pauseGame();
+        setView('menu');
+      }
     });
 
     socket.on('room_created', (data) => {
@@ -298,10 +308,10 @@ export default function App() {
       updatePendingRoomAction(null);
       updateWaitingRoom(null);
       updateRoomCode('');
-      setRunStats(null);
-      setModalType(null);
-      engine.pauseGame();
       if (hadOnlineContext) {
+        setRunStats(null);
+        setModalType(null);
+        engine.pauseGame();
         setView('menu');
         showToast('সংযোগ বিচ্ছিন্ন · Disconnected from server');
       }
@@ -377,10 +387,22 @@ export default function App() {
     setOnlineError(null);
     leaveCurrentRoom(false);
     engineRef.current.resumeAudio();
-    engineRef.current.newCampaign();
+    if (role === 'vendor') {
+      engineRef.current.newCampaign();
+    }
     engineRef.current.setMode(role, 1);
     setView('playing');
     setNotice(role === 'vendor' ? 'Sell products, then escape police!' : 'Patrol streets and catch the vendor!');
+  };
+
+  const handleCampaignTransition = (action: 'next' | 'retry' | 'endless' | 'new') => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    setRematchPending(false);
+    setRunStats(null);
+    setModalType(null);
+    engine.resumeAudio();
+    engine.continueCampaign(action);
   };
 
   const handleCreateRoom = (role: 'vendor' | 'police', name: string) => {
@@ -519,6 +541,11 @@ export default function App() {
       {/* Game Viewport (Canvas + Views) with live brightness control */}
       <div
         className="relative w-full h-full"
+        onPointerDown={() => {
+          if (view === 'playing' && !modalType && !showSettings) {
+            engineRef.current?.renderer?.domElement?.focus();
+          }
+        }}
         style={
           Math.abs(displaySettings.brightness - 1) > 0.01
             ? { filter: `brightness(${uiBrightness.toFixed(3)})` }
@@ -635,22 +662,6 @@ export default function App() {
             setModalType(null);
           }}
           onResume={handleResume}
-          onContinueCampaign={() => {
-            const engine = engineRef.current;
-            if (!engine) return;
-            const result = engine.lastRunStats?.campaign?.outcome;
-            if (modalType !== 'level_up' && (result === 'day_passed' || result === 'victory')) {
-              setModalType('level_up');
-              return;
-            }
-            try {
-              if (!engine.continueCampaign()) return;
-              setRunStats(null);
-              setModalType(null);
-            } catch (error) {
-              showToast(error instanceof Error ? error.message : 'Could not start the next day. Please retry.');
-            }
-          }}
           onRestart={() => {
             const engine = engineRef.current;
             if (!engine) return;
@@ -669,6 +680,10 @@ export default function App() {
               });
               return;
             }
+            if (mode === 'vendor' && engine.campaign) {
+              handleCampaignTransition('retry');
+              return;
+            }
             const dayToReplay =
               runStats?.dayNumber ??
               engine.lastRunStats?.dayNumber ??
@@ -677,10 +692,13 @@ export default function App() {
               1;
             setRematchPending(false);
             setRunStats(null);
-            if (mode === 'vendor') engine.newCampaign();
             engine.setMode(mode, dayToReplay);
             setModalType(null);
           }}
+          onNextDay={() => handleCampaignTransition('next')}
+          onRetryDay={() => handleCampaignTransition('retry')}
+          onStartEndless={() => handleCampaignTransition('endless')}
+          onNewCampaign={() => handleCampaignTransition('new')}
           onMainMenu={() => {
             engineRef.current?.newCampaign();
             leaveCurrentRoom(true);

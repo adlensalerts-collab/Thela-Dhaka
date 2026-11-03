@@ -8,6 +8,7 @@ import {
   MouseSettings,
   loadSettings,
   actionForCode,
+  actionForEvent,
   DEFAULT_BINDINGS,
   DEFAULT_MOUSE_SETTINGS
 } from './keybindings';
@@ -36,10 +37,7 @@ import { GraphTraffic } from './map/graphTraffic';
 import { getDistrict } from './map/districtData';
 import { VIEW_DISTANCE } from './map/chunks';
 import { auditDistrict } from './map/minimap';
-import type { DistrictId } from './map/district';
-import { ObstacleGrid } from './map/obstacleGrid';
-import { difficultyForDay, type DifficultyProfile } from './difficulty';
-import { CampaignPolice } from './campaignPolice';
+import { districtForLevel, type DistrictId } from './map/district';
 
 /** M-W — play on the real OpenStreetMap district (false = old grid city, kept as a fallback). */
 export const USE_REAL_MAP = true;
@@ -74,8 +72,7 @@ import { RemoteActor } from './net/remoteActor';
 import { CrowdCharacterLOD } from './world/characterVisual';
 import {
   Campaign,
-  campaignDistrict,
-  campaignTarget,
+  type CampaignOutcome,
   type CampaignState,
   type VendorCondition
 } from './campaign';
@@ -167,13 +164,13 @@ export interface GameState {
   weatherLabel: string;
   weatherTraction: number;
   weatherVisibility: number;
+  districtId?: DistrictId;
   campaign?: CampaignState;
-  difficulty?: DifficultyProfile;
-  policePositions?: Array<{ x: number; z: number }>;
 }
 
 // Module-level reusable math objects for zero garbage collection during 60 FPS loop
 const _toHuman = new THREE.Vector3();
+const _officerDir = new THREE.Vector3();
 const _lookTarget = new THREE.Vector3();
 
 export class GameEngine {
@@ -199,6 +196,8 @@ export class GameEngine {
   obstacles: Obstacle[] = [];
   traffic: TrafficItem[] = [];
   world: DistrictWorld | null = null;
+  currentDistrictId: DistrictId = REAL_MAP_ID;
+  private worldSceneObjects: Set<THREE.Object3D> = new Set();
   graphTraffic: GraphTraffic | null = null;
   hotspotDwell = 0;
   hotspotCooldown = 0;
@@ -207,9 +206,6 @@ export class GameEngine {
   stamina = new StaminaSystem();
   stats = new StatsTracker();
   campaign: Campaign | null = null;
-  campaignPolice: CampaignPolice | null = null;
-  private districtObjects: THREE.Object3D[] = [];
-  private campaignResetPending = false;
   lastRunStats: RunStats | null = null;
   dayEnded: boolean = false;
   brokenCartNoticeCooldown: number = 0;
@@ -345,8 +341,8 @@ export class GameEngine {
       dayEarned: 0,
       dayPendingCosts: isSoloVendor ? DAY_FIXED_COST : 0,
       dayCostsSettled: false,
+      districtId: campaignSnap ? campaignSnap.district : this.currentDistrictId,
       campaign: campaignSnap ?? undefined,
-      difficulty: isSoloVendor ? difficultyForDay(normalizedDay) : undefined,
       heading: 0,
       speed: 0,
       score: 0,
@@ -668,9 +664,10 @@ export class GameEngine {
       return mesh;
     };
 
+    const beforeWorld = new Set(this.scene.children);
     if (USE_REAL_MAP) {
-      const previousObjects = new Set(this.scene.children);
       // Real district (roads, footpaths, buildings, trees, poles, stalls, garages, aarots, collision)
+      this.currentDistrictId = REAL_MAP_ID;
       this.world = buildDistrictWorld(this.scene, getDistrict(REAL_MAP_ID));
       this.obstacles = this.world.obstacles;
       this.graphTraffic = new GraphTraffic(this.scene, this.world.roads, 36);
@@ -683,7 +680,6 @@ export class GameEngine {
         })),
         (x, z) => this.world?.roads.nearest(x, z)?.dist ?? 30
       );
-      this.districtObjects = this.scene.children.filter((o) => !previousObjects.has(o));
     } else {
     // Ground
     block(this.scene, 265, 0.7, 265, mat.soil, 0, -0.45, 0, false);
@@ -867,7 +863,6 @@ export class GameEngine {
 
     // Initialize Dhaka sidewalk waypoint network and pool of 14 A* pedestrian NPCs
     this.sidewalkGraph = this.world ? this.world.footpaths : new SidewalkGraph();
-    const beforePedestrians = new Set(this.scene.children);
     this.pedestrianManager = new PedestrianManager(
       this.scene,
       this.sidewalkGraph,
@@ -875,11 +870,92 @@ export class GameEngine {
     );
     if (this.world) this.pedestrianManager.bounds = { ...this.world.bounds };
     if (this.world) this.pedestrianManager.setHotspots(this.world.district.sites.hotspots);
-    this.districtObjects.push(...this.scene.children.filter((o) => !beforePedestrians.has(o)));
+
+    for (const child of this.scene.children) {
+      if (
+        !beforeWorld.has(child) &&
+        child !== this.human &&
+        child !== this.officer &&
+        child !== this.npcVendor
+      ) {
+        this.worldSceneObjects.add(child);
+      }
+    }
 
     if ((import.meta as any).env?.DEV) {
       if (this.world) auditDistrict(this.world);
       else auditObstacles(this.obstacles);
+    }
+  }
+
+  /**
+   * Switches the active real-map district when the campaign day moves between
+   * New Market (Days 1–5) and Gulistan (Days 6+).
+   */
+  private ensureDistrict(targetDistrictId: DistrictId) {
+    if (!USE_REAL_MAP || (this.world && this.currentDistrictId === targetDistrictId)) {
+      return;
+    }
+    this.crowdCharacters.dispose();
+    this.crowdCharacters = new CrowdCharacterLOD();
+    for (const pt of this.particles) {
+      this.scene.remove(pt.mesh);
+      pt.mesh.geometry.dispose();
+    }
+    this.particles = [];
+    for (const obj of this.worldSceneObjects) {
+      this.scene.remove(obj);
+    }
+    this.worldSceneObjects.clear();
+
+    const beforeWorld = new Set(this.scene.children);
+    this.currentDistrictId = targetDistrictId;
+    this.world = buildDistrictWorld(this.scene, getDistrict(targetDistrictId));
+    this.obstacles = this.world.obstacles;
+    this.graphTraffic = new GraphTraffic(this.scene, this.world.roads, 36);
+    this.traffic = this.graphTraffic.vehicles;
+    this.ambientAudio.setDistrict(
+      this.world.district.sites.hotspots.map((h, i) => ({
+        id: `hot_${i}`,
+        name: h.name,
+        bnName: h.name,
+        type:
+          h.kind === 'junction'
+            ? 'traffic'
+            : h.kind === 'marketplace' || h.kind === 'mall' || h.kind === 'department_store'
+            ? 'streetMarket'
+            : 'crowd',
+        x: h.x,
+        z: h.z,
+        innerRadius: 10,
+        outerRadius: h.kind === 'junction' ? 45 : 70,
+        maxWeight: 1
+      })),
+      (x, z) => this.world?.roads.nearest(x, z)?.dist ?? 30
+    );
+    this.applyQuality(this.qualityLevel);
+    this.sidewalkGraph = this.world.footpaths;
+    this.pedestrianManager = new PedestrianManager(
+      this.scene,
+      this.sidewalkGraph,
+      PEDESTRIANS_BY_QUALITY[this.qualityLevel] ?? 30
+    );
+    this.pedestrianManager.bounds = { ...this.world.bounds };
+    this.pedestrianManager.setHotspots(this.world.district.sites.hotspots);
+
+    for (const child of this.scene.children) {
+      if (
+        !beforeWorld.has(child) &&
+        child !== this.human &&
+        child !== this.officer &&
+        child !== this.npcVendor
+      ) {
+        this.worldSceneObjects.add(child);
+      }
+    }
+
+    if ((import.meta as any).env?.DEV) {
+      auditDistrict(this.world);
     }
   }
 
@@ -901,8 +977,7 @@ export class GameEngine {
     if (spot && still && !busy && this.state.stock > 0 && this.hotspotCooldown <= 0) {
       this.hotspotDwell += dt;
       if (this.hotspotDwell >= HOTSPOT_DWELL_SECONDS) {
-        const n = this.pedestrianManager.summonCustomers(p.position.x, p.position.z, 3, 55,
-          this.state.difficulty?.customerPatience ?? 25);
+        const n = this.pedestrianManager.summonCustomers(p.position.x, p.position.z, 3, 55);
         if (n > 0) {
           this.summonPoint = { x: p.position.x, z: p.position.z };
           this.onEvent('notify', `ভিড় জমছে! ${n} জন ক্রেতা আসছে · Customers coming`);
@@ -995,13 +1070,17 @@ export class GameEngine {
   }
 
   resumeGame() {
+    this.isMenuOrModalOpen = false;
     if (this.state) {
       this.state.stage = 'playing';
     }
     this.clearInputs();
     this.clock.getDelta(); // flush stale delta
     this.acc = 0;
-    this.renderer.domElement.focus();
+    try {
+      window.focus();
+      this.renderer.domElement.focus({ preventScroll: true });
+    } catch {}
     this.publishState(true);
   }
 
@@ -1013,7 +1092,7 @@ export class GameEngine {
 
     const onKeyDown = (e: KeyboardEvent) => {
       // Do not process gameplay keys while typing in form inputs
-      const target = e.target as HTMLElement;
+      const target = e.target as HTMLElement | null;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
         return;
       }
@@ -1025,10 +1104,14 @@ export class GameEngine {
 
       this.resumeAudio();
 
-      const action = actionForCode(e.code, this.bindings);
+      const action = actionForEvent(e, this.bindings);
       if (action) {
-        // Prevent scrolling on arrows, space, etc.
+        // Prevent scrolling or triggering focused HUD buttons on Space / Enter / Arrows
         e.preventDefault();
+        if (target && target.tagName === 'BUTTON' && typeof target.blur === 'function') {
+          target.blur();
+          dom.focus({ preventScroll: true });
+        }
 
         // One-shot actions trigger once on initial physical keydown
         if (['sell', 'restock', 'upgrade', 'upgradeStamina', 'changeView', 'placeStall', 'repair', 'pause'].includes(action)) {
@@ -1043,7 +1126,7 @@ export class GameEngine {
     };
 
     const onKeyUp = (e: KeyboardEvent) => {
-      const action = actionForCode(e.code, this.bindings);
+      const action = actionForEvent(e, this.bindings);
       if (action) {
         this.heldActions.delete(action);
       }
@@ -1155,8 +1238,8 @@ export class GameEngine {
       }
     };
 
-    window.addEventListener('keydown', onKeyDown);
-    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('keydown', onKeyDown, { capture: true });
+    window.addEventListener('keyup', onKeyUp, { capture: true });
     window.addEventListener('blur', onBlur);
     document.addEventListener('visibilitychange', onVisibilityChange);
     window.addEventListener('resize', onResize);
@@ -1173,8 +1256,8 @@ export class GameEngine {
 
     // Save cleanup hooks
     this.cleanupListeners = [
-      () => window.removeEventListener('keydown', onKeyDown),
-      () => window.removeEventListener('keyup', onKeyUp),
+      () => window.removeEventListener('keydown', onKeyDown, { capture: true }),
+      () => window.removeEventListener('keyup', onKeyUp, { capture: true }),
       () => window.removeEventListener('blur', onBlur),
       () => document.removeEventListener('visibilitychange', onVisibilityChange),
       () => window.removeEventListener('resize', onResize),
@@ -1207,6 +1290,7 @@ export class GameEngine {
     this.state.dayProfit = isSoloVendor
       ? this.stats.liveHudProfit()
       : this.stats.currentProfit();
+    this.state.districtId = campaignSnap ? campaignSnap.district : this.currentDistrictId;
     this.state.campaign = campaignSnap ?? undefined;
   }
 
@@ -1229,88 +1313,32 @@ export class GameEngine {
 
   newCampaign() {
     this.campaign = null;
-    this.campaignResetPending = false;
   }
 
-  /** Result-driven transition, guarded against stale/double UI clicks. */
-  continueCampaign(): boolean {
-    if (this.state.mode !== 'vendor' || !this.campaign ||
-        (!this.campaignResetPending && this.state.stage !== 'over')) return false;
-    if (!this.campaignResetPending) {
-      const snap = this.campaign.snapshot();
-      const outcome = snap.result?.outcome;
-      if (!['day_passed', 'day_failed', 'victory'].includes(outcome ?? '')) return false;
-      const nextDay = snap.dayNumber + (outcome === 'day_failed' ? 0 : 1);
-      campaignTarget(nextDay);
-      // Build the next district before advancing, so a failed build can be retried.
-      this.switchDistrict(campaignDistrict(nextDay));
-      if (outcome === 'day_passed') this.campaign.nextDay();
-      else if (outcome === 'victory') this.campaign.startEndless();
-      else this.campaign.retryDay();
-      this.campaignResetPending = true;
+  /**
+   * Advances or retries the solo-vendor campaign safely and resets the day.
+   */
+  continueCampaign(action: 'next' | 'retry' | 'endless' | 'new'): CampaignState | null {
+    if (action === 'new' || !this.campaign) {
+      this.newCampaign();
+      this.setMode('vendor', 1);
+      return this.campaign ? this.campaign.snapshot() : null;
     }
-    this.setMode('vendor', this.campaign.snapshot().dayNumber);
-    this.campaignResetPending = false;
-    return true;
-  }
-
-  /** Stage district systems before replacing any active world; heroes/lights stay alive. */
-  private switchDistrict(id: DistrictId) {
-    if (!USE_REAL_MAP || this.world?.district.id === id) return;
-    const staging = new THREE.Scene();
-    let world: DistrictWorld, traffic: GraphTraffic, pedestrians: PedestrianManager;
-    try {
-      world = buildDistrictWorld(staging, getDistrict(id));
-      world.chunks.setViewDistance(VIEW_DISTANCE[this.qualityLevel]);
-      traffic = new GraphTraffic(staging, world.roads, 36);
-      pedestrians = new PedestrianManager(staging, world.footpaths, PEDESTRIANS_BY_QUALITY[this.qualityLevel]);
-      pedestrians.bounds = { ...world.bounds };
-      pedestrians.setHotspots(world.district.sites.hotspots);
-      if (import.meta.env.DEV) auditDistrict(world);
-    } catch (error) {
-      this.releaseDistrictObjects([...staging.children]);
-      throw error;
+    const currentResult = this.campaign.snapshot().result;
+    if (!currentResult) {
+      // Guard against duplicate clicks when day was already reset
+      return this.campaign.snapshot();
     }
-    this.crowdCharacters.dispose();
-    this.crowdCharacters = new CrowdCharacterLOD();
-    const previous = this.districtObjects;
-    this.districtObjects = [...staging.children];
-    for (const object of previous) object.removeFromParent();
-    for (const object of this.districtObjects) this.scene.add(object);
-    this.world = world;
-    this.graphTraffic = traffic;
-    this.traffic = traffic.vehicles;
-    this.obstacles = world.obstacles;
-    this.sidewalkGraph = world.footpaths;
-    this.pedestrianManager = pedestrians;
-    this.ambientAudio.setDistrict(world.district.sites.hotspots.map((h, i) => ({
-      id: `hot_${i}`, name: h.name, bnName: h.name,
-      type: h.kind === 'junction' ? 'traffic' : ['marketplace', 'mall', 'department_store'].includes(h.kind) ? 'streetMarket' : 'crowd',
-      x: h.x, z: h.z, innerRadius: 10, outerRadius: h.kind === 'junction' ? 45 : 70, maxWeight: 1
-    })), (x, z) => this.world?.roads.nearest(x, z)?.dist ?? 30);
-    this.releaseDistrictObjects(previous);
-  }
-
-  private releaseDistrictObjects(objects: THREE.Object3D[]) {
-    const retained = new Set<THREE.BufferGeometry | THREE.Material | THREE.Texture>();
-    const resources = (object: THREE.Object3D, add: (resource: THREE.BufferGeometry | THREE.Material | THREE.Texture) => void) => {
-      const mesh = object as THREE.Mesh;
-      if (mesh.geometry) add(mesh.geometry);
-      for (const material of mesh.material ? (Array.isArray(mesh.material) ? mesh.material : [mesh.material]) : []) {
-        add(material);
-        for (const value of Object.values(material)) if (value instanceof THREE.Texture) add(value);
-      }
-    };
-    this.scene.traverse((o) => resources(o, (r) => retained.add(r)));
-    const retired = new Set<THREE.BufferGeometry | THREE.Material | THREE.Texture>();
-    for (const object of objects) {
-      object.removeFromParent();
-      object.traverse((o) => {
-        resources(o, (r) => { if (!retained.has(r)) retired.add(r); });
-        if (o instanceof THREE.InstancedMesh) o.dispose();
-      });
+    let nextState: CampaignState;
+    if (action === 'next') {
+      nextState = this.campaign.nextDay();
+    } else if (action === 'retry') {
+      nextState = this.campaign.retryDay();
+    } else {
+      nextState = this.campaign.startEndless();
     }
-    for (const resource of retired) resource.dispose();
+    this.setMode('vendor', nextState.dayNumber);
+    return nextState;
   }
 
   restartDay() {
@@ -1321,22 +1349,13 @@ export class GameEngine {
 
   setMode(mode: GameState['mode'], dayNumber = 1) {
     this.cancelActiveTimers();
-    if (this.campaignPolice) {
-      this.releaseDistrictObjects(this.campaignPolice.detachExtras());
-      this.campaignPolice = null;
-    }
     if (this.state?.stall) {
       this.scene.remove(this.state.stall);
       this.obstacles = this.obstacles.filter((o) => o.tag !== 'big_stall');
-      if (this.world) {
-        this.world.obstacles = this.obstacles;
-        this.world.grid = new ObstacleGrid();
-        this.world.grid.addAll(this.obstacles);
-      }
     }
     const normalizedDay = normalizeDayNumber(dayNumber);
     if (mode === 'vendor') {
-      if (!this.campaign) {
+      if (normalizedDay === 1 && !this.campaign) {
         this.campaign = new Campaign();
       }
     } else {
@@ -1344,8 +1363,16 @@ export class GameEngine {
     }
     const effectiveDay =
       mode === 'vendor' && this.campaign ? this.campaign.snapshot().dayNumber : normalizedDay;
-    this.switchDistrict(mode === 'vendor' && this.campaign ? this.campaign.snapshot().district : REAL_MAP_ID);
+    const targetDistrict: DistrictId =
+      mode === 'vendor'
+        ? this.campaign
+          ? this.campaign.snapshot().district
+          : districtForLevel(effectiveDay)
+        : REAL_MAP_ID;
+    this.ensureDistrict(targetDistrict);
+
     this.dayEnded = false;
+    this.isMenuOrModalOpen = false;
     this.brokenCartNoticeCooldown = 0;
     this.failureCheckAccum = 0;
     this.state = this.getInitialState(mode, effectiveDay);
@@ -1409,44 +1436,14 @@ export class GameEngine {
     this.clearInputs();
     this.clock.getDelta();
     this.acc = 0;
-    this.applyCampaignDifficulty();
     this.playBeep(520, 0.2);
-    setTimeout(() => this.renderer.domElement.focus(), 15);
+    setTimeout(() => {
+      try {
+        window.focus();
+        this.renderer.domElement.focus({ preventScroll: true });
+      } catch {}
+    }, 15);
     this.publishState(true);
-  }
-
-  /** Population changes run at day/mode reset, never during a frame. */
-  private applyCampaignDifficulty() {
-    const difficulty = this.state.difficulty;
-    const count = difficulty?.trafficCount ?? 36;
-    if (this.world && this.graphTraffic && this.graphTraffic.vehicles.length !== count) {
-      const staging = new THREE.Scene();
-      let traffic: GraphTraffic;
-      try { traffic = new GraphTraffic(staging, this.world.roads, count); }
-      catch (error) { this.releaseDistrictObjects([...staging.children]); throw error; }
-      const previous = this.graphTraffic.vehicles.map((v) => v.mesh);
-      const retired = new Set<THREE.Object3D>(previous);
-      for (const object of previous) object.removeFromParent();
-      const next = [...staging.children];
-      for (const object of next) this.scene.add(object);
-      this.districtObjects = this.districtObjects.filter((object) => !retired.has(object));
-      this.districtObjects.push(...next);
-      this.graphTraffic = traffic;
-      this.traffic = traffic.vehicles;
-      this.releaseDistrictObjects(previous);
-    }
-    if (difficulty) {
-      this.campaignPolice = new CampaignPolice(this.officer, difficulty, {
-        graph: this.sidewalkGraph,
-        obstacles: (x, z) => this.nearObstacles(x, z),
-        bounds: this.mapBound(105),
-        isRoad: (x, z) => this.world?.roads.isOnCarriageway(x, z) ?? false,
-      }, this.scene);
-      this.campaignPolice.resetPositions(this.human.position.x, this.human.position.z);
-      this.state.policePositions = this.campaignPolice.positions();
-      this.state.officerX = this.officer.position.x;
-      this.state.officerZ = this.officer.position.z;
-    }
   }
 
   vector2(a: { x: number; z: number }, b: { x: number; z: number }) {
@@ -1865,27 +1862,28 @@ export class GameEngine {
     this.endRun(outcome.result);
   }
 
-  endRun(result: Exclude<RunResult, null>) {
-    if (this.state.stage === 'over' || this.state.stage === 'victory') return;
-    if (this.state.mode === 'vendor') this.dayEnded = true;
+  endRun(result: Exclude<RunResult, null> | CampaignOutcome) {
     this.cancelActiveTimers();
     this.state.damage = this.damage.damage;
     this.state.stage = 'over';
     this.clearInputs();
     this.syncDayAccountingState();
-    const snapshot: RunStats = {
-      ...this.stats.snapshot({
-        cartLevel: this.state.level,
-        staminaLevel: this.state.staminaLevel,
-        dayNumber: this.state.dayNumber,
-        dayTarget: this.state.dayTarget,
-        mode: this.state.mode,
-        result,
-        arrests: this.state.arrests
-      }),
+    const campaignResult =
+      this.state.mode === 'vendor' && this.campaign
+        ? this.campaign.snapshot().result
+        : null;
+    const snapshot = this.stats.snapshot({
+      cartLevel: this.state.level,
+      staminaLevel: this.state.staminaLevel,
+      dayNumber: this.state.dayNumber,
+      dayTarget: this.state.dayTarget,
+      dayElapsedSeconds: this.state.dayElapsedSeconds,
       dayClockText: this.state.dayClockText,
-      campaign: this.state.mode === 'vendor' ? this.campaign?.snapshot().result ?? undefined : undefined
-    };
+      mode: this.state.mode,
+      result: result as Exclude<RunResult, null>,
+      campaignResult,
+      arrests: this.state.arrests
+    });
     this.lastRunStats = snapshot;
     this.publishState(true);
     this.onEvent('game_over', snapshot);
@@ -1911,13 +1909,7 @@ export class GameEngine {
     this.state.alert = false;
     this.state.escape = 0;
     this.state.cooldown = 10;
-    if (this.state.sale) {
-      if (this.state.sale.customer) {
-        this.state.sale.customer.isEngagedInSale = false;
-        this.state.sale.customer.summonUntil = 0;
-      }
-      this.state.sale = null;
-    }
+    this.cancelActiveTimers();
     if (this.state.mode !== 'online_vendor') {
       if (this.world) {
         const op = this.footpathPoint(this.human.position.x, this.human.position.z, 30, 45);
@@ -1933,11 +1925,9 @@ export class GameEngine {
       this.state.officerZ = this.officer.position.z;
     }
     this.stats.spentBribes += cost;
-    this.campaignPolice?.resetPositions(this.human.position.x, this.human.position.z);
     this.stats.bribesPaid++;
     this.syncDayAccountingState();
     if (this.checkSoloVendorFailure()) {
-      this.isMenuOrModalOpen = false;
       return false;
     }
     this.resumeGame();
@@ -2065,7 +2055,6 @@ export class GameEngine {
     if (force || now - this.lastHudPublishTime >= 95) {
       this.lastHudPublishTime = now;
       if (this.state) {
-        this.state.policePositions = this.state.mode === 'vendor' ? this.campaignPolice?.positions() : undefined;
         this.state.campaign =
           this.state.mode === 'vendor' && this.campaign
             ? this.campaign.snapshot()
@@ -2366,17 +2355,39 @@ export class GameEngine {
 
     // AI Police pursuit & navigation with collision resolution (Solo Vendor Mode)
     const visibilityFactor = this.weather ? this.weather.visibilityFactor : 1;
-    const policeSightRange = (this.state.difficulty?.policeVision ?? 55) * visibilityFactor;
-    const policeEscapeDist = this.state.difficulty
-      ? Math.max(30, this.state.difficulty.policeVision + 5) * visibilityFactor : 30 * visibilityFactor;
+    const policeSightRange = 55 * visibilityFactor;
+    const policeEscapeDist = 30 * visibilityFactor;
 
     if (this.state.mode === 'vendor') {
-      const distBefore = this.campaignPolice?.nearestDistance(this.human.position.x, this.human.position.z)
-        ?? this.vector2(this.human.position, this.officer.position);
+      const distBefore = this.vector2(this.human.position, this.officer.position);
       this.updateChaseAlert(distBefore, policeSightRange);
-      this.campaignPolice?.update(dt, this.human.position, this.state.alert, weatherSpeedMult, this.camera.position);
-      const dist = this.campaignPolice?.nearestDistance(this.human.position.x, this.human.position.z) ?? distBefore;
+      _toHuman.subVectors(this.human.position, this.officer.position);
+      const dist = _toHuman.length();
       if (this.state.alert) {
+        _officerDir.copy(_toHuman);
+        _officerDir.y = 0;
+        _officerDir.normalize();
+
+        const officerSpeed = Math.min(dist, 1) * 3.55 * weatherSpeedMult;
+        const officerVx = _officerDir.x * officerSpeed * dt;
+        const officerVz = _officerDir.z * officerSpeed * dt;
+        const officerHeading = Math.atan2(_officerDir.x, -_officerDir.z);
+
+        const aiMove = resolveMovement(
+          this.officer.position.x,
+          this.officer.position.z,
+          officerVx,
+          officerVz,
+          officerHeading,
+          false,
+          this.nearObstacles(this.officer.position.x, this.officer.position.z),
+          this.mapBound(105)
+        );
+        this.officer.position.x = aiMove.newX;
+        this.officer.position.z = aiMove.newZ;
+        // Orientation fix: Officer faces pursuit heading
+        this.officer.rotation.y = -officerHeading;
+
         if (dist < 2.1) {
           if (!this.isMenuOrModalOpen) {
             this.stats.timesCaught++;
@@ -2387,6 +2398,25 @@ export class GameEngine {
           return;
         }
         this.updateChaseEscape(dt, dist, policeEscapeDist);
+      } else {
+        const angle = this.state.time * 0.3;
+        const aiVx = Math.sin(angle) * dt * 1.1;
+        const aiVz = Math.cos(angle * 0.7) * dt * 0.9;
+        const wanderHeading = Math.atan2(aiVx, -aiVz);
+        const aiMove = resolveMovement(
+          this.officer.position.x,
+          this.officer.position.z,
+          aiVx,
+          aiVz,
+          wanderHeading,
+          false,
+          this.nearObstacles(this.officer.position.x, this.officer.position.z),
+          this.mapBound(100)
+        );
+        this.officer.position.x = aiMove.newX;
+        this.officer.position.z = aiMove.newZ;
+        // Orientation fix: Wander officer facing
+        this.officer.rotation.y = -wanderHeading;
       }
     } else if (this.state.mode === 'online_vendor' && this.remoteActive) {
       const dist = this.vector2(this.human.position, this.officer.position);
@@ -2458,7 +2488,13 @@ export class GameEngine {
     } else if (this.state.mode === 'online_vendor' && this.remoteActive) {
       officerSpeed = this.remoteSpeed;
     } else if (this.state.mode === 'vendor') {
-      officerSpeed = this.campaignPolice?.primarySpeed ?? 0;
+      if (this.state.alert) {
+        _toHuman.subVectors(this.human.position, this.officer.position);
+        officerSpeed = Math.min(_toHuman.length(), 1) * 3.55;
+      } else {
+        const angle = this.state.time * 0.3;
+        officerSpeed = Math.hypot(Math.sin(angle) * 1.1, Math.cos(angle * 0.7) * 0.9);
+      }
     }
     this.officerPhase += officerSpeed * dt * 2.2;
     if (this.officer.userData.rig) {
@@ -2867,10 +2903,6 @@ export class GameEngine {
 
   stop() {
     this.isDestroyed = true;
-    if (this.campaignPolice) {
-      this.releaseDistrictObjects(this.campaignPolice.detachExtras());
-      this.campaignPolice = null;
-    }
     this.crowdCharacters.dispose();
     for (const actor of [this.human, this.officer, this.npcVendor]) actor?.userData.rig?.visual?.dispose();
     cancelAnimationFrame(this.animId);

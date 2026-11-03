@@ -26,6 +26,7 @@ export default defineConfig(() => {
         input: {
           game: path.resolve(__dirname, 'index.html'),
           characters: path.resolve(__dirname, 'character-preview.html'),
+          sounds: path.resolve(__dirname, 'sound-preview.html'),
         },
       },
     },
