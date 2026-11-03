@@ -41,6 +41,7 @@ import { districtForLevel, type DistrictId } from './map/district';
 import { ObstacleGrid } from './map/obstacleGrid';
 import { difficultyForDay, type DifficultyProfile } from './difficulty';
 import { CampaignPolice } from './campaignPolice';
+import { nearbyRadarPoints, type RadarSnapshot } from './ui/radar';
 
 /** M-W — play on the real OpenStreetMap district (false = old grid city, kept as a fallback). */
 export const USE_REAL_MAP = true;
@@ -172,6 +173,7 @@ export interface GameState {
   campaign?: CampaignState;
   difficulty?: DifficultyProfile;
   policePositions?: Array<{ x: number; z: number }>;
+  radar?: RadarSnapshot;
 }
 
 // Module-level reusable math objects for zero garbage collection during 60 FPS loop
@@ -2128,6 +2130,22 @@ export class GameEngine {
       this.lastHudPublishTime = now;
       if (this.state) {
         this.state.policePositions = this.state.mode === 'vendor' ? this.campaignPolice?.positions() : undefined;
+        const player = { x: this.state.playerX, z: this.state.playerZ };
+        const police = this.state.mode === 'vendor' ? this.campaignPolice?.positions() ?? []
+          : this.state.mode === 'online_vendor' && this.remoteActive
+          ? [{ x: this.officer.position.x, z: this.officer.position.z, heading: -this.officer.rotation.y }] : [];
+        this.state.radar = {
+          people: nearbyRadarPoints(this.customers.filter((person) => person.active !== false)
+            .map((person) => ({ x: person.mesh.position.x, z: person.mesh.position.z })), player, 64),
+          vehicles: nearbyRadarPoints(this.traffic.map((vehicle) => ({
+            x: vehicle.mesh.position.x, z: vehicle.mesh.position.z, heading: -vehicle.mesh.rotation.y
+          })), player, 32),
+          police: police.map((position) => ({ ...position, vision: this.state.mode === 'vendor'
+            ? (this.state.difficulty?.policeVision ?? 25) * (this.weather?.visibilityFactor ?? 1) : undefined })),
+          opponent: this.state.mode === 'police' ? { x: this.npcVendor.position.x, z: this.npcVendor.position.z }
+            : this.state.mode === 'online_police' && this.remoteActive
+            ? { x: this.human.position.x, z: this.human.position.z } : undefined,
+        };
         this.state.campaign =
           this.state.mode === 'vendor' && this.campaign
             ? this.campaign.snapshot()

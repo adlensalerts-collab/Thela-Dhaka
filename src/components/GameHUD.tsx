@@ -1,3 +1,4 @@
+import { GameRadar } from './GameRadar';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   ShoppingCart,
@@ -28,11 +29,6 @@ import {
 } from 'lucide-react';
 import { GameState } from '../game/simulation';
 import { GameSettingsData, formatCode } from '../game/keybindings';
-import { GARAGE_SITES } from '../game/world/garages';
-import { AAROT_SITES } from '../game/world/aarots';
-import { USE_REAL_MAP, REAL_MAP_ID } from '../game/simulation';
-import { getDistrict } from '../game/map/districtData';
-import { createDistrictMinimap } from '../game/map/minimap';
 import { loadDisplaySettings } from '../game/render/display';
 
 type HeldControlAction = 'forward' | 'backward' | 'turnLeft' | 'turnRight' | 'sprint';
@@ -62,12 +58,19 @@ export const GameHUD: React.FC<GameHUDProps> = ({
   muted = false,
   onToggleMute
 }) => {
-  const minimapRef = useRef<HTMLCanvasElement>(null);
-  const bgCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const dpadRef = useRef<HTMLDivElement>(null);
+  const bottomHudRef = useRef<HTMLDivElement>(null);
+  const [bottomHudHeight, setBottomHudHeight] = useState(160);
+  useEffect(() => {
+    const element = bottomHudRef.current;
+    if (!element) return;
+    const measure = () => setBottomHudHeight(Math.ceil(element.getBoundingClientRect().height));
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
   const dpadPointerIdRef = useRef<number | null>(null);
-  // world (x, z) → minimap pixels; real map uses the district transform, grid map the old ±120 one
-  const mapXZRef = useRef<(x: number, z: number) => [number, number]>((x, z) => [((x + 120) / 240) * 160, ((z + 120) / 240) * 160]);
   const isVendor = state.mode === 'vendor' || state.mode === 'online_vendor';
   const isSoloVendor = state.mode === 'vendor';
   const dayNumber = state.dayNumber ?? 1;
@@ -76,7 +79,6 @@ export const GameHUD: React.FC<GameHUDProps> = ({
   const dayTarget = Math.max(1, state.dayTarget ?? 600);
   const dayProgressPct = Math.min(100, Math.max(0, Math.round((Math.max(0, dayProfit) / dayTarget) * 100)));
   const dayTargetReached = dayProfit >= dayTarget;
-  const activeDistrictId = state.districtId ?? state.campaign?.district ?? REAL_MAP_ID;
 
   const [showTouchControls, setShowTouchControls] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
@@ -145,148 +147,6 @@ export const GameHUD: React.FC<GameHUDProps> = ({
     setControlHeld('turnLeft', dx < -deadzone);
     setControlHeld('turnRight', dx > deadzone);
   };
-
-  // Memoized static minimap background rendering (updates when district or role changes)
-  useEffect(() => {
-    const size = 160;
-    if (USE_REAL_MAP) {
-      const mm = createDistrictMinimap(getDistrict(activeDistrictId), size, isVendor ? 'vendor' : 'police');
-      bgCanvasRef.current = mm.canvas;
-      mapXZRef.current = mm.toMap;
-      return;
-    }
-    const bg = document.createElement('canvas');
-    bg.width = size;
-    bg.height = size;
-    const cx = bg.getContext('2d');
-    if (cx) {
-      cx.fillStyle = '#d3c9a8';
-      cx.fillRect(0, 0, size, size);
-      cx.strokeStyle = '#67695f';
-      cx.lineWidth = 7;
-      const street = [-80, -40, 0, 40, 80];
-      for (const v of street) {
-        const t = ((v + 120) / 240) * size;
-        cx.beginPath();
-        cx.moveTo(t, 0);
-        cx.lineTo(t, size);
-        cx.stroke();
-        cx.beginPath();
-        cx.moveTo(0, t);
-        cx.lineTo(size, t);
-        cx.stroke();
-      }
-      // Garage markers (amber square with "G") at each GARAGE_SITES position
-      for (const site of GARAGE_SITES) {
-        const gx = ((site.x + 120) / 240) * size;
-        const gz = ((site.z + 120) / 240) * size;
-        const boxSize = 13;
-        cx.fillStyle = '#f59e0b';
-        cx.fillRect(gx - boxSize / 2, gz - boxSize / 2, boxSize, boxSize);
-        cx.strokeStyle = '#142e29';
-        cx.lineWidth = 1.5;
-        cx.strokeRect(gx - boxSize / 2, gz - boxSize / 2, boxSize, boxSize);
-        cx.fillStyle = '#111827';
-        cx.font = 'bold 9px sans-serif';
-        cx.textAlign = 'center';
-        cx.textBaseline = 'middle';
-        cx.fillText('G', gx, gz + 0.5);
-      }
-      // Aarot markers (green square with "A") at each AAROT_SITES position
-      for (const site of AAROT_SITES) {
-        const ax = ((site.x + 120) / 240) * size;
-        const az = ((site.z + 120) / 240) * size;
-        const boxSize = 13;
-        cx.fillStyle = '#22c55e';
-        cx.fillRect(ax - boxSize / 2, az - boxSize / 2, boxSize, boxSize);
-        cx.strokeStyle = '#0f291c';
-        cx.lineWidth = 1.5;
-        cx.strokeRect(ax - boxSize / 2, az - boxSize / 2, boxSize, boxSize);
-        cx.fillStyle = '#111827';
-        cx.font = 'bold 9px sans-serif';
-        cx.textAlign = 'center';
-        cx.textBaseline = 'middle';
-        cx.fillText('A', ax, az + 0.5);
-      }
-    }
-    bgCanvasRef.current = bg;
-  }, [isVendor, activeDistrictId]);
-
-  // Update blips on minimap efficiently
-  useEffect(() => {
-    const canvas = minimapRef.current;
-    if (!canvas || !bgCanvasRef.current) return;
-    const cx = canvas.getContext('2d');
-    if (!cx) return;
-    const size = 160;
-    const toMapXZ = mapXZRef.current;
-    const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
-
-    cx.drawImage(bgCanvasRef.current, 0, 0);
-
-    // Hostile / injured pedestrian blips (orange-red dots)
-    if (isVendor && state.angryPeds && state.angryPeds.length > 0) {
-      for (const ap of state.angryPeds) {
-        const [amx, amy] = toMapXZ(ap.x, ap.z);
-        const ax = clamp(amx, 5, size - 5);
-        const ay = clamp(amy, 5, size - 5);
-        cx.beginPath();
-        cx.arc(ax, ay, 3.2, 0, Math.PI * 2);
-        cx.fillStyle = '#f97316';
-        cx.fill();
-        cx.strokeStyle = '#7f1d1d';
-        cx.lineWidth = 1;
-        cx.stroke();
-      }
-    }
-
-    // Police blip (vendor modes only): shown when alert or within 40 units of player
-    if (isVendor) for (const officer of state.policePositions ?? [{ x: state.officerX ?? 0, z: state.officerZ ?? 0 }]) {
-      const distToOfficer = Math.hypot(
-        officer.x - (state.playerX ?? 0),
-        officer.z - (state.playerZ ?? 0)
-      );
-      if (state.alert || distToOfficer <= 40) {
-        const blinkOn = !state.alert || Math.floor(Date.now() / 220) % 2 === 0;
-        if (blinkOn) {
-          const [omx, omy] = toMapXZ(officer.x, officer.z);
-          const ox = clamp(omx, 6, size - 6);
-          const oy = clamp(omy, 6, size - 6);
-          cx.beginPath();
-          cx.arc(ox, oy, 4, 0, Math.PI * 2);
-          cx.fillStyle = '#ef4444';
-          cx.fill();
-          cx.strokeStyle = '#ffffff';
-          cx.lineWidth = 1.5;
-          cx.stroke();
-        }
-      }
-    }
-
-    // Player blip: white-outlined amber arrow rotated by state.heading
-    const [pmx, pmy] = toMapXZ(state.playerX ?? 0, state.playerZ ?? 0);
-    const px = clamp(pmx, 8, size - 8);
-    const py = clamp(pmy, 8, size - 8);
-    cx.save();
-    cx.translate(px, py);
-    cx.rotate(state.heading || 0);
-    cx.beginPath();
-    cx.moveTo(0, -7);
-    cx.lineTo(-5, 5);
-    cx.lineTo(5, 5);
-    cx.closePath();
-    cx.fillStyle = '#f59e0b';
-    cx.fill();
-    cx.strokeStyle = '#ffffff';
-    cx.lineWidth = 1.5;
-    cx.stroke();
-    cx.restore();
-
-    // Frame border stroke on top
-    cx.strokeStyle = '#c5a059';
-    cx.lineWidth = 2;
-    cx.strokeRect(1, 1, size - 2, size - 2);
-  }, [state.playerX, state.playerZ, state.heading, state.officerX, state.officerZ, state.policePositions, state.alert, state.angryPeds, isVendor]);
 
   const stars = Math.min(5, Math.ceil(state.heat / 20));
 
@@ -684,7 +544,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
 
       {/* Hotspot indicator: stand still to draw customers */}
       {isVendor && state.hotspotName && (
-        <div className="absolute bottom-[168px] sm:bottom-[92px] right-2 sm:right-4 pointer-events-none bg-black/65 backdrop-blur-md border border-orange-500/50 rounded-xl px-3 py-1.5 text-[11px] text-orange-200 font-semibold whitespace-nowrap max-w-[calc(100vw-1rem)] overflow-hidden">
+        <div style={{ bottom: bottomHudHeight + (showTouchControls ? 168 : 16) }} className="absolute right-2 sm:right-4 pointer-events-none bg-black/65 backdrop-blur-md border border-orange-500/50 rounded-xl px-3 py-1.5 text-[11px] text-orange-200 font-semibold whitespace-nowrap max-w-[calc(100vw-1rem)] overflow-hidden">
           <div className="truncate">🔥 হট স্পট · {state.hotspotName}</div>
           <div className="text-[10px] text-orange-300/80 truncate">দাঁড়িয়ে থাকুন — ক্রেতা আসবে · Stand still to draw customers</div>
           <div className="mt-1 h-1 w-full bg-gray-800 rounded-full overflow-hidden">
@@ -697,7 +557,8 @@ export const GameHUD: React.FC<GameHUDProps> = ({
       {showTouchControls && (
         <div
           data-testid="mobile-touch-controls"
-          className="absolute bottom-[88px] sm:bottom-[96px] left-2 right-2 sm:left-4 sm:right-4 flex items-end justify-between pointer-events-none z-20"
+          className="absolute left-2 right-2 sm:left-4 sm:right-4 flex items-end justify-between pointer-events-none z-20"
+          style={{ bottom: bottomHudHeight + 16 }}
         >
           {/* Left Thumb D-Pad / Slide Steering Pad */}
           <div
@@ -837,13 +698,8 @@ export const GameHUD: React.FC<GameHUDProps> = ({
       )}
 
       {/* Bottom HUD Bar & Controls */}
-      <div className="absolute bottom-2 sm:bottom-4 left-2 right-2 sm:left-4 sm:right-4 flex items-end justify-between gap-2 sm:gap-4">
-        {/* Minimap */}
-        <div className="bg-black/60 backdrop-blur-md border border-teal-600/40 rounded-2xl p-1.5 sm:p-2 shadow-xl pointer-events-auto overflow-hidden shrink-0">
-          <canvas ref={minimapRef} width={160} height={160} className="rounded-xl w-16 h-16 sm:w-28 sm:h-28 md:w-36 md:h-36" />
-          <div className="text-[9px] sm:text-[10px] text-center text-gray-400 mt-0.5 sm:mt-1 uppercase font-semibold truncate max-w-[4rem] sm:max-w-none">{USE_REAL_MAP ? getDistrict(activeDistrictId).name : 'Gulistan'} Map</div>
-          <div className="hidden sm:block text-[8px] text-center text-gray-500 leading-tight">© OpenStreetMap contributors</div>
-        </div>
+      <div ref={bottomHudRef} className="absolute bottom-2 sm:bottom-4 left-2 right-2 sm:left-4 sm:right-4 flex items-end justify-between gap-2 sm:gap-4">
+        <GameRadar state={state} />
 
         {/* Action Buttons with active binding labels (never wrap, fixed-width numbers) */}
         <div className="flex flex-nowrap items-center gap-1.5 sm:gap-2 pointer-events-auto overflow-x-auto max-w-full py-0.5">
