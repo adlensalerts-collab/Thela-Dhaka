@@ -4,9 +4,10 @@ import { GameState } from '../game/simulation';
 import { RunStats } from '../game/stats';
 import { StatsScreen } from './StatsScreen';
 import { CampaignEnding } from './CampaignEnding';
+import { LevelBriefing } from './LevelBriefing';
 
 interface EventModalProps {
-  type: 'bribe' | 'arrest_decision' | 'paused' | 'over' | 'victory' | null;
+  type: 'bribe' | 'arrest_decision' | 'paused' | 'over' | 'victory' | 'level_up' | null;
   state: GameState | null;
   stats?: RunStats | null;
   isOnline?: boolean;
@@ -43,6 +44,14 @@ export const EventModal: React.FC<EventModalProps> = ({
   const bribeCost = state ? 90 + state.level * 45 : 150;
   const online =
     isOnline ?? (state?.mode === 'online_vendor' || state?.mode === 'online_police');
+
+  if (type === 'level_up') {
+    const result = stats?.campaign;
+    if (!result || (result.outcome !== 'day_passed' && result.outcome !== 'victory')) return null;
+    return <div className="absolute inset-0 z-40 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 sm:p-6">
+      <LevelBriefing dayNumber={result.dayNumber + 1} onStart={onContinueCampaign} onMainMenu={onMainMenu} />
+    </div>;
+  }
 
   if (type === 'over' || type === 'victory') {
     return (

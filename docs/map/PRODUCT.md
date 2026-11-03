@@ -13,6 +13,8 @@ Which file owns which feature. Sizes as of Hotfix 8.1. Files over ~20 KB: read v
 | Working-day clock + daily profit targets & rent/food accounting | `src/game/day.ts` | `DAY_DURATION_SECONDS`, `DAY_RENT_COST`, `DAY_FOOD_COST`, `formatDayClock`, `getDayProfitTarget`, `evaluateDayOutcome` |
 | Run statistics | `src/game/stats.ts` | `StatsTracker`, `RunStats` |
 | Solo-vendor campaign, defeat rules, day progression and Endless | `src/game/campaign.ts` | `Campaign`, `vendorFailure`, `campaignTarget` (engine integration in `simulation.ts`) |
+| Campaign difficulty anchors, interpolation and briefing data | `src/game/difficulty.ts` | `difficultyForDay`, `dayBriefing` |
+| Bounded solo police population and basic footpath patrols | `src/game/campaignPolice.ts` | `CampaignPolice` (engine applies population at day/mode reset) |
 | Pedestrians (crowd AI, hotspot customers, AI Studio's dormant rage code) — **26 KB** | `src/game/pedestrians.ts` | `PedestrianManager.summonCustomers`, `releaseSummoned`, `setHotspots` |
 | Footpath route graph + A* | `src/game/pathfinding.ts` | `SidewalkGraph` |
 | Weather | `src/game/world/weather.ts` | `WeatherSystem` |
@@ -68,6 +70,7 @@ Which file owns which feature. Sizes as of Hotfix 8.1. Files over ~20 KB: read v
 | Settings (keys, mouse, display, graphics) — **22 KB** | `src/components/SettingsModal.tsx` |
 | End-of-run statistics | `src/components/StatsScreen.tsx` |
 | Solo campaign result, totals and New Market shop ending | `src/components/CampaignEnding.tsx` (selected by `EventModal.tsx`; day cards from `StatsScreen.tsx`) |
+| Next-day district, target and difficulty briefing | `src/components/LevelBriefing.tsx` (selected by `EventModal.tsx`) |
 | Pause / bribe / arrest modals | `src/components/EventModal.tsx` |
 
 ## Not part of the game

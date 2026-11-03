@@ -33,7 +33,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
 
   const [view, setView] = useState<'menu' | 'playing'>('menu');
-  const [modalType, setModalType] = useState<'bribe' | 'arrest_decision' | 'paused' | 'over' | 'victory' | null>(null);
+  const [modalType, setModalType] = useState<'bribe' | 'arrest_decision' | 'paused' | 'over' | 'victory' | 'level_up' | null>(null);
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [runStats, setRunStats] = useState<RunStats | null>(null);
   const [notice, setNotice] = useState('Welcome to Thela Dhaka · ঢাকার ঠেলা');
@@ -638,6 +638,11 @@ export default function App() {
           onContinueCampaign={() => {
             const engine = engineRef.current;
             if (!engine) return;
+            const result = engine.lastRunStats?.campaign?.outcome;
+            if (modalType !== 'level_up' && (result === 'day_passed' || result === 'victory')) {
+              setModalType('level_up');
+              return;
+            }
             try {
               if (!engine.continueCampaign()) return;
               setRunStats(null);

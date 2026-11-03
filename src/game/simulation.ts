@@ -38,6 +38,8 @@ import { VIEW_DISTANCE } from './map/chunks';
 import { auditDistrict } from './map/minimap';
 import type { DistrictId } from './map/district';
 import { ObstacleGrid } from './map/obstacleGrid';
+import { difficultyForDay, type DifficultyProfile } from './difficulty';
+import { CampaignPolice } from './campaignPolice';
 
 /** M-W — play on the real OpenStreetMap district (false = old grid city, kept as a fallback). */
 export const USE_REAL_MAP = true;
@@ -166,11 +168,12 @@ export interface GameState {
   weatherTraction: number;
   weatherVisibility: number;
   campaign?: CampaignState;
+  difficulty?: DifficultyProfile;
+  policePositions?: Array<{ x: number; z: number }>;
 }
 
 // Module-level reusable math objects for zero garbage collection during 60 FPS loop
 const _toHuman = new THREE.Vector3();
-const _officerDir = new THREE.Vector3();
 const _lookTarget = new THREE.Vector3();
 
 export class GameEngine {
@@ -204,6 +207,7 @@ export class GameEngine {
   stamina = new StaminaSystem();
   stats = new StatsTracker();
   campaign: Campaign | null = null;
+  campaignPolice: CampaignPolice | null = null;
   private districtObjects: THREE.Object3D[] = [];
   private campaignResetPending = false;
   lastRunStats: RunStats | null = null;
@@ -342,6 +346,7 @@ export class GameEngine {
       dayPendingCosts: isSoloVendor ? DAY_FIXED_COST : 0,
       dayCostsSettled: false,
       campaign: campaignSnap ?? undefined,
+      difficulty: isSoloVendor ? difficultyForDay(normalizedDay) : undefined,
       heading: 0,
       speed: 0,
       score: 0,
@@ -896,7 +901,8 @@ export class GameEngine {
     if (spot && still && !busy && this.state.stock > 0 && this.hotspotCooldown <= 0) {
       this.hotspotDwell += dt;
       if (this.hotspotDwell >= HOTSPOT_DWELL_SECONDS) {
-        const n = this.pedestrianManager.summonCustomers(p.position.x, p.position.z, 3, 55);
+        const n = this.pedestrianManager.summonCustomers(p.position.x, p.position.z, 3, 55,
+          this.state.difficulty?.customerPatience ?? 25);
         if (n > 0) {
           this.summonPoint = { x: p.position.x, z: p.position.z };
           this.onEvent('notify', `ভিড় জমছে! ${n} জন ক্রেতা আসছে · Customers coming`);
@@ -1315,6 +1321,10 @@ export class GameEngine {
 
   setMode(mode: GameState['mode'], dayNumber = 1) {
     this.cancelActiveTimers();
+    if (this.campaignPolice) {
+      this.releaseDistrictObjects(this.campaignPolice.detachExtras());
+      this.campaignPolice = null;
+    }
     if (this.state?.stall) {
       this.scene.remove(this.state.stall);
       this.obstacles = this.obstacles.filter((o) => o.tag !== 'big_stall');
@@ -1399,9 +1409,44 @@ export class GameEngine {
     this.clearInputs();
     this.clock.getDelta();
     this.acc = 0;
+    this.applyCampaignDifficulty();
     this.playBeep(520, 0.2);
     setTimeout(() => this.renderer.domElement.focus(), 15);
     this.publishState(true);
+  }
+
+  /** Population changes run at day/mode reset, never during a frame. */
+  private applyCampaignDifficulty() {
+    const difficulty = this.state.difficulty;
+    const count = difficulty?.trafficCount ?? 36;
+    if (this.world && this.graphTraffic && this.graphTraffic.vehicles.length !== count) {
+      const staging = new THREE.Scene();
+      let traffic: GraphTraffic;
+      try { traffic = new GraphTraffic(staging, this.world.roads, count); }
+      catch (error) { this.releaseDistrictObjects([...staging.children]); throw error; }
+      const previous = this.graphTraffic.vehicles.map((v) => v.mesh);
+      const retired = new Set<THREE.Object3D>(previous);
+      for (const object of previous) object.removeFromParent();
+      const next = [...staging.children];
+      for (const object of next) this.scene.add(object);
+      this.districtObjects = this.districtObjects.filter((object) => !retired.has(object));
+      this.districtObjects.push(...next);
+      this.graphTraffic = traffic;
+      this.traffic = traffic.vehicles;
+      this.releaseDistrictObjects(previous);
+    }
+    if (difficulty) {
+      this.campaignPolice = new CampaignPolice(this.officer, difficulty, {
+        graph: this.sidewalkGraph,
+        obstacles: (x, z) => this.nearObstacles(x, z),
+        bounds: this.mapBound(105),
+        isRoad: (x, z) => this.world?.roads.isOnCarriageway(x, z) ?? false,
+      }, this.scene);
+      this.campaignPolice.resetPositions(this.human.position.x, this.human.position.z);
+      this.state.policePositions = this.campaignPolice.positions();
+      this.state.officerX = this.officer.position.x;
+      this.state.officerZ = this.officer.position.z;
+    }
   }
 
   vector2(a: { x: number; z: number }, b: { x: number; z: number }) {
@@ -1888,6 +1933,7 @@ export class GameEngine {
       this.state.officerZ = this.officer.position.z;
     }
     this.stats.spentBribes += cost;
+    this.campaignPolice?.resetPositions(this.human.position.x, this.human.position.z);
     this.stats.bribesPaid++;
     this.syncDayAccountingState();
     if (this.checkSoloVendorFailure()) {
@@ -2019,6 +2065,7 @@ export class GameEngine {
     if (force || now - this.lastHudPublishTime >= 95) {
       this.lastHudPublishTime = now;
       if (this.state) {
+        this.state.policePositions = this.state.mode === 'vendor' ? this.campaignPolice?.positions() : undefined;
         this.state.campaign =
           this.state.mode === 'vendor' && this.campaign
             ? this.campaign.snapshot()
@@ -2319,39 +2366,17 @@ export class GameEngine {
 
     // AI Police pursuit & navigation with collision resolution (Solo Vendor Mode)
     const visibilityFactor = this.weather ? this.weather.visibilityFactor : 1;
-    const policeSightRange = 55 * visibilityFactor;
-    const policeEscapeDist = 30 * visibilityFactor;
+    const policeSightRange = (this.state.difficulty?.policeVision ?? 55) * visibilityFactor;
+    const policeEscapeDist = this.state.difficulty
+      ? Math.max(30, this.state.difficulty.policeVision + 5) * visibilityFactor : 30 * visibilityFactor;
 
     if (this.state.mode === 'vendor') {
-      const distBefore = this.vector2(this.human.position, this.officer.position);
+      const distBefore = this.campaignPolice?.nearestDistance(this.human.position.x, this.human.position.z)
+        ?? this.vector2(this.human.position, this.officer.position);
       this.updateChaseAlert(distBefore, policeSightRange);
-      _toHuman.subVectors(this.human.position, this.officer.position);
-      const dist = _toHuman.length();
+      this.campaignPolice?.update(dt, this.human.position, this.state.alert, weatherSpeedMult, this.camera.position);
+      const dist = this.campaignPolice?.nearestDistance(this.human.position.x, this.human.position.z) ?? distBefore;
       if (this.state.alert) {
-        _officerDir.copy(_toHuman);
-        _officerDir.y = 0;
-        _officerDir.normalize();
-
-        const officerSpeed = Math.min(dist, 1) * 3.55 * weatherSpeedMult;
-        const officerVx = _officerDir.x * officerSpeed * dt;
-        const officerVz = _officerDir.z * officerSpeed * dt;
-        const officerHeading = Math.atan2(_officerDir.x, -_officerDir.z);
-
-        const aiMove = resolveMovement(
-          this.officer.position.x,
-          this.officer.position.z,
-          officerVx,
-          officerVz,
-          officerHeading,
-          false,
-          this.nearObstacles(this.officer.position.x, this.officer.position.z),
-          this.mapBound(105)
-        );
-        this.officer.position.x = aiMove.newX;
-        this.officer.position.z = aiMove.newZ;
-        // Orientation fix: Officer faces pursuit heading
-        this.officer.rotation.y = -officerHeading;
-
         if (dist < 2.1) {
           if (!this.isMenuOrModalOpen) {
             this.stats.timesCaught++;
@@ -2362,25 +2387,6 @@ export class GameEngine {
           return;
         }
         this.updateChaseEscape(dt, dist, policeEscapeDist);
-      } else {
-        const angle = this.state.time * 0.3;
-        const aiVx = Math.sin(angle) * dt * 1.1;
-        const aiVz = Math.cos(angle * 0.7) * dt * 0.9;
-        const wanderHeading = Math.atan2(aiVx, -aiVz);
-        const aiMove = resolveMovement(
-          this.officer.position.x,
-          this.officer.position.z,
-          aiVx,
-          aiVz,
-          wanderHeading,
-          false,
-          this.nearObstacles(this.officer.position.x, this.officer.position.z),
-          this.mapBound(100)
-        );
-        this.officer.position.x = aiMove.newX;
-        this.officer.position.z = aiMove.newZ;
-        // Orientation fix: Wander officer facing
-        this.officer.rotation.y = -wanderHeading;
       }
     } else if (this.state.mode === 'online_vendor' && this.remoteActive) {
       const dist = this.vector2(this.human.position, this.officer.position);
@@ -2452,13 +2458,7 @@ export class GameEngine {
     } else if (this.state.mode === 'online_vendor' && this.remoteActive) {
       officerSpeed = this.remoteSpeed;
     } else if (this.state.mode === 'vendor') {
-      if (this.state.alert) {
-        _toHuman.subVectors(this.human.position, this.officer.position);
-        officerSpeed = Math.min(_toHuman.length(), 1) * 3.55;
-      } else {
-        const angle = this.state.time * 0.3;
-        officerSpeed = Math.hypot(Math.sin(angle) * 1.1, Math.cos(angle * 0.7) * 0.9);
-      }
+      officerSpeed = this.campaignPolice?.primarySpeed ?? 0;
     }
     this.officerPhase += officerSpeed * dt * 2.2;
     if (this.officer.userData.rig) {
@@ -2867,6 +2867,10 @@ export class GameEngine {
 
   stop() {
     this.isDestroyed = true;
+    if (this.campaignPolice) {
+      this.releaseDistrictObjects(this.campaignPolice.detachExtras());
+      this.campaignPolice = null;
+    }
     this.crowdCharacters.dispose();
     for (const actor of [this.human, this.officer, this.npcVendor]) actor?.userData.rig?.visual?.dispose();
     cancelAnimationFrame(this.animId);
