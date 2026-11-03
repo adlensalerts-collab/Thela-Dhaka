@@ -7,6 +7,7 @@ Names only — never copy values from `.env*` files or tokens into docs or promp
 |---|---|---|
 | Dev server (game + multiplayer) | `npm run dev` | `tsx server.ts`: Express + Vite middleware + Socket.io on `PORT` (default `3000`) |
 | Type check ("lint") | `npm run lint` | `tsc --noEmit`. **The only real error check** — `vite build` does not type-check |
+| G2 campaign rules and result rendering checks | `npx tsx --test scripts/campaign.test.tsx` | Standalone package; integration steps in `docs/sprints/SPRINT-G2.md` |
 | Production build (full service, base `/`) | `npm run build` | `vite build` → `dist/` (`index.html` + `character-preview.html`) |
 | Production build (GitHub Pages, base `/Thela-Dhaka/`) | `GITHUB_PAGES=true VITE_STATIC_HOST=true npm run build` | Loads `.env.pages` for `VITE_SERVER_URL` unless overridden in shell env |
 | Production server | `npm start` | `tsx server.ts --production`: serves `dist/`, `GET /healthz`, and `/socket.io/` without loading Vite/HMR; exits non-zero if `dist/index.html` is missing |

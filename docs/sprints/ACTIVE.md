@@ -45,15 +45,13 @@ Built and tested by Claude. Wiring (M-W) done by Claude: maps are bundled into t
 
 | # | Sprint | Status | Deliverable |
 |---|---|---|---|
-| G1 | Day clock + day end | 🔄 (implemented in `src/game/day.ts`, `stats.ts`, `simulation.ts`, `GameHUD.tsx`, `StatsScreen.tsx`, and `App.tsx`; `npm run lint`, `npm run build`, Pages build, and deterministic clock/target/accounting/reset/SSR checks pass; headless browser check remains) | 06:00–22:00 clock (~12 min), day targets, rent/food costs, day passed/failed → statistics screen |
-| G2 | Game over + victory | ⏳ | Jailed / bankrupt / wrecked game-over rules; Level 10 victory (own a shop in New Market); Endless mode |
+| G2 | Game over + victory | 🔄 (rules package `campaign.ts`, `CampaignEnding.tsx`, `scripts/campaign.test.tsx` uploaded in `ba9d1db`; 13 tests + lint + builds pass; **not wired yet**. Wiring split into G2a engine hooks → G2b ending screen + next/retry/Endless → G2c day-6 district switch. Spec: `SPRINT-G2.md`) | Jailed / bankrupt / wrecked game-over rules; Level 10 victory (own a shop in New Market); Endless mode |
 | G3 | Levels & difficulty | ⏳ | Level table (police count, vision, traffic, rage sensitivity, customer patience); districts by level; level-up screen |
 
 **Graphics**
 
 | # | Sprint | Status | Deliverable |
 |---|---|---|---|
-| 9 | Realistic characters | 🔄 | 9A verified at `10f27ca`. Remaining implementation now built against `52ffdf7`: clothed skeletal heroes, cart-grip IK, bounded near-crowd LOD, fallback/lifecycle and expanded preview. Local checks pass; see `SPRINT-9.md`. Ready for upload; close/archive after verifying the uploaded files. |
 | 10 | More NPCs + behaviour | ⏳ | Remove the 10–15 pedestrian cap; 60–120 people with distance-based detail; groups chatting, phones, browsing stalls, crossing at junctions, reacting to horns/accidents, haggling; density by time and hotspots |
 
 **Sound**
