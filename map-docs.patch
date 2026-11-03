@@ -1,0 +1,32 @@
+diff --git a/docs/map/OPERATIONS.md b/docs/map/OPERATIONS.md
+index 72c1fd6..fcb8843 100644
+--- a/docs/map/OPERATIONS.md
++++ b/docs/map/OPERATIONS.md
+@@ -7,6 +7,7 @@ Names only — never copy values from `.env*` files or tokens into docs or promp
+ |---|---|---|
+ | Dev server (game + multiplayer) | `npm run dev` | `tsx server.ts`: Express + Vite middleware + Socket.io on port 3000 |
+ | Type check ("lint") | `npm run lint` | `tsc --noEmit`. **The only real error check** — `vite build` does not type-check |
++| G2 campaign rules and result rendering checks | `npx tsx --test scripts/campaign.test.tsx` | Standalone package; integration with G1 is described in `docs/sprints/SPRINT-G2.md` |
+ | Production build | `npm run build` | `vite build` → `dist/` |
+ | Production server | `NODE_ENV=production tsx server.ts` | Serves `dist/` + Socket.io (for Sprint 7.7 hosting) |
+ 
+diff --git a/docs/map/PRODUCT.md b/docs/map/PRODUCT.md
+index 58e35cf..ae29535 100644
+--- a/docs/map/PRODUCT.md
++++ b/docs/map/PRODUCT.md
+@@ -11,6 +11,7 @@ Which file owns which feature. Sizes as of Hotfix 8.1. Files over ~20 KB: read v
+ | Vehicle damage + repair cost | `src/game/damage.ts` | `DamageSystem`, `checkVehicleImpact` |
+ | Sprint stamina + levels | `src/game/stamina.ts` | `StaminaSystem`, `STAMINA_LEVELS` |
+ | Run statistics | `src/game/stats.ts` | `StatsTracker`, `RunStats` |
++| Solo-vendor campaign decisions, defeat checks, day progression and Endless (G2 package; awaiting G1 wiring) | `src/game/campaign.ts` | `Campaign`, `vendorFailure`, `campaignTarget` |
+ | Pedestrians (crowd AI, hotspot customers, AI Studio's dormant rage code) — **26 KB** | `src/game/pedestrians.ts` | `PedestrianManager.summonCustomers`, `releaseSummoned`, `setHotspots` |
+ | Footpath route graph + A* | `src/game/pathfinding.ts` | `SidewalkGraph` |
+ | Weather | `src/game/world/weather.ts` | `WeatherSystem` |
+@@ -62,6 +63,7 @@ Which file owns which feature. Sizes as of Hotfix 8.1. Files over ~20 KB: read v
+ | Title screen (role, solo/online, OSM credit) | `src/components/TitleScreen.tsx` |
+ | Settings (keys, mouse, display, graphics) — **22 KB** | `src/components/SettingsModal.tsx` |
+ | End-of-run statistics | `src/components/StatsScreen.tsx` |
++| Campaign result shell and New Market shop ending (G2 package; awaiting G1 wiring) | `src/components/CampaignEnding.tsx` |
+ | Pause / bribe / arrest modals | `src/components/EventModal.tsx` |
+ 
+ ## Not part of the game
