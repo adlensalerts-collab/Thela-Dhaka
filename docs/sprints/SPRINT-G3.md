@@ -1,9 +1,10 @@
 # G3 — levels and difficulty
 
 Implemented on branch `codex/g3-difficulty`, based on `46f3ff2`; reviewed and
-integrated with main `3f3361f`. Merge review restored G3 runtime hooks lost in
+integrated with main through `b5c2ae8`. Merge review restored G3 runtime hooks lost in
 an earlier merge, adapted to `campaignResult`/`StatsCards` and explicit campaign
-actions, and preserved the newer input, socket and sound-preview changes.
+actions, retained both campaign-statistics aliases, and preserved the newer input,
+socket and sound-preview changes.
 Pedestrian, character-model, map-data, hosting and workflow source files remain
 unchanged; the documented Sprint 10 engine hooks are now connected.
 
@@ -69,7 +70,8 @@ router edits should be merged with any concurrent documentation additions.
 
 ## Verification
 
-- 23 rule/lifecycle/UI tests pass, including six new difficulty/briefing tests:
+- 24 rule/lifecycle/UI tests pass, including six difficulty/briefing tests and an
+  old/current campaign-statistics compatibility check:
   `npx tsx --test scripts/campaign.test.tsx scripts/campaign-ui.test.tsx scripts/difficulty.test.tsx`.
 - TypeScript and normal/Pages production builds pass.
 - Four real-map crowd tests pass via `npx --yes vite-node@3 scripts/crowd.test.ts`.

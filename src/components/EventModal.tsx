@@ -54,7 +54,7 @@ export const EventModal: React.FC<EventModalProps> = ({
     isOnline ?? (state?.mode === 'online_vendor' || state?.mode === 'online_police');
 
   if (type === 'level_up') {
-    const result = stats?.campaignResult ?? state?.campaign?.result;
+    const result = stats?.campaignResult ?? stats?.campaign ?? state?.campaign?.result;
     if (!result || (result.outcome !== 'day_passed' && result.outcome !== 'victory')) return null;
     return <div className="absolute inset-0 z-40 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 sm:p-6">
       <LevelBriefing dayNumber={result.dayNumber + 1}
@@ -64,7 +64,7 @@ export const EventModal: React.FC<EventModalProps> = ({
 
   if (type === 'over' || type === 'victory') {
     const isSoloVendor = !online && (stats?.mode ?? state?.mode) === 'vendor';
-    const campaignResult = stats?.campaignResult ?? state?.campaign?.result ?? null;
+    const campaignResult = stats?.campaignResult ?? stats?.campaign ?? state?.campaign?.result ?? null;
 
     if (isSoloVendor && campaignResult) {
       return (
@@ -72,7 +72,7 @@ export const EventModal: React.FC<EventModalProps> = ({
           <div className="w-full max-w-3xl max-h-[92dvh] overflow-y-auto">
             <CampaignEnding
               result={campaignResult}
-              endedAt={stats?.dayClockText}
+              endedAt={stats?.dayClockText ?? state?.dayClockText}
               onNextDay={onNextDay ?? (onContinueCampaign ? () => onContinueCampaign('next') : onRestart)}
               onRetryDay={onRetryDay ?? (onContinueCampaign ? () => onContinueCampaign('retry') : onRestart)}
               onStartEndless={onStartEndless ?? onNextDay ?? (onContinueCampaign ? () => onContinueCampaign('endless') : onRestart)}

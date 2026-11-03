@@ -14,6 +14,20 @@ const callbacks = { onPayBribe: noop, onGoToJail: noop, onRecordArrest: noop, on
 const healthy = { cash: 1000, stock: 10, otherSellableStock: 0, restockCost: 0, damage: 0,
   repairCost: 0, pendingSale: false, pendingRepair: false, pendingRestock: false };
 
+test('old and current campaign-statistics aliases remain compatible after merge', () => {
+  const tracker = new StatsTracker(); tracker.reset('vendor');
+  const result = new Campaign().arrested('jailed', 0);
+  const current = tracker.snapshot({ campaignResult: result, dayClockText: '10:00', result: 'jailed' });
+  assert.strictEqual(current.campaign, result);
+  assert.strictEqual(current.campaignResult, result);
+  const legacy = { ...current, campaignResult: null, campaign: result };
+  const markup = renderToStaticMarkup(<EventModal type="over" state={null} stats={legacy} {...callbacks} />);
+  assert.match(markup, /Campaign result/);
+  assert.match(markup, /10:00/);
+  assert.equal((markup.match(/<h2/g) ?? []).length, 1);
+  assert.equal((markup.match(/<button/g) ?? []).length, 2);
+});
+
 test('solo campaign uses its result shell with one heading, two actions and the actual jail time', () => {
   const tracker = new StatsTracker(); tracker.reset('vendor');
   const campaign = new Campaign();
