@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { addGroundEffects, grimy, lampMaterial, rickshawHoodMaterial } from '../render/vehicleLook';
 
 /**
  * Sprint 2 — visible Dhaka traffic.
@@ -36,6 +37,8 @@ const EXTENT = 112;
 
 const std = (color: string, roughness = 0.6, metalness = 0) =>
   new THREE.MeshStandardMaterial({ color, roughness, metalness });
+/** Sprint 8G: painted bodywork that collects road dust towards the wheels. */
+const paint = (color: string, roughness = 0.45, metalness = 0.2, height = 1.0) => grimy(std(color, roughness, metalness), height);
 
 const M = {
   tyre: std('#1d1f22', 0.9),
@@ -45,8 +48,9 @@ const M = {
   seat: std('#7a2230', 0.7),
   canvas: std('#2b2b2b', 0.85),
   frame: std('#3a3f45', 0.5, 0.6),
-  head: new THREE.MeshStandardMaterial({ color: '#fff6d8', emissive: '#fff1c4', emissiveIntensity: 1.2 }),
-  tail: new THREE.MeshStandardMaterial({ color: '#7a0c0c', emissive: '#ff2a1a', emissiveIntensity: 0.9 })
+  // Sprint 8G: lamps glow when the street lamps come on (dim lenses by day).
+  head: lampMaterial('head') as unknown as THREE.MeshStandardMaterial,
+  tail: lampMaterial('tail') as unknown as THREE.MeshStandardMaterial
 };
 
 function box(p: THREE.Object3D, w: number, h: number, d: number, m: THREE.Material, x: number, y: number, z: number) {
@@ -79,7 +83,7 @@ function lights(g: THREE.Group, wid: number, y: number, front: number, back: num
 
 function buildRickshaw(color: string, wheels: THREE.Mesh[]) {
   const g = new THREE.Group();
-  const body = std(color, 0.45, 0.2);
+  const body = paint(color, 0.45, 0.2, 1.0);
   // Front cycle part (driver) at -Z, passenger seat + hood at +Z
   wheel(g, 0.36, 0.08, 0, -1.15, wheels);
   box(g, 0.08, 0.08, 1.3, M.frame, 0, 0.55, -0.55);
@@ -90,7 +94,8 @@ function buildRickshaw(color: string, wheels: THREE.Mesh[]) {
   box(g, 1.15, 0.6, 0.1, body, 0, 1.15, 0.95);               // backrest
   // Half-cylinder canopy, axis across the vehicle (X), arc on top.
   const hoodGeo = new THREE.CylinderGeometry(0.62, 0.62, 1.2, 14, 1, true, 0, Math.PI).rotateZ(Math.PI / 2);
-  const hood = new THREE.Mesh(hoodGeo, new THREE.MeshStandardMaterial({ color: '#2b2b2b', roughness: 0.85, side: THREE.DoubleSide }));
+  // Sprint 8G: hand-painted hood bands (palette follows the body colour).
+  const hood = new THREE.Mesh(hoodGeo, rickshawHoodMaterial(parseInt(color.slice(1), 16) % 997));
   hood.rotation.y = Math.PI / 2;
   hood.position.set(0, 1.25, 0.75);
   hood.castShadow = true;
@@ -107,7 +112,7 @@ function buildRickshaw(color: string, wheels: THREE.Mesh[]) {
 
 function buildCng(wheels: THREE.Mesh[]) {
   const g = new THREE.Group();
-  const green = std('#1f7a3d', 0.35, 0.35);
+  const green = paint('#1f7a3d', 0.35, 0.35, 1.2);
   box(g, 1.3, 0.55, 2.4, green, 0, 0.6, 0.05);
   box(g, 1.3, 0.9, 1.6, green, 0, 1.3, 0.45);                // cabin cage (Dhaka CNGs are fully caged)
   box(g, 1.32, 0.06, 2.45, std('#123d20', 0.4, 0.3), 0, 1.78, 0.05); // roof
@@ -121,9 +126,9 @@ function buildCng(wheels: THREE.Mesh[]) {
 
 function buildCar(color: string, wheels: THREE.Mesh[]) {
   const g = new THREE.Group();
-  const paint = new THREE.MeshPhysicalMaterial({ color, roughness: 0.3, metalness: 0.6, clearcoat: 1, clearcoatRoughness: 0.08 });
-  box(g, 1.8, 0.6, 4.2, paint, 0, 0.62, 0);
-  box(g, 1.6, 0.55, 2.2, paint, 0, 1.18, 0.2);
+  const body = grimy(new THREE.MeshPhysicalMaterial({ color, roughness: 0.3, metalness: 0.6, clearcoat: 1, clearcoatRoughness: 0.08 }), 0.9);
+  box(g, 1.8, 0.6, 4.2, body, 0, 0.62, 0);
+  box(g, 1.6, 0.55, 2.2, body, 0, 1.18, 0.2);
   box(g, 1.5, 0.45, 0.05, M.glass, 0, 1.2, -0.92);
   box(g, 1.5, 0.42, 0.05, M.glass, 0, 1.2, 1.32);
   for (const s of [-1, 1]) box(g, 0.05, 0.4, 1.9, M.glass, s * 0.81, 1.2, 0.2);
@@ -136,7 +141,7 @@ function buildCar(color: string, wheels: THREE.Mesh[]) {
 
 function buildBus(wheels: THREE.Mesh[]) {
   const g = new THREE.Group();
-  const red = std('#b3261e', 0.4, 0.3);
+  const red = paint('#b3261e', 0.4, 0.3, 1.6);
   const cream = std('#efe6cf', 0.6);
   box(g, 2.5, 1.2, 9.5, red, 0, 1.0, 0);
   box(g, 2.5, 1.1, 9.5, cream, 0, 2.15, 0);
@@ -150,12 +155,16 @@ function buildBus(wheels: THREE.Mesh[]) {
 
 export function buildVehicle(kind: VehicleKind, wheels: THREE.Mesh[], rnd: () => number): THREE.Group {
   const pick = <T,>(a: T[]) => a[Math.floor(rnd() * a.length)];
+  let g: THREE.Group;
   switch (kind) {
-    case 'rickshaw': return buildRickshaw(pick(['#d24449', '#e0b738', '#469c8b', '#d7723c', '#3d6fb6']), wheels);
-    case 'cng': return buildCng(wheels);
-    case 'car': return buildCar(pick(['#e8e8e8', '#1c1c1e', '#8c95a0', '#7a1e1e', '#24456b']), wheels);
-    case 'bus': return buildBus(wheels);
+    case 'rickshaw': g = buildRickshaw(pick(['#d24449', '#e0b738', '#469c8b', '#d7723c', '#3d6fb6']), wheels); break;
+    case 'cng': g = buildCng(wheels); break;
+    case 'car': g = buildCar(pick(['#e8e8e8', '#1c1c1e', '#8c95a0', '#7a1e1e', '#24456b']), wheels); break;
+    case 'bus': g = buildBus(wheels); break;
   }
+  // Sprint 8G: contact shadow for every vehicle; night headlight pool for motor vehicles.
+  addGroundEffects(g, SPECS[kind].len, SPECS[kind].wid, kind !== 'rickshaw');
+  return g;
 }
 
 export function pickKind(rnd: () => number): VehicleKind {

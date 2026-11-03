@@ -14,6 +14,7 @@
 - **Public rage is non-graphic:** no injuries, blood, beatings or health bars for people (`docs/game-design.md` §5).
 - **Baper Rasta** (baperrasta.com) is a style reference only: copy none of its sounds, art or text. No newspaper-style game over.
 - **Performance:** 1080p render cap; 60 fps target, up to 120 on 120 Hz screens. Crowd pedestrians use the compact rig (`compact: true`). Don't add per-object meshes where instancing works.
+- **Renderer is WebGPURenderer** (WebGL 2 fallback; `three` is aliased to `three/webgpu`). Never add `WebGLRenderer`, `ShaderMaterial`, `RawShaderMaterial` or `onBeforeCompile` — they don't run. Custom shading goes in TSL (`three/tsl`) node properties (`colorNode`, `emissiveNode`, …); see `src/game/render/surfaceWear.ts`. Render through `engine.pipeline`, not `renderer.render()`.
 - **Done means:** `npm run lint` passes (it's `tsc --noEmit`; the Vite build does NOT type-check).
 - After a sprint lands, mark it in `docs/sprints/ACTIVE.md` (only if the prompt says so).
 

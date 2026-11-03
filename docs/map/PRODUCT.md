@@ -56,13 +56,18 @@ Which file owns which feature. Sizes as of Hotfix 8.1. Files over ~20 KB: read v
 | Old grid layout audit | `src/game/world/layout.ts` | `auditObstacles` |
 
 ## Rendering
+Renderer: `WebGPURenderer` (WebGPU, or WebGL 2 fallback). `vite.config.ts` aliases `three` → `three/webgpu`, so all materials must be node-compatible: no `ShaderMaterial`, `onBeforeCompile` or `WebGLRenderer`; write custom shading in TSL (`three/tsl`). Credits: `THIRD_PARTY_NOTICES.md`.
+
 | Area | File | Key exports |
 |---|---|---|
 | PBR materials, per-surface tuning, world UVs | `src/game/render/pbr.ts` | `pbrMaterial`, `createPbrMaterials`, `applyWorldUV` (tuning const: `SURFACE_TUNING`) |
 | Worn road paint + deterministic flush footpath drains (existing marking batch) | `src/game/render/streetDetails.ts` | `createStreetPaint`, `collectDrainGrates` |
-| World-space asphalt/pavement cracks, repair patches and plaster rain streaks (material shader; no extra geometry) | `src/game/render/surfaceWear.ts` | `applySurfaceWear` |
+| World-space wear (TSL): asphalt/pavement cracks and patches, plaster rain streaks, Dhaka facade slab bands + monsoon damp (plaster, brick), wet roads and puddles | `src/game/render/surfaceWear.ts` | `applySurfaceWear`, `roadWetness` (set by `WeatherSystem`) |
 | Shared shop-sign atlases + chunked merged sign meshes | `src/game/render/signboards.ts` | `SignboardBatch.add`, `SignboardBatch.build` |
-| Sky, sun, ambient light, clouds, brightness | `src/game/render/lighting.ts` | `setupRealisticLighting` (ambient strength const: `ENV_INTENSITY`) |
+| WebGPU lighting: SkyMesh sky + clouds, 2-cascade SunLight, sky PMREM, aerial fog, day-clock presets (dawn → night) | `src/game/render/lighting.ts` | `setupRealisticLighting`, `LightingRig.setHour`, `rendererReady`, `setWeather`, `look` |
+| Colour grade + bloom + vignette (TSL RenderPipeline; ACES once at output) | `src/game/render/postfx.ts` | `GamePipeline`, `LOOKS` |
+| Interior-mapped window glass, street-lamp heads + light pools, clock-driven glow | `src/game/render/windows.ts` | `createWindowMaterial`, `createLampHeadMaterial`, `createLampPoolMaterial`, `interiorGlow`, `streetLamps` |
+| Vehicle look: road grime, painted rickshaw hoods, night lamps, contact shadows, headlight pools | `src/game/render/vehicleLook.ts` | `grimy`, `rickshawHoodMaterial`, `lampMaterial`, `addGroundEffects` (used by `world/traffic.ts`) |
 | Quality presets, adaptive resolution | `src/game/render/quality.ts` | `QUALITY_PRESETS`, `AdaptiveResolution` |
 | Display settings storage | `src/game/render/display.ts` | `loadDisplaySettings` |
 

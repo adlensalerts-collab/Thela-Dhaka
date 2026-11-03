@@ -31,9 +31,13 @@ export default defineConfig(() => {
       },
     },
     resolve: {
-      alias: {
-        '@': path.resolve(__dirname, '.'),
-      },
+      // Sprint 8D: every `import ... from 'three'` (game code and three/examples addons) resolves to the
+      // WebGPU build, so there is one copy of three.js and WebGPURenderer can draw every object.
+      // WebGPURenderer falls back to WebGL 2 by itself on browsers without WebGPU.
+      alias: [
+        { find: /^three$/, replacement: path.resolve(__dirname, 'node_modules/three/build/three.webgpu.js') },
+        { find: '@', replacement: path.resolve(__dirname, '.') },
+      ],
     },
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.

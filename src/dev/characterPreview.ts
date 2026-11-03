@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { WebGPURenderer } from 'three/webgpu';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { CHARACTER_MOTIONS, loadAnimatedCharacter, type CharacterMotion, type AnimatedCharacter } from '../game/world/animatedCharacter';
 
@@ -15,7 +16,9 @@ let last = 0;
 let disposed = false;
 
 async function start() {
-  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  // Sprint 8D: same WebGPU renderer (WebGL 2 fallback) as the game.
+  const renderer = new WebGPURenderer({ antialias: true });
+  await renderer.init();
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.setPixelRatio(1); // Preview follows the game's 1080p cap, including high-DPI screens.

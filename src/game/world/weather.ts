@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { LightingRig } from '../render/lighting';
+import { roadWetness } from '../render/surfaceWear';
 
 export type WeatherType = 'sunny' | 'rainy' | 'foggy';
 
@@ -183,7 +184,9 @@ export class WeatherSystem {
    * Interpolates fog/sky/traction parameters and animates falling rain around (playerX, playerZ).
    * Weather is fixed for the working day and only changes when a new day starts or when manually cycled.
    */
+  private lastDt = 0;
   update(dt: number, playerX: number, playerZ: number): WeatherProfile | null {
+    this.lastDt = dt;
     const target = WEATHER_PROFILES[this.current];
     const rate = 1.4;
 
@@ -213,14 +216,13 @@ export class WeatherSystem {
       fog.color.copy(_currentFogColor);
     }
 
+    // Sprint 8F: roads soak in ~20 s of rain and dry over ~2 minutes.
+    const wetTarget = this.rainIntensity > 0.05 ? Math.min(1, this.rainIntensity * 1.1) : 0;
+    const wetRate = wetTarget > roadWetness.value ? 0.12 : 0.02;
+    roadWetness.value += (wetTarget - roadWetness.value) * Math.min(1, wetRate * this.lastDt);
     if (this.lighting) {
-      // Base mid-afternoon sun intensity at 38° is ~2.47, scaled by user brightness setting
-      const b = typeof this.lighting.getBrightness === 'function' ? this.lighting.getBrightness() : 1;
-      this.lighting.sun.intensity = 2.47 * this.sunMultiplier * b;
-      const cloudMat = this.lighting.clouds.material as THREE.ShaderMaterial;
-      if (cloudMat?.uniforms?.uCover) {
-        cloudMat.uniforms.uCover.value = this.cloudCover;
-      }
+      // Sprint 8D: the lighting rig owns the time-of-day sun; weather only dims it and sets cloud cover.
+      this.lighting.setWeather(this.sunMultiplier, this.cloudCover);
     }
   }
 

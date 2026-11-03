@@ -50,6 +50,17 @@ G1–G3 done (see `INDEX.md`). Next game-loop work comes from Sprints 13–15.
 
 Sprints 8–10 done (see `INDEX.md`). Candidate follow-up: women's outfits for the crowd (none exist in `humans.ts`).
 
+Sprints 8D–8G: Slop New York look (mrdoob.github.io/slop-newyork, MIT — see `THIRD_PARTY_NOTICES.md`), built by Claude.
+
+| # | Sprint | Status | Deliverable / verification |
+|---|---|---|---|
+| 8D | WebGPU renderer, sky, sun, grade | 🔄 uploaded, awaiting live check | `WebGPURenderer` (WebGL 2 fallback) via `three` → `three/webgpu` alias; SkyMesh clouds; 2-cascade SunLight; aerial fog; day-clock lighting 06:00–22:00; grade + bloom (`postfx.ts`, bloom off on Low). Headless WebGL 2 screenshots at 07:30, 13:00 rain, 15:30, 18:36, 20:30; lint passes |
+| 8E | Facades and night | 🔄 same upload | Interior-mapped windows (rooms, curtains, lit share 12 % day / 55 % night); slab bands + monsoon damp on plaster/brick; lamp heads + light pools on every pole |
+| 8F | Wet roads | 🔄 same upload | Rain soaks roads in ~20 s, dries in ~2 min: darker, glossier asphalt/paving and puddles reflecting the sky |
+| 8G | Vehicles | 🔄 same upload | Road grime on bodies, painted rickshaw hoods, head/tail lamps on at dusk, contact shadow under every vehicle, headlight pools at night |
+
+Known limits: frame rate not measured on a real GPU yet (check Medium on a phone); no screen-space reflections yet (wet roads reflect the sky only).
+
 
 **Sound**
 

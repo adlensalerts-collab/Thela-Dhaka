@@ -48,6 +48,11 @@ Names only — never copy values from `.env*` files or tokens into docs or promp
 - Live: https://adlensalerts-collab.github.io/Thela-Dhaka/ (hard refresh after a deploy).
 - The deploy job still has a one-off "Cancel stuck Pages deployment" step (from the 2026-11-01 stuck deployment). Harmless; safe to delete.
 
+## Renderer (Sprint 8D)
+- `vite.config.ts` aliases the bare `three` import to `node_modules/three/build/three.webgpu.js`, so the game, its addons and the character preview share one three.js copy and draw with `WebGPURenderer` (WebGPU where the browser has it, WebGL 2 otherwise; the console logs `[gfx] renderer backend: …`).
+- `GameEngine` renders only after `await renderer.init()` (the lighting rig bakes its sky environment then). Rendering goes through `GamePipeline.render()` (`src/game/render/postfx.ts`), never `renderer.render()` directly.
+- Dev only: `window.__thelaEngine.hourOverride = 20.5` pins the lighting clock for screenshots (`null` = follow the day clock).
+
 ## Getting code into the repo
 - AI Studio pushes its workspace. Claude-built files are uploaded by Zunaid via GitHub → Add file → Upload files (drag folders to keep paths).
 - **Stale-copy hazard:** after a manual upload, AI Studio's workspace must be refreshed from GitHub before its next push, or it overwrites the upload. Every sprint prompt starts with the stale-copy check in `AGENTS.md`.

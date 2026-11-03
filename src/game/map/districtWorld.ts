@@ -4,6 +4,7 @@ import type { Obstacle, PolyObstacle } from '../collision';
 import { pbrMaterial, applyWorldUV } from '../render/pbr';
 import { SignboardBatch } from '../render/signboards';
 import { collectDrainGrates, createStreetPaint } from '../render/streetDetails';
+import { createLampHeadMaterial, createLampPoolMaterial, createWindowMaterial } from '../render/windows';
 import { buildTreesAt } from '../world/trees';
 import { buildGarage } from '../world/garages';
 import { buildAarot } from '../world/aarots';
@@ -159,8 +160,8 @@ export function buildDistrictWorld(scene: THREE.Scene, d: District): DistrictWor
   const brick = pbrMaterial('brick');
   const shopLevel = pbrMaterial('concrete', { tint: '#b9b2a6' }); shopLevel.vertexColors = true;
   const roofMat = pbrMaterial('concrete', { tint: '#cfcac0' });
-  const glassDark = new THREE.MeshPhysicalMaterial({ color: '#2b3a3f', roughness: 0.06, metalness: 0.2, clearcoat: 1 });
-  const glassLit = new THREE.MeshStandardMaterial({ color: '#f6d9a0', emissive: '#ffcf86', emissiveIntensity: 0.55, roughness: 0.3 });
+  // Sprint 8E: one interior-mapped glass material (rooms, curtains, clock-driven night glow) for every window.
+  const glass = createWindowMaterial();
   const grillTex = (() => {
     const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d')!;
     g.strokeStyle = '#fff'; g.lineWidth = 3;
@@ -175,7 +176,7 @@ export function buildDistrictWorld(scene: THREE.Scene, d: District): DistrictWor
   const plane = new THREE.PlaneGeometry(1, 1);
   const unitBox = new THREE.BoxGeometry(1, 1, 1);
   const tankGeo = new THREE.CylinderGeometry(0.75, 0.75, 1.3, 14);
-  const winDark = new Batch(plane, glassDark, false), winLit = new Batch(plane, glassLit, false);
+  const windows = new Batch(plane, glass, false);
   const grills = new Batch(plane, grill, false), shutters = new Batch(unitBox, shutterMat), tanks = new Batch(tankGeo, tankMat);
   const palette = ['#e0d4bc', '#d9cdb4', '#e8dfce', '#d4c7af', '#dfd7c5', '#c9d6cf', '#e6d2c2'];
 
@@ -231,7 +232,8 @@ export function buildDistrictWorld(scene: THREE.Scene, d: District): DistrictWor
         const wx = p0[0] + ex * t, wz = p0[1] + ez * t;
         for (let f = 1; f < floors; f++) {
           const y = f * FLOOR + 1.55;
-          (r() < 0.16 ? winLit : winDark).add(chunk, compose(wx + n[0] * 0.03, y, wz + n[1] * 0.03, yaw, 1.5, 1.45, 1));
+          r(); // kept: preserves the seeded layout of everything placed after windows
+          windows.add(chunk, compose(wx + n[0] * 0.03, y, wz + n[1] * 0.03, yaw, 1.5, 1.45, 1));
           grills.add(chunk, compose(wx + n[0] * 0.14, y, wz + n[1] * 0.14, yaw, 1.5, 1.45, 1));
         }
       }
@@ -323,7 +325,7 @@ export function buildDistrictWorld(scene: THREE.Scene, d: District): DistrictWor
   stats.buildings = d.buildings.length; stats.signs = signStats.signs;
   stats.signBatches = signStats.batches; stats.signAtlasPages = signStats.atlasPages;
   stats.signTexturePixels = signStats.texturePixels;
-  stats.windows = winDark.build() + winLit.build(); grills.build(); stats.shutters = shutters.build(); stats.tanks = tanks.build();
+  stats.windows = windows.build(); grills.build(); stats.shutters = shutters.build(); stats.tanks = tanks.build();
 
   // ---- Trees, poles
   buildTreesAt(scene, obstacles, d.sites.trees);
@@ -332,12 +334,18 @@ export function buildDistrictWorld(scene: THREE.Scene, d: District): DistrictWor
   const poleGeo = new THREE.CylinderGeometry(0.11, 0.14, 8, 8).translate(0, 4, 0);
   const barGeo = new THREE.BoxGeometry(0.13, 0.13, 1.2).translate(0, 7.9, -0.45);   // points over the road (-Z local)
   const poles = new Batch(poleGeo, poleMat), bars = new Batch(barGeo, dark, false);
+  // Sprint 8E: a lamp head at the end of each bar and a soft pool of light on the road below it (night only).
+  const headGeo = new THREE.BoxGeometry(0.34, 0.12, 0.5).translate(0, 7.8, -0.95);
+  const poolGeo = new THREE.PlaneGeometry(13, 13).rotateX(-Math.PI / 2).translate(0, 0.07, -2.6);
+  const heads = new Batch(headGeo, createLampHeadMaterial(), false), pools = new Batch(poolGeo, createLampPoolMaterial(), false);
   for (const [x, z, rot] of d.sites.poles) {
     poles.add(chunks.chunkAt(x, z), compose(x, 0, z, rot));
     bars.add(chunks.chunkAt(x, z), compose(x, 0, z, rot));
+    heads.add(chunks.chunkAt(x, z), compose(x, 0, z, rot));
+    pools.add(chunks.chunkAt(x, z), compose(x, 0, z, rot));
     addObs({ type: 'circle', x, z, radius: 0.35, tag: 'pole' });
   }
-  stats.trees = d.sites.trees.length; stats.poles = poles.build(); bars.build();
+  stats.trees = d.sites.trees.length; stats.poles = poles.build(); bars.build(); heads.build(); pools.build();
 
   // ---- Service lots: rotate each model so its open front faces its road; ring on the footpath entrance
   const place = (built: { group: THREE.Group; obstacles: Obstacle[] }, site: ServiceSite) => {

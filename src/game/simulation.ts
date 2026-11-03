@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { WebGPURenderer } from 'three/webgpu';
+import { GamePipeline } from './render/postfx';
 import { Obstacle, resolveMovement } from './collision';
 import { SidewalkGraph } from './pathfinding';
 import { PedestrianManager, PedestrianNPC } from './pedestrians';
@@ -189,7 +191,10 @@ export class GameEngine {
   container: HTMLDivElement;
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera;
-  renderer: THREE.WebGLRenderer;
+  renderer: WebGPURenderer;
+  /** Sprint 8D: colour grade + bloom; null until the WebGPU/WebGL2 backend has initialised. */
+  pipeline: GamePipeline | null = null;
+  private rendererReady = false;
   clock: THREE.Clock;
   bindings: KeyBindings;
   mouseSettings: MouseSettings;
@@ -313,13 +318,23 @@ export class GameEngine {
     this.saleIndicator = new SaleIndicator(this.scene);
 
     this.camera = new THREE.PerspectiveCamera(66, container.clientWidth / container.clientHeight, 0.1, 470);
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    // Sprint 8D: WebGPU where available, WebGL 2 otherwise (decided inside WebGPURenderer.init()).
+    this.renderer = new WebGPURenderer({ antialias: true, powerPreference: 'high-performance' });
     this.renderer.domElement.tabIndex = 0;
     this.renderer.domElement.style.outline = 'none';
     container.replaceChildren(this.renderer.domElement);
 
     this.initLights();
     this.weather = new WeatherSystem(this.scene, this.lighting);
+    void this.renderer.init().then(() => {
+      if (this.isDestroyed) return;
+      this.lighting?.rendererReady();
+      this.lighting?.setHour(this.gameHour());
+      this.pipeline = new GamePipeline(this.renderer, this.scene, this.camera);
+      this.pipeline.setBloomEnabled(this.qualityLevel !== 'low');
+      this.rendererReady = true;
+      console.info(`[gfx] renderer backend: ${(this.renderer.backend as { isWebGPUBackend?: boolean }).isWebGPUBackend ? 'WebGPU' : 'WebGL 2'}`);
+    }).catch((error) => console.error('[gfx] renderer init failed', error));
     this.initWorld();
 
     this.state = this.getInitialState('vendor');
@@ -551,7 +566,7 @@ export class GameEngine {
     this.qualityPreset = preset;
 
     this.renderer.shadowMap.enabled = preset.shadows;
-    this.renderer.shadowMap.needsUpdate = true;
+    this.pipeline?.setBloomEnabled(level !== 'low');
 
     if (shadowsChanged) {
       this.scene.traverse((o) => {
@@ -567,10 +582,9 @@ export class GameEngine {
       this.lighting.sun.castShadow = preset.shadows;
       if (this.lighting.sun.shadow.mapSize.width !== preset.shadowMapSize) {
         this.lighting.sun.shadow.mapSize.set(preset.shadowMapSize, preset.shadowMapSize);
-        if (this.lighting.sun.shadow.map) {
-          this.lighting.sun.shadow.map.dispose();
-          this.lighting.sun.shadow.map = null;
-        }
+        this.lighting.sun.shadow.map?.dispose();
+        this.lighting.sun.shadow.map = null;
+        this.lighting.sun.shadow.needsUpdate = true;
       }
     }
 
@@ -3029,7 +3043,13 @@ export class GameEngine {
     }
 
     this.world?.chunks.update(this.camera.position);
-    this.renderer.render(this.scene, this.camera);
+    if (!this.rendererReady || !this.pipeline) return;
+    if (this.lighting) {
+      this.lighting.setHour(this.gameHour());
+      const look = this.lighting.look();
+      this.pipeline.setLook(look.a, look.b, look.t);
+    }
+    this.pipeline.render();
   }
 
   private updateTrafficHorns(dt: number, playerX: number, playerZ: number) {
@@ -3101,8 +3121,18 @@ export class GameEngine {
     this.renderLoop();
   }
 
+  /** Sprint 8D: fractional clock hour that drives sky, sun and grade (06:00–22:00 working day). */
+  hourOverride: number | null = null;
+  private gameHour(): number {
+    if (this.hourOverride !== null) return this.hourOverride;
+    if (this.state?.mode !== 'vendor' || this.state.stage !== 'playing') return 15.5;
+    const elapsed = Math.min(Math.max(this.state.dayElapsedSeconds, 0), DAY_DURATION_SECONDS);
+    return 6 + (elapsed / DAY_DURATION_SECONDS) * 16;
+  }
+
   stop() {
     this.isDestroyed = true;
+    this.pipeline?.dispose();
     if (this.campaignPolice) {
       this.releaseDistrictObjects(this.campaignPolice.detachExtras());
       this.campaignPolice = null;

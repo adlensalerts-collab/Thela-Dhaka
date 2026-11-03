@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { float, vec2, fract, sin, dot, floor, min, max, step, uv, positionWorld, materialColor, materialOpacity } from 'three/tsl';
 import type { District, XZ } from '../map/district';
 import type { RoadGraph } from '../map/roadGraph';
 
@@ -58,33 +59,20 @@ export function collectDrainGrates(district: District, roads: RoadGraph): DrainG
 
 /** Worn edges and sparse flakes; stripes retain a solid readable centre.
  * Uses the existing instanced marking batch, with no texture or extra draw pass.
+ * Sprint 8D: TSL version (WebGPURenderer copies these node properties from the classic material).
  */
 export function createStreetPaint() {
   const material = new THREE.MeshStandardMaterial({ color: '#ece4c2', roughness: 0.85, alphaTest: 0.5 });
-  material.onBeforeCompile = (shader) => {
-    shader.vertexShader = `varying vec2 vStreetUv; varying vec3 vStreetPosition;\n${shader.vertexShader}`;
-    shader.vertexShader = shader.vertexShader.replace('#include <worldpos_vertex>', /* glsl */ `
-      #include <worldpos_vertex>
-      vStreetUv = uv;
-      vec4 streetPosition = vec4(transformed, 1.0);
-      #ifdef USE_INSTANCING
-        streetPosition = instanceMatrix * streetPosition;
-      #endif
-      vStreetPosition = (modelMatrix * streetPosition).xyz;
-    `);
-    shader.fragmentShader = `varying vec2 vStreetUv; varying vec3 vStreetPosition;\n${shader.fragmentShader}`;
-    shader.fragmentShader = shader.fragmentShader.replace('#include <color_fragment>', /* glsl */ `
-      #include <color_fragment>
-      float streetGrain = fract(sin(dot(floor(vStreetPosition.xz * 18.0), vec2(127.1, 311.7))) * 43758.5453);
-      float streetEdge = min(min(vStreetUv.x, 1.0 - vStreetUv.x), min(vStreetUv.y, 1.0 - vStreetUv.y));
-      // Keep dark drain plates intact; only the light road paint flakes away.
-      float streetLight = step(0.5, max(diffuseColor.r, max(diffuseColor.g, diffuseColor.b)));
-      float streetChip = step(streetEdge, 0.025 + streetGrain * 0.025);
-      float streetFlake = step(0.985, streetGrain);
-      diffuseColor.a *= 1.0 - streetLight * max(streetChip, streetFlake);
-      diffuseColor.rgb *= 0.90 + streetGrain * 0.10;
-    `);
-  };
-  material.customProgramCacheKey = () => 'street-paint-8c-v1';
+  const grain = fract(sin(dot(floor(positionWorld.xz.mul(18.0)), vec2(127.1, 311.7))).mul(43758.5453));
+  const st = uv();
+  const edge = min(min(st.x, float(1.0).sub(st.x)), min(st.y, float(1.0).sub(st.y)));
+  // Keep dark drain plates intact; only the light road paint flakes away.
+  const base = materialColor;
+  const light = step(0.5, max(base.r, max(base.g, base.b)));
+  const chip = step(edge, grain.mul(0.025).add(0.025));
+  const flake = step(0.985, grain);
+  const nodes = material as unknown as { colorNode: unknown; opacityNode: unknown };
+  nodes.colorNode = base.mul(grain.mul(0.10).add(0.90));
+  nodes.opacityNode = materialOpacity.mul(float(1.0).sub(light.mul(max(chip, flake))));
   return material;
 }

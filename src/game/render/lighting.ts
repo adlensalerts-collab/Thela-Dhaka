@@ -1,180 +1,278 @@
-import * as THREE from 'three';
-import { Sky } from 'three/examples/jsm/objects/Sky.js';
+import * as THREE from 'three/webgpu';
+import {
+  Fn, float, vec3, vec4, uniform, mix, fog, pmremTexture, positionWorld, cameraPosition, length, normalize, max, exp,
+  abs, select,
+} from 'three/tsl';
+import { SkyMesh } from 'three/examples/jsm/objects/SkyMesh.js';
+import { SunLight } from 'three/examples/jsm/lights/SunLight.js';
+import { SunLightNode } from 'three/examples/jsm/lights/SunLightNode.js';
+import { LOOKS, type GradeLook } from './postfx';
+import { interiorGlow, streetLamps } from './windows';
 
 /**
- * Sprint 3 — smart scene lighting.
- *  - Physical sky (Preetham model) for the background.
- *  - The same sky baked through PMREM into scene.environment → image-based lighting,
- *    so every PBR material gets correct ambient light and reflections.
- *  - One shadow-casting sun whose shadow camera follows the player, so shadows are crisp
- *    (a tight 70×70 box instead of one 250×250 box stretched over the whole map).
- *  - Hazy Dhaka afternoon fog matched to the horizon colour.
- *
- *  - Sprint 4: a drifting procedural cloud layer (fades into the haze at the horizon),
- *    and setBrightness() for the Settings brightness slider.
- *
- * Replaces initLights(). Call update(playerPosition, cameraPosition) once per frame.
+ * Sprint 8D — lighting rebuilt on WebGPURenderer, in the style of Slop New York
+ * (https://github.com/mrdoob/slop-newyork, MIT License, Copyright (c) 2026 Mr.doob):
+ *  - SkyMesh: physical Preetham sky with volumetric clouds (replaces Sky + the old cloud disc).
+ *  - SunLight: two shadow cascades fitted to the camera every frame (sharp near, cheap far).
+ *  - The same sky baked through PMREM into scene.environment (image-based light + reflections).
+ *  - Aerial perspective fog: distant buildings fade into the sky colour of their own direction,
+ *    so the haze glows toward the sun. Density and weather tint still come from scene.fog (WeatherSystem).
+ *  - Time-of-day keyframes for Dhaka's 06:00–22:00 working day: dawn, golden, midday, golden, twilight, night.
  */
+
+interface Preset {
+  sunElevation: number;   // degrees above horizon (light direction; at night this is the moon)
+  sunAzimuth: number;     // degrees
+  sunColor: THREE.Color;
+  sunIntensity: number;
+  hemiSky: THREE.Color;
+  hemiGround: THREE.Color;
+  hemiIntensity: number;
+  envIntensity: number;
+  turbidity: number;
+  rayleigh: number;
+  mieCoefficient: number;
+  mieDirectionalG: number;
+  skyExposure: number;
+  nightFactor: number;
+  look: GradeLook;
+}
+
+const c = (hex: number) => new THREE.Color(hex);
+
+// Hour → preset. Dhaka is hazier than New York (higher turbidity, warmer bounce from brick and dust).
+const KEYS: Array<[number, Preset]> = [
+  [5.5, { sunElevation: 7, sunAzimuth: 95, sunColor: c(0xff9a6a), sunIntensity: 2.2, hemiSky: c(0x52689a), hemiGround: c(0x6a5048),
+    hemiIntensity: 1.1, envIntensity: 0.4, turbidity: 10, rayleigh: 3.2, mieCoefficient: 0.010, mieDirectionalG: 0.9,
+    skyExposure: 0.17, nightFactor: 0.2, look: LOOKS.twilight }],
+  [7.5, { sunElevation: 18, sunAzimuth: 105, sunColor: c(0xffc890), sunIntensity: 5.2, hemiSky: c(0x9ab6dc), hemiGround: c(0xc08a62),
+    hemiIntensity: 1.35, envIntensity: 0.5, turbidity: 9, rayleigh: 2.8, mieCoefficient: 0.009, mieDirectionalG: 0.88,
+    skyExposure: 0.145, nightFactor: 0, look: LOOKS.golden }],
+  [12, { sunElevation: 62, sunAzimuth: 175, sunColor: c(0xfff3e2), sunIntensity: 6.4, hemiSky: c(0xa8c8ec), hemiGround: c(0xb69476),
+    hemiIntensity: 1.5, envIntensity: 0.55, turbidity: 8, rayleigh: 2.4, mieCoefficient: 0.007, mieDirectionalG: 0.86,
+    skyExposure: 0.14, nightFactor: 0, look: LOOKS.midday }],
+  [15.5, { sunElevation: 34, sunAzimuth: 235, sunColor: c(0xffe2bc), sunIntensity: 5.9, hemiSky: c(0xa2c0e4), hemiGround: c(0xbe8e68),
+    hemiIntensity: 1.45, envIntensity: 0.54, turbidity: 8.5, rayleigh: 2.6, mieCoefficient: 0.008, mieDirectionalG: 0.87,
+    skyExposure: 0.145, nightFactor: 0, look: LOOKS.midday }],
+  [17.3, { sunElevation: 9, sunAzimuth: 252, sunColor: c(0xffb072), sunIntensity: 4.6, hemiSky: c(0x8eaad6), hemiGround: c(0xc4845a),
+    hemiIntensity: 1.25, envIntensity: 0.48, turbidity: 9.5, rayleigh: 3.0, mieCoefficient: 0.010, mieDirectionalG: 0.9,
+    skyExposure: 0.148, nightFactor: 0, look: LOOKS.golden }],
+  [18.6, { sunElevation: 7, sunAzimuth: 258, sunColor: c(0xff8a5c), sunIntensity: 2.6, hemiSky: c(0x5c78b0), hemiGround: c(0x7e5a48),
+    hemiIntensity: 1.15, envIntensity: 0.42, turbidity: 10, rayleigh: 3.4, mieCoefficient: 0.010, mieDirectionalG: 0.9,
+    skyExposure: 0.17, nightFactor: 0.25, look: LOOKS.twilight }],
+  [20, { sunElevation: 48, sunAzimuth: 140, sunColor: c(0x9ab6e6), sunIntensity: 1.6, hemiSky: c(0x34466e), hemiGround: c(0x6a4a34),
+    hemiIntensity: 1.25, envIntensity: 0.32, turbidity: 4, rayleigh: 1.5, mieCoefficient: 0.004, mieDirectionalG: 0.8,
+    skyExposure: 0.022, nightFactor: 0.86, look: LOOKS.night }],
+];
+
 export interface LightingRig {
-  sun: THREE.DirectionalLight;
-  sky: Sky;
+  sun: SunLight;
+  sky: SkyMesh;
   update(target: THREE.Vector3, camera: THREE.Vector3): void;
+  /** Game clock hour (fractional, 0–24). Re-bakes the environment only when the light visibly changes. */
+  setHour(hour: number): void;
+  /** Call once after `await renderer.init()`: bakes the environment map and installs the aerial fog. */
+  rendererReady(): void;
+  /** Legacy: fixed sun position (keeps the current preset's colours). */
   setTimeOfDay(elevationDeg: number, azimuthDeg?: number): void;
-  /** 1 = default. Range 0.5–1.6 is sensible; clamped to 0.3–2.0. */
+  /** WeatherSystem: overcast/rain dimming and cloud amount (its cover value: lower = more clouds). */
+  setWeather(sunMultiplier: number, cloudCover: number): void;
+  /** Colour-grade blend for the current hour (GamePipeline.setLook). */
+  look(): { a: GradeLook; b: GradeLook; t: number };
+  /** 1 = default. Clamped to 0.3–2.0. */
   setBrightness(multiplier: number): void;
   getBrightness(): number;
-  clouds: THREE.Mesh;
   dispose(): void;
 }
 
-/**
- * Strength of the sky-based ambient (image-based) light. 0.9 flooded every surface with bright
- * sky-blue (a plain grey road rendered light blue), so roads looked like water and ground looked foggy.
- */
-const ENV_INTENSITY = 0.3;
+const ENV_SCALE = 1.0;
 
-export function setupRealisticLighting(renderer: THREE.WebGLRenderer, scene: THREE.Scene): LightingRig {
-  renderer.outputColorSpace = THREE.SRGBColorSpace;
+export function setupRealisticLighting(renderer: THREE.WebGPURenderer, scene: THREE.Scene): LightingRig {
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  const BASE_EXPOSURE = 0.85;
-  renderer.toneMappingExposure = BASE_EXPOSURE;
+  renderer.toneMappingExposure = 1.0;
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-  let brightnessMultiplier = 1.0;
-  let baseSunIntensity = 2.47;
+  renderer.library.addLight(SunLightNode, SunLight);
 
-  // Sky dome — kept inside the camera far plane (470).
-  const sky = new Sky();
+  let brightness = 1;
+  let sunMultiplier = 1;
+  let hour = 15;
+  let bakedHour = -99;
+  let current: Preset = KEYS[3][1];
+  let lookBlend = { a: current.look, b: current.look, t: 0 };
+
+  // Sky dome. SkyMesh draws at the far plane, so its size only has to contain the camera.
+  const sky = new SkyMesh();
   sky.scale.setScalar(400);
-  const u = sky.material.uniforms;
-  u['turbidity'].value = 8;          // Dhaka haze
-  u['rayleigh'].value = 1.6;
-  u['mieCoefficient'].value = 0.006;
-  u['mieDirectionalG'].value = 0.82;
+  sky.cloudScale.value = 0.0006;      // the game camera sits ~10 m up; NYC's 0.00018 was for a 13 km city
+  sky.cloudSpeed.value = 0.00004;
+  sky.cloudElevation.value = 0.5;
+  const skyExposure = uniform(0.145);
+  const nightFactor = uniform(0.0);
+  const nightSky = uniform(new THREE.Color(0x0b1528));
+  const rawSky = sky.material.colorNode as unknown as ReturnType<typeof vec4>;
+  sky.material.colorNode = Fn(() => vec4(mix(rawSky.rgb.mul(skyExposure), nightSky, nightFactor), float(1.0)))();
   scene.add(sky);
   scene.background = null;
 
-  const sun = new THREE.DirectionalLight(0xfff1dc, 3.0);
+  const sun = new SunLight(0xfff1dc, 6);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
-  const S = 35;
-  Object.assign(sun.shadow.camera, { left: -S, right: S, top: S, bottom: -S, near: 1, far: 260 });
-  sun.shadow.bias = -0.0004;
-  sun.shadow.normalBias = 0.04;
-  scene.add(sun, sun.target);
+  sun.shadow.camera.near = 0.5;
+  sun.shadow.camera.far = 180;      // street-level view distance; near cascade ends ~45 m
+  sun.shadow.normalBias = 0.05;
+  scene.add(sun);
 
-  // Gentle bounce light from warm ground; the environment map does most of the ambient work.
-  const fill = new THREE.HemisphereLight(0xe9ebee, 0x8a7458, 0.35);   // near-neutral sky fill
-  scene.add(fill);
+  const hemi = new THREE.HemisphereLight(0x9abbe6, 0xc88a62, 1.3);
+  hemi.position.set(0, 300, 0);
+  scene.add(hemi);
 
-  scene.fog = new THREE.FogExp2('#cdd3cc', 0.0055);
-
-  // Cloud layer: a large disc high above the camera with fbm noise computed in the shader
-  // (no textures to generate). Alpha fades out toward the rim so it melts into the haze
-  // and never shows a hard edge against the camera far plane.
-  const cloudMat = new THREE.ShaderMaterial({
-    transparent: true, depthWrite: false, fog: false, side: THREE.DoubleSide,
-    uniforms: {
-      uTime: { value: 0 },
-      uCover: { value: 0.47 },               // lower = more clouds
-      uSunDir: { value: new THREE.Vector3() },
-      uOffset: { value: new THREE.Vector2() }
-    },
-    vertexShader: `
-      varying vec2 vUv; varying vec3 vWorld;
-      void main() {
-        vUv = uv;
-        vec4 w = modelMatrix * vec4(position, 1.0);
-        vWorld = w.xyz;
-        gl_Position = projectionMatrix * viewMatrix * w;
-      }`,
-    fragmentShader: `
-      uniform float uTime; uniform float uCover; uniform vec3 uSunDir; uniform vec2 uOffset;
-      varying vec2 vUv; varying vec3 vWorld;
-      float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-      float noise(vec2 p) {
-        vec2 i = floor(p), f = fract(p); vec2 u = f * f * (3.0 - 2.0 * f);
-        return mix(mix(hash(i), hash(i + vec2(1, 0)), u.x), mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), u.x), u.y);
-      }
-      float fbm(vec2 p) { float s = 0.0, a = 0.5; for (int k = 0; k < 5; k++) { s += a * noise(p); p *= 2.03; a *= 0.5; } return s; }
-      void main() {
-        vec2 p = (vWorld.xz + uOffset) * 0.006 + vec2(uTime * 0.004, uTime * 0.0015);
-        float d = fbm(p);
-        float c = smoothstep(uCover, uCover + 0.25, d);
-        float shade = mix(0.72, 1.0, smoothstep(uCover, uCover + 0.5, fbm(p + 0.05)));   // darker bellies
-        float rim = 1.0 - smoothstep(0.32, 0.5, length(vUv - 0.5));                       // fade to horizon
-        vec3 col = mix(vec3(0.78, 0.8, 0.82), vec3(1.0, 0.98, 0.95), shade) * (0.8 + 0.25 * max(uSunDir.y, 0.0));
-        gl_FragColor = vec4(col, c * rim * 0.9);
-      }`
-  });
-  const clouds = new THREE.Mesh(new THREE.CircleGeometry(430, 48).rotateX(Math.PI / 2), cloudMat);
-  clouds.renderOrder = -1;
-  clouds.frustumCulled = false;
-  scene.add(clouds);
-  const startTime = performance.now();
-
+  // Environment bake (sky only, no sun disc), reusing one render target.
   const pmrem = new THREE.PMREMGenerator(renderer);
-  let envRT: THREE.WebGLRenderTarget | null = null;
-  const sunDir = new THREE.Vector3();
+  const envScene = new THREE.Scene();
+  let envRT: THREE.RenderTarget | null = null;
 
-  const bakeEnvironment = () => {
-    const envScene = new THREE.Scene();
-    const envSky = new Sky();
-    envSky.scale.setScalar(10);
-    for (const k of Object.keys(u)) envSky.material.uniforms[k].value = u[k].value;
-    envScene.add(envSky);
-    envRT?.dispose();
-    envRT = pmrem.fromScene(envScene, 0, 0.1, 100);
+  // Aerial fog: density and weather colour come from scene.fog, which WeatherSystem keeps updating.
+  if (!scene.fog) scene.fog = new THREE.FogExp2('#cdd3cc', 0.0055);
+  const fogDensity = uniform(0.0055);
+  const fogTint = uniform(new THREE.Color('#cdd3cc'));
+  const fogTintMix = uniform(0.0);
+  const fogLevel = uniform(1.0);
+
+  let backendReady = false;
+  const bake = () => {
+    if (!backendReady) return;   // PMREM needs an initialised backend; rendererReady() bakes once it is.
+    sky.showSunDisc.value = 0;
+    envScene.add(sky);
+    envRT = pmrem.fromScene(envScene as unknown as THREE.Scene, 0, 0.1, 100, { renderTarget: envRT } as never) as THREE.RenderTarget;
     scene.environment = envRT.texture;
-    scene.environmentIntensity = ENV_INTENSITY * brightnessMultiplier;
+    sky.showSunDisc.value = 1;
+    scene.add(sky);
+    if (!scene.fogNode) scene.fogNode = aerialFog();
   };
 
-  const setTimeOfDay = (elevationDeg: number, azimuthDeg = 215) => {
+  const aerialFog = () => {
+    const toFrag = positionWorld.sub(cameraPosition);
+    const dist = length(toFrag);
+    const dir = toFrag.div(max(dist, 0.001));
+    const horizonDir = normalize(vec3(dir.x, max(dir.y, 0.015), dir.z));
+    const skyColor = pmremTexture(envRT!.texture, horizonDir, float(0.0)).rgb;
+    // Haze thins with height (H = 220 m) so rooftops stay clearer than the street canyon.
+    const H = float(220.0);
+    const ya = max(positionWorld.y, 0.0), yb = max(cameraPosition.y, 0.0);
+    const dy = yb.sub(ya);
+    const ea = exp(ya.div(H).negate()), eb = exp(yb.div(H).negate());
+    const meanDensity = select(abs(dy).greaterThan(1.0), ea.sub(eb).mul(H).div(dy), ea);
+    const tau = fogDensity.mul(dist).mul(meanDensity);
+    const tint = mix(skyColor.mul(fogLevel), fogTint.mul(fogLevel), fogTintMix);
+    return fog(tint, float(1.0).sub(exp(tau.mul(tau).negate())));
+  };
+
+  const sunDir = new THREE.Vector3();
+  const applySun = () => {
+    sun.intensity = current.sunIntensity * sunMultiplier;
+    hemi.intensity = current.hemiIntensity * (0.75 + 0.25 * sunMultiplier);
+    scene.environmentIntensity = current.envIntensity * ENV_SCALE;
+    renderer.toneMappingExposure = brightness;
+  };
+
+  const placeSun = (elevationDeg: number, azimuthDeg: number) => {
     const phi = THREE.MathUtils.degToRad(90 - elevationDeg);
     const theta = THREE.MathUtils.degToRad(azimuthDeg);
     sunDir.setFromSphericalCoords(1, phi, theta);
-    u['sunPosition'].value.copy(sunDir);
-    cloudMat.uniforms.uSunDir.value.copy(sunDir);
-    // Warmer, dimmer sun near the horizon
-    const t = THREE.MathUtils.clamp(elevationDeg / 60, 0, 1);
-    sun.color.setRGB(1, 0.78 + 0.2 * t, 0.6 + 0.35 * t);
-    baseSunIntensity = 1.2 + 2.0 * t;
-    sun.intensity = baseSunIntensity * brightnessMultiplier;
-    bakeEnvironment();
+    sun.position.copy(sunDir);
+    sun.updateMatrixWorld();
+    sky.sunPosition.value.copy(sunDir);
   };
 
-  setTimeOfDay(38); // mid-afternoon
+  const blendPreset = (h: number): Preset => {
+    if (h <= KEYS[0][0]) return KEYS[0][1];
+    if (h >= KEYS[KEYS.length - 1][0]) return KEYS[KEYS.length - 1][1];
+    let i = 0;
+    while (i < KEYS.length - 2 && h > KEYS[i + 1][0]) i++;
+    const [h0, a] = KEYS[i], [h1, b] = KEYS[i + 1];
+    const t = THREE.MathUtils.smoothstep(h, h0, h1);
+    const n = (x: number, y: number) => x + (y - x) * t;
+    // After dusk the light source becomes the moon: jump its direction instead of sweeping below the ground.
+    const moonJump = b.nightFactor > 0.5 && a.nightFactor < 0.5;
+    lookBlend = { a: a.look, b: b.look, t };
+    return {
+      sunElevation: moonJump ? (t < 0.5 ? a.sunElevation * (1 - t * 2) : b.sunElevation * (t * 2 - 1)) : n(a.sunElevation, b.sunElevation),
+      sunAzimuth: moonJump ? (t < 0.5 ? a.sunAzimuth : b.sunAzimuth) : n(a.sunAzimuth, b.sunAzimuth),
+      sunColor: a.sunColor.clone().lerp(b.sunColor, t),
+      sunIntensity: moonJump ? Math.abs(1 - t * 2) * (t < 0.5 ? a.sunIntensity : b.sunIntensity) : n(a.sunIntensity, b.sunIntensity),
+      hemiSky: a.hemiSky.clone().lerp(b.hemiSky, t),
+      hemiGround: a.hemiGround.clone().lerp(b.hemiGround, t),
+      hemiIntensity: n(a.hemiIntensity, b.hemiIntensity),
+      envIntensity: n(a.envIntensity, b.envIntensity),
+      turbidity: n(a.turbidity, b.turbidity),
+      rayleigh: n(a.rayleigh, b.rayleigh),
+      mieCoefficient: n(a.mieCoefficient, b.mieCoefficient),
+      mieDirectionalG: n(a.mieDirectionalG, b.mieDirectionalG),
+      skyExposure: n(a.skyExposure, b.skyExposure),
+      nightFactor: n(a.nightFactor, b.nightFactor),
+      look: t < 0.5 ? a.look : b.look,
+    };
+  };
+
+  const applyPreset = (p: Preset) => {
+    current = p;
+    placeSun(Math.max(0.5, p.sunElevation), p.sunAzimuth);
+    sun.color.copy(p.sunColor);
+    hemi.color.copy(p.hemiSky);
+    hemi.groundColor.copy(p.hemiGround);
+    sky.turbidity.value = p.turbidity;
+    sky.rayleigh.value = p.rayleigh;
+    sky.mieCoefficient.value = p.mieCoefficient;
+    sky.mieDirectionalG.value = p.mieDirectionalG;
+    skyExposure.value = p.skyExposure;
+    nightFactor.value = p.nightFactor;
+    // Weather fog colour is a daylight colour; dim it with the sky so storms at night stay dark.
+    fogLevel.value = 1 - p.nightFactor * 0.85;
+    interiorGlow.value = THREE.MathUtils.clamp(p.nightFactor / 0.8, 0, 1);
+    streetLamps.value = THREE.MathUtils.smoothstep(p.nightFactor, 0.12, 0.5);
+    applySun();
+    bake();
+  };
+
+  const setHour = (h: number) => {
+    hour = h;
+    // ~45 real seconds per game hour: re-bake every 10 game minutes (sky-only scene, cheap).
+    if (Math.abs(h - bakedHour) < 1 / 6) return;
+    bakedHour = h;
+    applyPreset(blendPreset(h));
+  };
+
+  setHour(hour);
 
   const update = (target: THREE.Vector3, camera: THREE.Vector3) => {
     sky.position.copy(camera);
-    // Clouds stay above the camera but scroll with world position so they don't "follow" you.
-    clouds.position.set(camera.x, 160, camera.z);
-    cloudMat.uniforms.uTime.value = (performance.now() - startTime) / 1000;
-    // Snap the shadow camera to texel-sized steps to stop shadow shimmering while moving.
-    const texel = (2 * S) / sun.shadow.mapSize.x;
-    const tx = Math.round(target.x / texel) * texel;
-    const tz = Math.round(target.z / texel) * texel;
-    sun.target.position.set(tx, 0, tz);
-    sun.position.set(tx + sunDir.x * 120, sunDir.y * 120, tz + sunDir.z * 120);
-  };
-
-  const setBrightness = (multiplier: number) => {
-    const b = THREE.MathUtils.clamp(multiplier, 0.3, 2.0);
-    brightnessMultiplier = b;
-    renderer.toneMappingExposure = BASE_EXPOSURE * b;
-    fill.intensity = 0.35 * b;
-    scene.environmentIntensity = ENV_INTENSITY * b;
-    sun.intensity = baseSunIntensity * b;
-    if (renderer.domElement) {
-      renderer.domElement.style.filter = Math.abs(b - 1) < 0.01 ? '' : `brightness(${b})`;
+    const f = scene.fog as THREE.FogExp2 | null;
+    if (f && (f as THREE.FogExp2).isFogExp2) {
+      fogDensity.value = f.density;
+      fogTint.value.copy(f.color);
+      // Clear weather (0.0055) uses the sky's own horizon colour; mist and rain blend in their grey.
+      fogTintMix.value = THREE.MathUtils.clamp((f.density - 0.0065) / 0.009, 0, 0.85);
     }
+    void target;
   };
-
-  const getBrightness = () => brightnessMultiplier;
 
   return {
-    sun, sky, clouds, update, setTimeOfDay, setBrightness, getBrightness,
-    dispose: () => { envRT?.dispose(); pmrem.dispose(); cloudMat.dispose(); clouds.geometry.dispose(); }
+    sun, sky, update, setHour,
+    rendererReady: () => { backendReady = true; bakedHour = -99; setHour(hour); },
+    setTimeOfDay: (elevationDeg, azimuthDeg = 215) => { placeSun(elevationDeg, azimuthDeg); bake(); },
+    setWeather: (multiplier, cloudCover) => {
+      sunMultiplier = multiplier;
+      sky.cloudCoverage.value = THREE.MathUtils.clamp(1.17 - 1.7 * cloudCover, 0, 1);
+      sky.cloudDensity.value = 0.35 + 0.3 * (1 - multiplier);
+      applySun();
+    },
+    look: () => lookBlend,
+    setBrightness: (m) => { brightness = THREE.MathUtils.clamp(m, 0.3, 2.0); applySun(); },
+    getBrightness: () => brightness,
+    dispose: () => {
+      envRT?.dispose(); pmrem.dispose(); sun.dispose(); scene.remove(sky, sun, hemi);
+      sky.geometry.dispose(); sky.material.dispose(); scene.fogNode = null;
+    },
   };
 }

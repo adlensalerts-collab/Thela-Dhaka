@@ -224,7 +224,7 @@ export function pbrMaterial(surface: Surface, opts: { tint?: string; metalness?:
     envMapIntensity: opts.envMapIntensity ?? tune?.envMapIntensity ?? 1
   });
   mat.userData.surface = surface;
-  if (surface === 'asphalt' || surface === 'pavement' || surface === 'plaster') applySurfaceWear(mat, surface);
+  if (surface === 'asphalt' || surface === 'pavement' || surface === 'plaster' || surface === 'brick') applySurfaceWear(mat, surface);
   tryRealTextures(surface, mat);
   return mat;
 }
