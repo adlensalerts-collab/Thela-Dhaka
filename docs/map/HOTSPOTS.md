@@ -30,7 +30,7 @@ Find the region with `grep -n "<anchor>" <file>`, then read a slice (`sed -n 'ST
 ## `src/components/GameHUD.tsx` (~31 KB)
 | Region | Anchor |
 |---|---|
-| Minimap background + blips | `minimapRef = useRef` · `// Update blips on minimap` |
+| Radar component + measured clearance for touch controls | `<GameRadar state={state} />` · `bottomHudRef` (drawing now in `GameRadar.tsx`) |
 | Top stats bar (wallet, level, stock, life, damage, stamina, sales) | `{/* Top Header Bar */}` |
 | Weather / sound / heat stars / settings / pause | `{/* Top Right:` |
 | Notice popup | `{/* Top-Centre Notice Popup */}` |

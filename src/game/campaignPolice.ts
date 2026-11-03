@@ -281,7 +281,7 @@ export class CampaignPolice {
     }
   }
 
-  positions() { return this.patrols.map(({ object }) => ({ x: object.position.x, z: object.position.z })); }
+  positions() { return this.patrols.map(({ object }) => ({ x: object.position.x, z: object.position.z, heading: -object.rotation.y })); }
 
   /** Caller retires GPU resources with its existing shared-resource-aware disposer. */
   detachExtras(): THREE.Object3D[] {

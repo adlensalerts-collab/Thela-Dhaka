@@ -36,6 +36,7 @@ Which file owns which feature. Sizes as of Hotfix 8.1. Files over ~20 KB: read v
 | Spatial obstacle grid | `src/game/map/obstacleGrid.ts` | `ObstacleGrid.near` |
 | Chunked visibility | `src/game/map/chunks.ts` | `ChunkManager`, `VIEW_DISTANCE` |
 | Minimap background + road audit | `src/game/map/minimap.ts` | `createDistrictMinimap`, `auditDistrict` |
+| Radar projection, bounded actor payloads and service bearings | `src/game/ui/radar.ts` | `radarPosition`, `radarEdge`, `nearbyRadarPoints`, `radarPois` (snapshot collected in `GameEngine.publishState`) |
 
 ## World models (shared by both maps)
 | Area | File | Key exports |
@@ -69,6 +70,7 @@ Which file owns which feature. Sizes as of Hotfix 8.1. Files over ~20 KB: read v
 | Separate street-sound preview | `sound-preview.html` + `src/dev/soundPreview.ts` (synthesis: `src/game/audio/streetSounds.ts`) |
 | App shell, socket wiring, modals | `src/App.tsx` |
 | In-game HUD (stats, minimap, button bar, hotspot badge) — **31 KB** | `src/components/GameHUD.tsx` |
+| Circular heading-up radar, actor markers, service bearings and map key | `src/components/GameRadar.tsx` |
 | Title screen (role, solo/online, OSM credit) | `src/components/TitleScreen.tsx` |
 | Settings (keys, mouse, display, graphics) — **22 KB** | `src/components/SettingsModal.tsx` |
 | End-of-run statistics | `src/components/StatsScreen.tsx` |
