@@ -1,6 +1,22 @@
 import * as THREE from 'three';
 import { SidewalkGraph } from './pathfinding';
 import { createHumanRig, outfitForArchetype } from './world/humans';
+import { CrowdImpostors } from './crowd/crowdImpostors';
+import { activeFraction, hotspotTripChance, hotspotWeight, weightedIndex } from './crowd/crowdSchedule';
+
+/** Sprint 10 — what a pedestrian is doing besides walking (all non-graphic). */
+export type PedestrianActivity = 'none' | 'chat' | 'phone_call' | 'stall' | 'look' | 'wait_cross';
+
+/** Optional probes the engine supplies so pedestrians can respect roads and traffic. */
+export interface CrowdRoadProbes {
+  /** True if (x, z) is on a carriageway (use RoadGraph.isOnCarriageway). */
+  isOnCarriageway: (x: number, z: number) => boolean;
+  /** True if a moving vehicle is within `radius` metres of (x, z). */
+  vehicleNear: (x: number, z: number, radius: number) => boolean;
+}
+
+/** A stall / shop front people stop at: stand at (x, z) facing (fx, fz). */
+export interface BrowsePoint { x: number; z: number; fx?: number; fz?: number }
 
 export interface PedestrianArchetype {
   name: string;
@@ -45,12 +61,39 @@ export interface PedestrianNPC {
   knockbackVz: number;
   rage: number;
   damageTaken: number;
-  rageSprite: THREE.Sprite;
-  rageCanvas: HTMLCanvasElement;
-  rageCtx: CanvasRenderingContext2D;
-  rageTexture: THREE.CanvasTexture;
+  /** Rage meter (AI Studio's dormant Sprint 15 code). Created only when first needed. */
+  rageSprite?: THREE.Sprite;
+  rageCanvas?: HTMLCanvasElement;
+  rageCtx?: CanvasRenderingContext2D;
+  rageTexture?: THREE.CanvasTexture;
   lastRageKey: string;
+  // ---- Sprint 10 ----
+  /** False = parked off-street by the time-of-day density (hidden, not simulated). */
+  active: boolean;
+  /** Near tier draws the rig; far tier is drawn by CrowdImpostors; hidden is not drawn. */
+  lod: 'near' | 'far' | 'hidden';
+  activity: PedestrianActivity;
+  activityTimer: number;
+  /** Activity to start when the current walk ends (joining a chat group, browsing a stall, watching). */
+  pendingActivity: PedestrianActivity;
+  pendingTimer: number;
+  lookX: number;
+  lookZ: number;
+  groupId: number;
+  /** About a third of people use a phone now and then. */
+  phoneUser: boolean;
+  /** Texting while walking on this trip. */
+  texting: boolean;
+  /** Path index whose segment was checked for a road crossing (-1 = not yet). */
+  crossCheckedIndex: number;
+  crossingRoad: boolean;
+  crossWait: number;
+  hurryTimer: number;
+  colors: { shirt: THREE.Color; bottom: THREE.Color; skin: THREE.Color };
 }
+
+const SHIRT_VARIETY = ['#e6e1d3', '#7d93ad', '#3f6f8f', '#9a3b3b', '#c9a227', '#5d7f4f', '#6b4f7a', '#d98c5f', '#f2f0ea', '#2f4858', '#b5651d', '#8e9aa6'];
+const BOTTOM_VARIETY = ['#1d2736', '#2b2a33', '#3a3f47', '#4b3b2a', '#22303c', '#5b5b5b'];
 
 const ARCHETYPES: PedestrianArchetype[] = [
   { name: 'Office Commuter', bnName: 'চাকুরিজীবী', shirtColor: '#8ca8c4', pantsColor: '#1d2736', speed: 1.6 },
@@ -64,6 +107,15 @@ const ARCHETYPES: PedestrianArchetype[] = [
   { name: 'Tea Stall Regular', bnName: 'চা প্রেমিক', shirtColor: '#966046', pantsColor: '#1f2b38', speed: 1.55 }
 ];
 
+function colorsOf(group: THREE.Group) {
+  const o = (group.userData.humanOptions ?? {}) as { shirt?: string; bottom?: string; skin?: string };
+  return {
+    shirt: new THREE.Color(o.shirt ?? '#d8cdb2'),
+    bottom: new THREE.Color(o.bottom ?? '#2e3440'),
+    skin: new THREE.Color(o.skin ?? '#8d5a3b')
+  };
+}
+
 export class PedestrianManager {
   scene: THREE.Scene;
   graph: SidewalkGraph;
@@ -72,22 +124,89 @@ export class PedestrianManager {
   /** Map half-extents (real districts are larger than the old ±108 grid). */
   bounds = { x: 108, z: 108 };
   private clock = 0;
-  /** Graph nodes near hotspots: half of all trips head to one, so markets and busy junctions are crowded. */
+  /** Graph nodes near hotspots: many trips head to one, so markets and busy junctions are crowded. */
   private hotspotNodes: number[] = [];
+  /** Sprint 10: per-hotspot node lists so the time of day can favour markets, junctions or schools. */
+  private hotspotGroups: Array<{ kind: string; nodes: number[] }> = [];
+  /** Minutes after midnight; null until the engine drives the clock (then density stays at 100%). */
+  private minutes: number | null = null;
+  private probes: CrowdRoadProbes | null = null;
+  private browse: Array<BrowsePoint & { node: number }> = [];
+  private lastCam: { x: number; z: number } | null = null;
+  private groupTimer = 0;
+  private densityTimer = 0;
+  private detailTimer = 0;
+  private nextGroupId = 1;
+  private nearSet = new Set<PedestrianNPC>();
+  private impostors: CrowdImpostors;
+  private disposed = false;
+  /** Max simultaneous chat groups. */
+  get groupLimit() { return Math.max(2, Math.floor(this.poolSize / 20)); }
 
-  setHotspots(points: Array<{ x: number; z: number }>) {
+  setHotspots(points: Array<{ x: number; z: number; kind?: string }>) {
     const nodes = this.graph.nodes;
     const set = new Set<number>();
+    this.hotspotGroups = [];
     for (const h of points) {
-      for (const n of nodes) if (Math.hypot(n.x - h.x, n.z - h.z) < 35) set.add(n.id);
-      set.add(this.graph.findNearestNode(h.x, h.z));
+      const group: number[] = [];
+      for (const n of nodes) if (Math.hypot(n.x - h.x, n.z - h.z) < 35) { set.add(n.id); group.push(n.id); }
+      const nearest = this.graph.findNearestNode(h.x, h.z);
+      set.add(nearest);
+      if (!group.includes(nearest)) group.push(nearest);
+      this.hotspotGroups.push({ kind: h.kind ?? 'junction', nodes: group });
     }
     this.hotspotNodes = [...set];
   }
 
+  /** Sprint 10 crowd streaming: keep trips within this radius of the camera (the map is 900 m wide). */
+  private static readonly FOCUS = 130;
+  private focusNodes: number[] = [];
+  /** Focus nodes within sight (< 85 m): most trips end here, so the player sees a busy street. */
+  private innerNodes: number[] = [];
+  private focusHotspots: Array<{ kind: string; nodes: number[] }> = [];
+  private focusCenter: { x: number; z: number } | null = null;
+
+  private refreshFocus() {
+    const cam = this.lastCam;
+    if (!cam) return;
+    if (this.focusCenter && Math.hypot(cam.x - this.focusCenter.x, cam.z - this.focusCenter.z) < 25) return;
+    this.focusCenter = { ...cam };
+    const R = PedestrianManager.FOCUS;
+    this.focusNodes = this.graph.nodes.filter((n) => Math.hypot(n.x - cam.x, n.z - cam.z) < R).map((n) => n.id);
+    this.innerNodes = this.focusNodes.filter((id) => { const n = this.graph.nodes[id]; return Math.hypot(n.x - cam.x, n.z - cam.z) < 85; });
+    this.focusHotspots = this.hotspotGroups
+      .map((g) => ({ kind: g.kind, nodes: g.nodes.filter((id) => { const n = this.graph.nodes[id]; return Math.hypot(n.x - cam.x, n.z - cam.z) < R * 1.3; }) }))
+      .filter((g) => g.nodes.length > 0);
+  }
+
   private pickDestination(fromId: number): number {
-    if (this.hotspotNodes.length && Math.random() < 0.5) {
-      return this.hotspotNodes[Math.floor(Math.random() * this.hotspotNodes.length)];
+    if (this.lastCam && this.focusNodes.length > 20) {
+      // Streaming: trips stay around the player, so 120 people make a busy street, not an empty map.
+      const m = this.minutes ?? 12 * 60;
+      if (this.focusHotspots.length && Math.random() < hotspotTripChance(m)) {
+        const i = weightedIndex(this.focusHotspots.map((g) => hotspotWeight(g.kind, m)), Math.random());
+        const g = this.focusHotspots[i >= 0 ? i : 0];
+        return g.nodes[Math.floor(Math.random() * g.nodes.length)];
+      }
+      const from = this.graph.nodes[fromId] ?? this.graph.nodes[0];
+      const pool = this.innerNodes.length > 8 && Math.random() < 0.65 ? this.innerNodes : this.focusNodes;
+      for (let tries = 0; tries < 10; tries++) {
+        const id = pool[Math.floor(Math.random() * pool.length)];
+        const n = this.graph.nodes[id];
+        if (Math.hypot(n.x - from.x, n.z - from.z) >= 35) return id;
+      }
+    }
+    if (this.minutes === null) {
+      if (this.hotspotNodes.length && Math.random() < 0.5) {
+        return this.hotspotNodes[Math.floor(Math.random() * this.hotspotNodes.length)];
+      }
+      return this.graph.getRandomDestination(fromId, 35);
+    }
+    if (this.hotspotGroups.length && Math.random() < hotspotTripChance(this.minutes)) {
+      const m = this.minutes;
+      const i = weightedIndex(this.hotspotGroups.map((g) => hotspotWeight(g.kind, m)), Math.random());
+      const g = this.hotspotGroups[i >= 0 ? i : 0];
+      if (g.nodes.length) return g.nodes[Math.floor(Math.random() * g.nodes.length)];
     }
     return this.graph.getRandomDestination(fromId, 35);
   }
@@ -95,7 +214,10 @@ export class PedestrianManager {
   constructor(scene: THREE.Scene, graph: SidewalkGraph, count = 14) {
     this.scene = scene;
     this.graph = graph;
-    this.poolSize = Math.max(6, Math.min(60, count));
+    this.poolSize = Math.max(6, Math.min(120, count));
+    // Far-tier crowd: added now (with 0 instances) so world teardown finds it with the district.
+    this.impostors = new CrowdImpostors(this.poolSize);
+    this.scene.add(this.impostors.group);
     this.initPool();
   }
 
@@ -131,17 +253,22 @@ export class PedestrianManager {
     const displayRage = isChasing ? 100 : Math.min(100, Math.round(p.rage));
 
     if (displayRage <= 1 && !isChasing && p.damageTaken <= 0) {
-      p.rageSprite.visible = false;
+      if (p.rageSprite) p.rageSprite.visible = false;
       return;
     }
 
+    if (!p.rageSprite || !p.rageCtx || !p.rageCanvas || !p.rageTexture) {
+      const meter = this.createRageMeterSprite();
+      p.mesh.add(meter.sprite);
+      p.rageSprite = meter.sprite; p.rageCanvas = meter.canvas; p.rageCtx = meter.ctx; p.rageTexture = meter.texture;
+      p.lastRageKey = '';
+    }
     p.rageSprite.visible = true;
     const bob = isChasing || displayRage >= 70 ? Math.abs(Math.sin(p.walkCycle * 0.8)) * 0.1 : 0;
     p.rageSprite.position.y = 2.42 + bob;
 
     const pulse = isChasing || displayRage >= 70 ? Math.floor(p.walkCycle * 2.5) % 2 : 0;
-    const dmgStep = Math.round(p.damageTaken / 5);
-    const key = `${p.state}:${displayRage}:${pulse}:${dmgStep}`;
+    const key = `${p.state}:${displayRage}:${pulse}`;
     if (key === p.lastRageKey) return;
     p.lastRageKey = key;
 
@@ -231,15 +358,7 @@ export class PedestrianManager {
     ctx.lineTo(warnX, barY + barH - 1);
     ctx.stroke();
 
-    // Optional NPC Health / Injury strip at the bottom of the card when damaged
-    if (p.damageTaken > 0) {
-      const hpRatio = Math.max(0, (100 - p.damageTaken) / 100);
-      const hpY = barY + barH + 7;
-      ctx.fillStyle = 'rgba(51, 65, 85, 0.9)';
-      ctx.fillRect(barX, hpY, barW, 5);
-      ctx.fillStyle = hpRatio > 0.45 ? '#34d399' : '#f43f5e';
-      ctx.fillRect(barX, hpY, barW * hpRatio, 5);
-    }
+    // No health/injury strip: public rage is non-graphic (docs/game-design.md §5).
 
     p.rageTexture.needsUpdate = true;
   }
@@ -251,24 +370,19 @@ export class PedestrianManager {
     leftArm: THREE.Object3D;
     rightArm: THREE.Object3D;
     body: THREE.Object3D;
-    rageMeter: {
-      sprite: THREE.Sprite;
-      canvas: HTMLCanvasElement;
-      ctx: CanvasRenderingContext2D;
-      texture: THREE.CanvasTexture;
-    };
   } {
-    const rig = createHumanRig(outfitForArchetype(archetype));
-    const rageMeter = this.createRageMeterSprite();
-    rig.group.add(rageMeter.sprite);
+    const outfit = outfitForArchetype(archetype);
+    // Sprint 10: more variety than nine archetype colours (archetype keeps its outfit style).
+    if (Math.random() < 0.6) outfit.shirt = SHIRT_VARIETY[Math.floor(Math.random() * SHIRT_VARIETY.length)];
+    if (Math.random() < 0.3 && outfit.outfit !== 'lungi') outfit.bottom = BOTTOM_VARIETY[Math.floor(Math.random() * BOTTOM_VARIETY.length)];
+    const rig = createHumanRig(outfit);
     return {
       group: rig.group,
       leftLeg: rig.leftLeg,
       rightLeg: rig.rightLeg,
       leftArm: rig.leftArm,
       rightArm: rig.rightArm,
-      body: rig.body,
-      rageMeter
+      body: rig.body
     };
   }
 
@@ -322,11 +436,23 @@ export class PedestrianManager {
         knockbackVz: 0,
         rage: 0,
         damageTaken: 0,
-        rageSprite: rig.rageMeter.sprite,
-        rageCanvas: rig.rageMeter.canvas,
-        rageCtx: rig.rageMeter.ctx,
-        rageTexture: rig.rageMeter.texture,
-        lastRageKey: ''
+        lastRageKey: '',
+        active: true,
+        lod: 'near',
+        activity: 'none',
+        activityTimer: 0,
+        pendingActivity: 'none',
+        pendingTimer: 0,
+        lookX: 0,
+        lookZ: 0,
+        groupId: 0,
+        phoneUser: Math.random() < 0.35,
+        texting: false,
+        crossCheckedIndex: -1,
+        crossingRoad: false,
+        crossWait: 0,
+        hurryTimer: 0,
+        colors: colorsOf(rig.group)
       });
     }
   }
@@ -360,8 +486,16 @@ export class PedestrianManager {
       p.rightArm.rotation.set(0, 0, 0.06);
       p.leftLeg.rotation.set(0, 0, 0);
       p.rightLeg.rotation.set(0, 0, 0);
-      p.rageSprite.visible = false;
+      if (p.rageSprite) p.rageSprite.visible = false;
+      this.clearActivity(p);
+      p.texting = false;
+      p.hurryTimer = 0;
+      p.summonUntil = 0;
+      p.active = true;
+      p.mesh.visible = true;
     }
+    this.nearSet.clear();
+    this.densityTimer = 0;
   }
 
   update(
@@ -370,8 +504,12 @@ export class PedestrianManager {
     stepHostileFn?: (mesh: THREE.Group, dirX: number, dirZ: number, speed: number) => number
   ) {
     this.clock += dt;
+    if (this.minutes !== null || this.lastCam) this.updateDensity(dt);
+    this.updateGroups(dt);
     for (let i = 0; i < this.pedestrians.length; i++) {
       const p = this.pedestrians[i];
+      if (!p.active) continue;
+      if (p.hurryTimer > 0) p.hurryTimer = Math.max(0, p.hurryTimer - dt);
 
       if (p.hitCooldown > 0) p.hitCooldown = Math.max(0, p.hitCooldown - dt);
       if (p.attackCooldown > 0) p.attackCooldown = Math.max(0, p.attackCooldown - dt);
@@ -508,12 +646,18 @@ export class PedestrianManager {
 
       p.body.rotation.z = p.isInjured ? Math.sin(p.walkCycle) * 0.08 : 0;
 
-      // If engaged in buying from vendor, freeze walk animation and face cart
+      // Buying from the vendor: stand and haggle (hand gestures, head shakes).
       if (p.isEngagedInSale) {
+        if (p.activity !== 'none') this.clearActivity(p);
+        p.walkCycle += dt * 3;
         p.leftLeg.rotation.x = 0;
         p.rightLeg.rotation.x = 0;
-        p.leftArm.rotation.x = 0;
-        p.rightArm.rotation.x = 0;
+        const talking = Math.sin(p.walkCycle * 0.5) > -0.2;
+        p.rightArm.rotation.x = talking ? -0.75 + Math.sin(p.walkCycle * 2.4) * 0.3 : 0;
+        p.rightArm.rotation.z = talking ? -0.15 : 0.06;
+        p.leftArm.rotation.x = Math.sin(p.walkCycle * 0.5) < -0.6 ? -0.5 : 0;
+        p.leftArm.rotation.z = -0.06;
+        p.body.rotation.y = Math.sin(p.walkCycle * 1.7) * 0.09;
         continue;
       }
 
@@ -535,7 +679,16 @@ export class PedestrianManager {
         continue;
       }
 
+      // Sprint 10 activities: chatting in a group, phone call, browsing a stall, looking at a horn/accident.
+      if (p.activity !== 'none') {
+        this.updateActivity(p, dt);
+        continue;
+      }
+
       if (p.state === 'idle') {
+        p.body.rotation.y = 0;
+        p.leftArm.rotation.z = -0.06;
+        p.rightArm.rotation.z = 0.06;
         p.idleTimer -= dt;
         // Subtle breathing animation during idle
         p.walkCycle += dt * 1.5;
@@ -545,22 +698,13 @@ export class PedestrianManager {
         p.leftArm.rotation.x = 0;
         p.rightArm.rotation.x = 0;
 
-        if (p.idleTimer <= 0) {
-          // Select new distant destination node and run A* search
-          const newTargetId = this.pickDestination(p.currentNodeId);
-          p.targetNodeId = newTargetId;
-          const fullPath = this.graph.findAStarPath(p.currentNodeId, newTargetId);
-          p.path = fullPath.length > 1 ? fullPath.slice(1) : fullPath;
-          p.pathIndex = 0;
-          p.state = 'walking';
-        }
+        if (p.idleTimer <= 0) this.startTrip(p);
         continue;
       }
 
       // Walking state: follow path waypoints
       if (p.path.length === 0 || p.pathIndex >= p.path.length) {
-        p.state = 'idle';
-        p.idleTimer = 2.0 + Math.random() * 4.0; // Rest at shop/sidewalk corner
+        this.arrive(p, 2.0 + Math.random() * 4.0); // Rest at shop/sidewalk corner
         continue;
       }
 
@@ -578,14 +722,37 @@ export class PedestrianManager {
             p.state = 'browsing';            // arrived at the thela: wait to be served
             continue;
           }
-          p.state = 'idle';
-          p.idleTimer = 1.8 + Math.random() * 3.5;
+          this.arrive(p, 1.8 + Math.random() * 3.5);
           continue;
         }
       } else {
         // Move towards target waypoint
         const dirX = dx / dist;
         const dirZ = dz / dist;
+
+        // Sprint 10: road crossings — stop at the kerb, look both ways, cross when no vehicle is close.
+        if (this.probes && p.crossCheckedIndex !== p.pathIndex) {
+          p.crossCheckedIndex = p.pathIndex;
+          p.crossWait = 0;
+          const mx = (p.mesh.position.x + targetWaypoint.x) / 2, mz = (p.mesh.position.z + targetWaypoint.z) / 2;
+          p.crossingRoad = dist > 2.5 && this.probes.isOnCarriageway(mx, mz)
+            && !this.probes.isOnCarriageway(p.mesh.position.x, p.mesh.position.z);
+        }
+        const hurryingToVendor = !!p.summonUntil && this.clock < p.summonUntil;
+        if (p.crossingRoad && this.probes && p.crossWait < 6 && !hurryingToVendor) {
+          const mx = (p.mesh.position.x + targetWaypoint.x) / 2, mz = (p.mesh.position.z + targetWaypoint.z) / 2;
+          if (this.probes.vehicleNear(mx, mz, 11)) {
+            p.crossWait += dt;
+            p.walkCycle += dt * 1.5;
+            p.body.rotation.y = Math.sin(this.clock * 1.6 + p.id) * 0.55;   // look left and right
+            p.leftLeg.rotation.x = 0; p.rightLeg.rotation.x = 0;
+            p.leftArm.rotation.x = 0; p.rightArm.rotation.x = 0;
+            p.body.position.y = p.body.userData.baseY;
+            continue;
+          }
+          p.crossWait = 99;                    // gap found: commit to crossing
+        }
+        p.body.rotation.y = 0;
 
         // Smoothly rotate towards heading (human model faces local -Z, so rotation.y = -heading)
         const targetHeading = Math.atan2(dirX, -dirZ);
@@ -601,7 +768,11 @@ export class PedestrianManager {
         // Scale forward step by alignment so NPCs pivot before walking after a 180° turn
         const alignment = Math.max(0, Math.cos(angleDiff));
         const hurrying = !!p.summonUntil && this.clock < p.summonUntil;     // customer heading to the thela
-        const walkSpeed = p.isInjured ? p.speed * 0.8 : hurrying ? Math.max(2.6, p.speed * 1.9) : p.speed;
+        const crossingNow = p.crossingRoad && p.crossWait >= 6;
+        const walkSpeed = p.isInjured ? p.speed * 0.8
+          : hurrying ? Math.max(2.6, p.speed * 1.9)
+          : p.hurryTimer > 0 || crossingNow ? p.speed * 1.4
+          : p.texting ? p.speed * 0.8 : p.speed;
         const moveDist = Math.min(dist, walkSpeed * alignment * dt);
 
         p.mesh.position.x += dirX * moveDist;
@@ -613,7 +784,16 @@ export class PedestrianManager {
         p.leftLeg.rotation.x = -swing;
         p.rightLeg.rotation.x = swing;
         p.leftArm.rotation.x = swing * 0.85;
-        p.rightArm.rotation.x = -swing * 0.85;
+        if (p.texting && !crossingNow) {
+          p.rightArm.rotation.x = -0.95;       // phone held in front, eyes down
+          p.rightArm.rotation.z = -0.22;
+          p.body.rotation.x = 0.06;
+        } else {
+          p.rightArm.rotation.x = -swing * 0.85;
+          p.rightArm.rotation.z = 0.06;
+          p.body.rotation.x = 0;
+        }
+        p.leftArm.rotation.z = -0.06;
         p.body.position.y = p.body.userData.baseY + Math.abs(Math.sin(p.walkCycle * 2)) * 0.04; // Torso step bob
       }
     }
@@ -625,7 +805,7 @@ export class PedestrianManager {
    */
   summonCustomers(x: number, z: number, max: number, radius: number, waitSeconds = 25): number {
     const free = this.pedestrians
-      .filter((p) => !p.isEngagedInSale && !p.summonUntil && (p.state === 'walking' || p.state === 'idle'))
+      .filter((p) => p.active && p.groupId === 0 && !p.isEngagedInSale && !p.summonUntil && (p.state === 'walking' || p.state === 'idle'))
       .map((p) => ({ p, d: Math.hypot(p.mesh.position.x - x, p.mesh.position.z - z) }))
       .filter((e) => e.d <= radius && e.d > 1.5)
       .sort((a, b) => a.d - b.d)
@@ -633,15 +813,17 @@ export class PedestrianManager {
     // Not enough people nearby: bring in pedestrians who are out of view (> 90 m), placing them on
     // a footpath 45-70 m away so they visibly walk in (never seen teleporting).
     if (free.length < max) {
+      // Parked (off-street) people count as far away: bringing them in also refills the street.
       const far = this.pedestrians
-        .filter((p) => !p.isEngagedInSale && !p.summonUntil && p.state !== 'hostile' && p.state !== 'injured'
-          && Math.hypot(p.mesh.position.x - x, p.mesh.position.z - z) > 90);
+        .filter((p) => p.groupId === 0 && !p.isEngagedInSale && !p.summonUntil && p.state !== 'hostile' && p.state !== 'injured'
+          && (!p.active || Math.hypot(p.mesh.position.x - x, p.mesh.position.z - z) > 90));
       const ring = this.graph.nodes.filter((n) => { const d = Math.hypot(n.x - x, n.z - z); return d >= 45 && d <= 60; });
       for (const p of far) {
         if (free.length >= max || !ring.length) break;
         const n = ring[Math.floor(Math.random() * ring.length)];
         p.mesh.position.set(n.x, p.mesh.position.y, n.z);
         p.currentNodeId = n.id;
+        p.active = true;
         free.push({ p, d: Math.hypot(n.x - x, n.z - z) });
       }
     }
@@ -655,6 +837,9 @@ export class PedestrianManager {
       p.pathIndex = 0;
       p.targetNodeId = goal;
       p.state = 'walking';
+      this.clearActivity(p);
+      p.texting = false;
+      p.crossCheckedIndex = -1;
       // waiting time starts on arrival: allow for the walk (they hurry, ~2.6 m/s)
       let walk = 0;
       for (let k = 1; k < p.path.length; k++) walk += Math.hypot(p.path[k].x - p.path[k - 1].x, p.path[k].z - p.path[k - 1].z);
@@ -680,7 +865,7 @@ export class PedestrianManager {
     let nearest: PedestrianNPC | null = null;
     let minDist = Infinity;
     for (const p of this.pedestrians) {
-      if (p.state === 'injured' || p.state === 'hostile') continue;
+      if (!p.active || p.state === 'injured' || p.state === 'hostile') continue;
       const d = Math.hypot(p.mesh.position.x - x, p.mesh.position.z - z);
       if (d < minDist) {
         minDist = d;
@@ -689,4 +874,425 @@ export class PedestrianManager {
     }
     return { pedestrian: nearest, distance: minDist };
   }
+
+  // ======================================================================================
+  // Sprint 10 — crowd behaviour, density by time of day, and distance-based detail
+  // ======================================================================================
+
+  /** Drive density and hotspot pull from the working-day clock (minutes after midnight). */
+  setTimeOfDay(minutes: number) {
+    this.minutes = Number.isFinite(minutes) ? minutes : null;
+  }
+
+  /** Let pedestrians wait at kerbs for traffic. Pass null to disable. */
+  setRoadProbes(probes: CrowdRoadProbes | null) {
+    this.probes = probes;
+    for (const p of this.pedestrians) { p.crossCheckedIndex = -1; p.crossingRoad = false; }
+  }
+
+  /** Stalls / shop fronts that people stop and browse at. */
+  setBrowsePoints(points: BrowsePoint[]) {
+    this.browse = points.map((b) => ({ ...b, node: this.graph.findNearestNode(b.x, b.z) }));
+  }
+
+  /**
+   * Street event at (x, z). 'horn': people nearby glance at it; anyone on the carriageway hurries.
+   * 'accident': nearby people stop and look; a few walk over and watch for a while (non-graphic).
+   */
+  notifyEvent(kind: 'horn' | 'accident', x: number, z: number) {
+    const near = (p: PedestrianNPC, r: number) => Math.hypot(p.mesh.position.x - x, p.mesh.position.z - z) <= r;
+    if (kind === 'horn') {
+      for (const p of this.pedestrians) {
+        if (!this.isFree(p, true) || !near(p, 14)) continue;
+        if (this.probes?.isOnCarriageway(p.mesh.position.x, p.mesh.position.z)) { p.hurryTimer = 2.5; continue; }
+        this.startActivity(p, 'look', 0.8 + Math.random() * 0.8, x, z);
+      }
+      return;
+    }
+    const watchers = this.pedestrians
+      .filter((p) => this.isFree(p, true) && near(p, 30))
+      .map((p) => ({ p, d: Math.hypot(p.mesh.position.x - x, p.mesh.position.z - z) }))
+      .sort((a, b) => a.d - b.d);
+    const onlookers = 3 + Math.floor(Math.random() * 4);
+    let sent = 0;
+    for (const { p, d } of watchers) {
+      if (d <= 12) { this.startActivity(p, 'look', 2 + Math.random() * 1.5, x, z); continue; }
+      if (sent >= onlookers) continue;
+      // walk to a ring 5–7 m from the spot, then stand and watch
+      const ang = Math.atan2(p.mesh.position.x - x, p.mesh.position.z - z) + (Math.random() - 0.5) * 0.8;
+      const r = 5 + Math.random() * 2;
+      const tx = x + Math.sin(ang) * r, tz = z + Math.cos(ang) * r;
+      if (this.probes?.isOnCarriageway(tx, tz)) continue;
+      this.walkTo(p, tx, tz, 'look', 8 + Math.random() * 4, x, z);
+      sent++;
+    }
+  }
+
+  /**
+   * Distance-based detail. Call once per frame after update(). The nearest `nearBudget` people (and
+   * anyone buying, summoned or angry) are drawn with their own rig; the rest within `viewDistance`
+   * are drawn by 3 instanced meshes; beyond that nobody is drawn. Replaces the engine's own
+   * "hide beyond 90 m" loop.
+   */
+  updateDetail(camX: number, camZ: number, nearBudget = 16, viewDistance = 90, nearRadius = 40) {
+    if (this.disposed) return;
+    this.lastCam = { x: camX, z: camZ };
+    this.refreshFocus();
+    const forced = (p: PedestrianNPC) =>
+      p.isEngagedInSale || (!!p.summonUntil && p.summonUntil > this.clock) ||
+      p.state === 'hostile' || p.state === 'injured' || !!p.rageSprite?.visible;
+
+    this.detailTimer -= 1;
+    if (this.detailTimer <= 0) {
+      this.detailTimer = 12;                       // re-pick the near set every ~12 frames
+      const ranked: Array<{ p: PedestrianNPC; score: number; must: boolean }> = [];
+      for (const p of this.pedestrians) {
+        if (!p.active) continue;
+        const d = Math.hypot(p.mesh.position.x - camX, p.mesh.position.z - camZ);
+        const must = forced(p);
+        if (!must && d >= Math.min(nearRadius, viewDistance)) continue;
+        ranked.push({ p, score: d - (this.nearSet.has(p) ? 3 : 0), must });
+      }
+      ranked.sort((a, b) => (a.must === b.must ? a.score - b.score : a.must ? -1 : 1));
+      this.nearSet.clear();
+      const cap = nearBudget + 6;                  // forced people may exceed the budget a little
+      for (const r of ranked) {
+        if (this.nearSet.size >= (r.must ? cap : nearBudget)) continue;
+        this.nearSet.add(r.p);
+      }
+    }
+
+    this.impostors.begin();
+    for (const p of this.pedestrians) {
+      if (!p.active) { p.mesh.visible = false; p.lod = 'hidden'; continue; }
+      const d = Math.hypot(p.mesh.position.x - camX, p.mesh.position.z - camZ);
+      if (d >= viewDistance && !forced(p)) { p.mesh.visible = false; p.lod = 'hidden'; continue; }
+      if (this.nearSet.has(p)) { p.mesh.visible = true; p.lod = 'near'; continue; }
+      p.mesh.visible = false;
+      p.lod = 'far';
+      const scale = p.mesh.scale.x;
+      const moving = p.state === 'walking' && !p.isEngagedInSale && !(p.crossingRoad && p.crossWait > 0 && p.crossWait < 6);
+      this.impostors.add({
+        x: p.mesh.position.x,
+        z: p.mesh.position.z,
+        heading: p.heading,
+        scale,
+        swing: moving ? Math.sin(p.walkCycle) * 0.45 : 0,
+        bob: (p.body.position.y - (p.body.userData.baseY ?? 0)) * scale,
+        shirt: p.colors.shirt,
+        bottom: p.colors.bottom,
+        skin: p.colors.skin
+      });
+    }
+    this.impostors.end();
+  }
+
+  /** Counts for the dev overlay / tests. */
+  get crowdStats() {
+    let active = 0, near = 0, far = 0, chatting = 0, phones = 0, browsing = 0, watching = 0, waiting = 0;
+    for (const p of this.pedestrians) {
+      if (!p.active) continue;
+      active++;
+      if (p.lod === 'near') near++; else if (p.lod === 'far') far++;
+      if (p.activity === 'chat') chatting++;
+      if (p.activity === 'phone_call' || p.texting) phones++;
+      if (p.activity === 'stall') browsing++;
+      if (p.activity === 'look') watching++;
+      if (p.crossingRoad && p.crossWait > 0 && p.crossWait < 6) waiting++;
+    }
+    return { pool: this.poolSize, active, near, far, impostors: this.impostors.drawn, chatting, phones, browsing, watching, waitingToCross: waiting, groups: this.groupEnds.size };
+  }
+
+  dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.impostors.dispose();
+    for (const p of this.pedestrians) {
+      p.rageTexture?.dispose();
+      (p.rageSprite?.material as THREE.SpriteMaterial | undefined)?.dispose();
+      p.mesh.removeFromParent();
+    }
+  }
+
+  // ---- internals ------------------------------------------------------------------------
+
+  private groupEnds = new Map<number, number>();
+
+  /** Available for a new activity: on the street, not buying, not summoned, not angry, not in a group. */
+  private isFree(p: PedestrianNPC, allowLooking = false) {
+    return p.active && !p.isEngagedInSale && !(p.summonUntil && p.summonUntil > this.clock)
+      && (p.state === 'walking' || p.state === 'idle') && p.groupId === 0 && p.pendingActivity === 'none'
+      && (p.activity === 'none' || (allowLooking && p.activity === 'look')) && p.rage < 40;
+  }
+
+  private clearActivity(p: PedestrianNPC) {
+    p.activity = 'none';
+    p.activityTimer = 0;
+    p.pendingActivity = 'none';
+    p.pendingTimer = 0;
+    p.groupId = 0;
+    p.crossWait = 0;
+    p.body.rotation.x = 0;
+    p.body.rotation.y = 0;
+    p.leftArm.rotation.z = -0.06;
+    p.rightArm.rotation.z = 0.06;
+  }
+
+  private startActivity(p: PedestrianNPC, activity: PedestrianActivity, seconds: number, lookX?: number, lookZ?: number) {
+    p.activity = activity;
+    p.activityTimer = seconds;
+    p.state = 'idle';
+    p.idleTimer = 0;
+    p.texting = false;
+    if (lookX !== undefined && lookZ !== undefined) { p.lookX = lookX; p.lookZ = lookZ; }
+    else { p.lookX = p.mesh.position.x + Math.sin(p.heading); p.lookZ = p.mesh.position.z - Math.cos(p.heading); }
+  }
+
+  /** Walk along the footpaths to (x, z), then start `activity`. */
+  private walkTo(p: PedestrianNPC, x: number, z: number, activity: PedestrianActivity, seconds: number, lookX: number, lookZ: number) {
+    const start = this.graph.findNearestNode(p.mesh.position.x, p.mesh.position.z);
+    const goal = this.graph.findNearestNode(x, z);
+    const route = this.graph.findAStarPath(start, goal);
+    p.path = [...route, { x, z }];
+    p.pathIndex = 0;
+    p.targetNodeId = goal;
+    p.state = 'walking';
+    p.activity = 'none';
+    p.pendingActivity = activity;
+    p.pendingTimer = seconds;
+    p.lookX = lookX; p.lookZ = lookZ;
+    p.crossCheckedIndex = -1;
+    p.texting = false;
+  }
+
+  /** New trip from an idle stop: hotspot / random footpath node, sometimes a stall to browse. */
+  private startTrip(p: PedestrianNPC) {
+    p.crossCheckedIndex = -1;
+    p.texting = p.phoneUser && Math.random() < 0.35;
+    if (this.browse.length && Math.random() < 0.18) {
+      const b = this.browse[Math.floor(Math.random() * this.browse.length)];
+      if (Math.hypot(b.x - p.mesh.position.x, b.z - p.mesh.position.z) < 220) {
+        const jitter = (Math.random() - 0.5) * 1.6;
+        const fx = b.fx ?? 0, fz = b.fz ?? 1;
+        // stand at the stall front (sideways jitter along the front), facing the stall
+        const sx = b.x + fz * jitter, sz = b.z - fx * jitter;
+        this.walkTo(p, sx, sz, 'stall', 6 + Math.random() * 8, sx - fx, sz - fz);
+        p.texting = false;
+        return;
+      }
+    }
+    const newTargetId = this.pickDestination(p.currentNodeId);
+    p.targetNodeId = newTargetId;
+    const fullPath = this.graph.findAStarPath(p.currentNodeId, newTargetId);
+    p.path = fullPath.length > 1 ? fullPath.slice(1) : fullPath;
+    p.pathIndex = 0;
+    p.state = 'walking';
+  }
+
+  /** End of a walk: start the planned activity, sometimes take a phone call, else rest. */
+  private arrive(p: PedestrianNPC, rest: number) {
+    p.texting = false;
+    p.crossingRoad = false;
+    p.body.rotation.x = 0;
+    p.rightArm.rotation.z = 0.06;
+    p.currentNodeId = this.graph.findNearestNode(p.mesh.position.x, p.mesh.position.z);
+    if (p.pendingActivity !== 'none') {
+      const activity = p.pendingActivity;
+      let seconds = p.pendingTimer;
+      if (activity === 'chat') {
+        const end = this.groupEnds.get(p.groupId);
+        seconds = end !== undefined ? end - this.clock : 0;
+      }
+      p.pendingActivity = 'none';
+      p.pendingTimer = 0;
+      if (seconds > 0.5) {
+        const gid = p.groupId;
+        this.startActivity(p, activity, seconds, p.lookX, p.lookZ);
+        p.groupId = gid;
+        return;
+      }
+      p.groupId = 0;
+    }
+    p.state = 'idle';
+    p.idleTimer = rest;
+    if (p.phoneUser && Math.random() < 0.22) this.startActivity(p, 'phone_call', 5 + Math.random() * 9);
+  }
+
+  private faceLook(p: PedestrianNPC, dt: number, rate = 8) {
+    const fx = p.lookX - p.mesh.position.x, fz = p.lookZ - p.mesh.position.z;
+    if (Math.hypot(fx, fz) < 0.05) return;
+    const target = Math.atan2(fx, -fz);
+    let diff = target - p.heading;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    p.heading += diff * Math.min(1, dt * rate);
+    p.mesh.rotation.y = -p.heading;
+  }
+
+  private updateActivity(p: PedestrianNPC, dt: number) {
+    p.activityTimer -= dt;
+    p.walkCycle += dt * 1.5;
+    p.leftLeg.rotation.x = 0;
+    p.rightLeg.rotation.x = 0;
+    p.body.position.y = p.body.userData.baseY + Math.sin(p.walkCycle) * 0.012;
+    this.faceLook(p, dt);
+    const t = this.clock + p.id * 1.37;
+    switch (p.activity) {
+      case 'chat': {
+        // take turns talking: gesture while "speaking", nod while listening
+        const speaking = Math.sin(t * 0.7) > 0.25;
+        p.rightArm.rotation.x = speaking ? -0.55 + Math.sin(t * 4.2) * 0.3 : 0;
+        p.rightArm.rotation.z = speaking ? -0.12 : 0.06;
+        p.leftArm.rotation.x = speaking && Math.sin(t * 1.3) > 0.6 ? -0.4 : 0;
+        p.body.rotation.x = speaking ? 0 : Math.max(0, Math.sin(t * 2.6)) * 0.06;
+        p.body.rotation.y = Math.sin(t * 0.45) * 0.1;
+        break;
+      }
+      case 'phone_call':
+        p.rightArm.rotation.x = -2.05;         // phone at the ear
+        p.rightArm.rotation.z = -0.5;
+        p.leftArm.rotation.x = Math.sin(t * 0.9) > 0.7 ? -0.35 : 0;
+        p.body.rotation.y = Math.sin(t * 0.5) * 0.25;   // turns about while talking
+        break;
+      case 'stall':
+        p.body.rotation.x = 0.12;              // leaning in to look at the goods
+        p.rightArm.rotation.x = Math.sin(t * 0.8) > 0.75 ? -1.1 : 0;    // points at something now and then
+        p.rightArm.rotation.z = 0.06;
+        p.leftArm.rotation.x = 0;
+        p.body.rotation.y = Math.sin(t * 0.6) * 0.15;
+        break;
+      case 'look': {
+        const long = p.activityTimer > 3;
+        p.rightArm.rotation.x = long && Math.sin(t * 0.9) > 0.55 ? -1.4 : 0;  // pointing
+        p.rightArm.rotation.z = 0.06;
+        p.leftArm.rotation.x = 0;
+        p.body.rotation.x = 0;
+        p.body.rotation.y = 0;
+        break;
+      }
+      default:
+        break;
+    }
+    if (p.activityTimer <= 0) {
+      this.clearActivity(p);
+      p.leftArm.rotation.x = 0;
+      p.rightArm.rotation.x = 0;
+      p.state = 'idle';
+      p.idleTimer = 0.4 + Math.random() * 0.8;
+    }
+  }
+
+  /** Small chat groups form on the footpath: 1–2 passers-by join someone who stopped. */
+  private updateGroups(dt: number) {
+    for (const [gid, end] of this.groupEnds) if (end <= this.clock) this.groupEnds.delete(gid);
+    this.groupTimer -= dt;
+    if (this.groupTimer > 0) return;
+    this.groupTimer = 1.5;
+    if (this.groupEnds.size >= this.groupLimit) return;
+    const leaders = this.pedestrians.filter((p) => p.state === 'idle' && this.isFree(p)
+      && !this.probes?.isOnCarriageway(p.mesh.position.x, p.mesh.position.z));
+    if (!leaders.length) return;
+    const leader = leaders[Math.floor(Math.random() * leaders.length)];
+    const joiners = this.pedestrians
+      .filter((p) => p !== leader && this.isFree(p) && Math.hypot(p.mesh.position.x - leader.mesh.position.x, p.mesh.position.z - leader.mesh.position.z) < 18)
+      .slice(0, 1 + (Math.random() < 0.45 ? 1 : 0));
+    if (!joiners.length) return;
+    const gid = this.nextGroupId++;
+    const seconds = 10 + Math.random() * 12;
+    const walkAllowance = 8;
+    this.groupEnds.set(gid, this.clock + seconds + walkAllowance);
+    // the group stands around a point just in front of the leader
+    const cx = leader.mesh.position.x + Math.sin(leader.heading) * 0.55;
+    const cz = leader.mesh.position.z - Math.cos(leader.heading) * 0.55;
+    this.startActivity(leader, 'chat', seconds + walkAllowance, cx, cz);
+    leader.groupId = gid;
+    joiners.forEach((p, i) => {
+      const ang = leader.heading + (i === 0 ? Math.PI * 0.8 : -Math.PI * 0.8);
+      const tx = cx + Math.sin(ang) * 0.6, tz = cz - Math.cos(ang) * 0.6;
+      this.walkTo(p, tx, tz, 'chat', seconds, cx, cz);
+      p.groupId = gid;
+    });
+  }
+
+  /** A footpath node just outside the view ring (95–130 m from the camera), or null. */
+  private offscreenNode() {
+    const cam = this.lastCam;
+    if (!cam || !this.focusNodes.length) return null;
+    for (let tries = 0; tries < 16; tries++) {
+      const n = this.graph.nodes[this.focusNodes[Math.floor(Math.random() * this.focusNodes.length)]];
+      const d = Math.hypot(n.x - cam.x, n.z - cam.z);
+      if (d > 95 && d < PedestrianManager.FOCUS) return n;
+    }
+    return null;
+  }
+
+  /** People who wandered far from the player (> 160 m) reappear out of sight around them. */
+  private relocateStragglers() {
+    const cam = this.lastCam;
+    if (!cam) return;
+    let moved = 0;
+    for (const p of this.pedestrians) {
+      if (moved >= 6) break;
+      if (!this.isFree(p)) continue;
+      if (Math.hypot(p.mesh.position.x - cam.x, p.mesh.position.z - cam.z) < 160) continue;
+      const node = this.offscreenNode();
+      if (!node) return;
+      p.mesh.position.set(node.x, p.mesh.position.y, node.z);
+      p.currentNodeId = node.id;
+      p.state = 'idle';
+      p.idleTimer = 0;
+      this.startTrip(p);
+      moved++;
+    }
+  }
+
+  /** Time-of-day density: park people far from the camera when it's quiet, bring them back when busy. */
+  private updateDensity(dt: number) {
+    this.densityTimer -= dt;
+    if (this.densityTimer > 0) return;
+    this.densityTimer = 0.5;
+    this.relocateStragglers();
+    if (this.minutes === null) return;
+    const target = Math.max(4, Math.round(this.poolSize * activeFraction(this.minutes)));
+    let active = 0;
+    for (const p of this.pedestrians) if (p.active) active++;
+    const cam = this.lastCam;
+    const outOfSight = (x: number, z: number) => !cam || Math.hypot(x - cam.x, z - cam.z) > 95;
+    if (active > target) {
+      let n = Math.min(3, active - target);
+      for (const p of this.pedestrians) {
+        if (n <= 0) break;
+        if (!this.isFree(p) || !outOfSight(p.mesh.position.x, p.mesh.position.z)) continue;
+        p.active = false;
+        p.mesh.visible = false;
+        p.lod = 'hidden';
+        this.nearSet.delete(p);
+        n--;
+      }
+    } else if (active < target) {
+      let n = Math.min(3, target - active);
+      const nodes = this.graph.nodes;
+      for (const p of this.pedestrians) {
+        if (n <= 0 || !nodes.length) break;
+        if (p.active) continue;
+        const node = this.offscreenNode() ?? (() => {
+          for (let tries = 0; tries < 12; tries++) {
+            const c = nodes[Math.floor(Math.random() * nodes.length)];
+            if (outOfSight(c.x, c.z)) return c;
+          }
+          return null;
+        })();
+        if (!node) break;
+        p.mesh.position.set(node.x, p.mesh.position.y, node.z);
+        p.currentNodeId = node.id;
+        this.clearActivity(p);
+        p.summonUntil = 0;
+        p.active = true;
+        p.idleTimer = 0;
+        this.startTrip(p);
+        n--;
+      }
+    }
+  }
+
 }
