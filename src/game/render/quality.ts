@@ -3,24 +3,31 @@ export type QualityLevel = 'low' | 'medium' | 'high' | 'ultra';
 export interface QualityPreset {
   maxRenderHeight: number;
   shadows: boolean;
-  shadowMapSize: number;
+  shadowMapSize: number;   // per cascade (the sun has two)
   leafShadows: boolean;
+  /** Sprint 8D perf: 'none' = draw straight to the screen (no grade pass), 'grade' = grade only, 'full' = grade + bloom. */
+  post: 'none' | 'grade' | 'full';
+  /** Volumetric clouds in the sky (per-pixel noise on every sky pixel). */
+  clouds: boolean;
+  /** Sky-coloured aerial fog (one environment-map lookup per pixel); off = flat haze colour. */
+  aerialFog: boolean;
 }
 
 export const QUALITY_PRESETS: Record<QualityLevel, QualityPreset> = {
-  low:    { maxRenderHeight: 720,  shadows: false, shadowMapSize: 1024, leafShadows: false },
-  medium: { maxRenderHeight: 900,  shadows: true,  shadowMapSize: 1024, leafShadows: false },
-  high:   { maxRenderHeight: 1080, shadows: true,  shadowMapSize: 2048, leafShadows: true  },
-  ultra:  { maxRenderHeight: 1440, shadows: true,  shadowMapSize: 4096, leafShadows: true  }
+  low:    { maxRenderHeight: 540,  shadows: false, shadowMapSize: 512,  leafShadows: false, post: 'none',  clouds: false, aerialFog: false },
+  medium: { maxRenderHeight: 720,  shadows: true,  shadowMapSize: 1024, leafShadows: false, post: 'none',  clouds: true,  aerialFog: false },
+  high:   { maxRenderHeight: 1080, shadows: true,  shadowMapSize: 2048, leafShadows: true,  post: 'full',  clouds: true,  aerialFog: true  },
+  ultra:  { maxRenderHeight: 1440, shadows: true,  shadowMapSize: 2048, leafShadows: true,  post: 'full',  clouds: true,  aerialFog: true  }
 };
 
+/** Phones and tablets start on Low, computers on Medium (Sprint 8D renderer is heavier than the old one). */
 export function defaultQuality(): QualityLevel {
   if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
     if (window.matchMedia('(pointer: coarse)').matches) {
-      return 'medium';
+      return 'low';
     }
   }
-  return 'high';
+  return 'medium';
 }
 
 export class AdaptiveResolution {

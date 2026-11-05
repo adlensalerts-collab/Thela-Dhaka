@@ -20,6 +20,8 @@ export const DEFAULT_DISPLAY: DisplaySettings = {
 export const BRIGHTNESS_MIN = 0.5;
 export const BRIGHTNESS_MAX = 1.6;
 const KEY = 'thela_display_v1';
+/** Bumped with the Sprint 8D WebGPU renderer: quality saved before it is reset once to the new default. */
+const QUALITY_EPOCH = 2;
 
 function isValidQuality(q: unknown): q is QualityLevel {
   return typeof q === 'string' && q in QUALITY_PRESETS;
@@ -50,7 +52,7 @@ export function loadDisplaySettings(): DisplaySettings {
       brightness: Number.isFinite(b)
         ? Math.min(BRIGHTNESS_MAX, Math.max(BRIGHTNESS_MIN, b))
         : fallback.brightness,
-      quality: isValidQuality(p.quality) ? p.quality : fallback.quality,
+      quality: p.qualityEpoch === QUALITY_EPOCH && isValidQuality(p.quality) ? p.quality : fallback.quality,
       fpsLimit: isValidFpsLimit(p.fpsLimit) ? p.fpsLimit : fallback.fpsLimit,
       showFps: typeof p.showFps === 'boolean' ? p.showFps : fallback.showFps
     };
@@ -74,7 +76,7 @@ export function saveDisplaySettings(s: Partial<DisplaySettings>): DisplaySetting
   };
   memoryDisplaySettings = { ...merged };
   try {
-    localStorage.setItem(KEY, JSON.stringify(merged));
+    localStorage.setItem(KEY, JSON.stringify({ ...merged, qualityEpoch: QUALITY_EPOCH }));
   } catch {
     /* storage unavailable (private mode) — keep the in-memory value */
   }

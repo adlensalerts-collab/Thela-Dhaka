@@ -68,7 +68,7 @@ Renderer: `WebGPURenderer` (WebGPU, or WebGL 2 fallback). `vite.config.ts` alias
 | Colour grade + bloom + vignette (TSL RenderPipeline; ACES once at output) | `src/game/render/postfx.ts` | `GamePipeline`, `LOOKS` |
 | Interior-mapped window glass, street-lamp heads + light pools, clock-driven glow | `src/game/render/windows.ts` | `createWindowMaterial`, `createLampHeadMaterial`, `createLampPoolMaterial`, `interiorGlow`, `streetLamps` |
 | Vehicle look: road grime, painted rickshaw hoods, night lamps, contact shadows, headlight pools | `src/game/render/vehicleLook.ts` | `grimy`, `rickshawHoodMaterial`, `lampMaterial`, `addGroundEffects` (used by `world/traffic.ts`) |
-| Quality presets, adaptive resolution | `src/game/render/quality.ts` | `QUALITY_PRESETS`, `AdaptiveResolution` |
+| Quality presets (render height, shadows, `post` none/grade/full, `clouds`, `aerialFog`), adaptive resolution | `src/game/render/quality.ts` | `QUALITY_PRESETS`, `defaultQuality` (phone Low, computer Medium), `AdaptiveResolution` |
 | Display settings storage | `src/game/render/display.ts` | `loadDisplaySettings` |
 
 ## UI (React)

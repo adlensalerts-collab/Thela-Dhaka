@@ -59,7 +59,9 @@ Sprints 8D–8G: Slop New York look (mrdoob.github.io/slop-newyork, MIT — see 
 | 8F | Wet roads | 🔄 same upload | Rain soaks roads in ~20 s, dries in ~2 min: darker, glossier asphalt/paving and puddles reflecting the sky |
 | 8G | Vehicles | 🔄 same upload | Road grime on bodies, painted rickshaw hoods, head/tail lamps on at dusk, contact shadow under every vehicle, headlight pools at night |
 
-Known limits: frame rate not measured on a real GPU yet (check Medium on a phone); no screen-space reflections yet (wet roads reflect the sky only).
+| 8H | Performance pass (8D–8G were unplayable) | 🔄 uploaded, awaiting phone check | Low (phone default): direct render, no MSAA/bloom/clouds/shadows, flat fog, 540p. Medium (computer default): shadows + clouds, flat fog, no grade pass, 720p. High/Ultra: full look. Saved quality reset once (`QUALITY_EPOCH`). Sky env re-bake every 30 game min (was 10). Vehicles share materials and merge static parts per material |
+
+Known limits: frame rate not measured on a real GPU (headless uses software GL); if Low is still slow, next step is the old `WebGLRenderer` for Low/Medium. No screen-space reflections yet (wet roads reflect the sky only).
 
 
 **Sound**

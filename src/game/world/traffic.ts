@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { addGroundEffects, grimy, lampMaterial, rickshawHoodMaterial } from '../render/vehicleLook';
 
 /**
@@ -35,10 +36,19 @@ const LANE_OFFSET = 3.1;
 const BRAKE_DISTANCE = 7;
 const EXTENT = 112;
 
+// Perf: vehicles share materials (one shader build per look, not per vehicle). Shared materials are safe with
+// releaseDistrictObjects(), which never disposes a resource still used in the scene.
+const matCache = new Map<string, THREE.Material>();
+const cached = <T extends THREE.Material>(key: string, make: () => T): T => {
+  let m = matCache.get(key) as T | undefined;
+  if (!m) { m = make(); matCache.set(key, m); }
+  return m;
+};
 const std = (color: string, roughness = 0.6, metalness = 0) =>
-  new THREE.MeshStandardMaterial({ color, roughness, metalness });
+  cached(`std|${color}|${roughness}|${metalness}`, () => new THREE.MeshStandardMaterial({ color, roughness, metalness }));
 /** Sprint 8G: painted bodywork that collects road dust towards the wheels. */
-const paint = (color: string, roughness = 0.45, metalness = 0.2, height = 1.0) => grimy(std(color, roughness, metalness), height);
+const paint = (color: string, roughness = 0.45, metalness = 0.2, height = 1.0) =>
+  cached(`paint|${color}|${roughness}|${metalness}|${height}`, () => grimy(new THREE.MeshStandardMaterial({ color, roughness, metalness }), height));
 
 const M = {
   tyre: std('#1d1f22', 0.9),
@@ -95,7 +105,7 @@ function buildRickshaw(color: string, wheels: THREE.Mesh[]) {
   // Half-cylinder canopy, axis across the vehicle (X), arc on top.
   const hoodGeo = new THREE.CylinderGeometry(0.62, 0.62, 1.2, 14, 1, true, 0, Math.PI).rotateZ(Math.PI / 2);
   // Sprint 8G: hand-painted hood bands (palette follows the body colour).
-  const hood = new THREE.Mesh(hoodGeo, rickshawHoodMaterial(parseInt(color.slice(1), 16) % 997));
+  const hood = new THREE.Mesh(hoodGeo, cached(`hood|${color}`, () => rickshawHoodMaterial(parseInt(color.slice(1), 16) % 997)));
   hood.rotation.y = Math.PI / 2;
   hood.position.set(0, 1.25, 0.75);
   hood.castShadow = true;
@@ -126,7 +136,7 @@ function buildCng(wheels: THREE.Mesh[]) {
 
 function buildCar(color: string, wheels: THREE.Mesh[]) {
   const g = new THREE.Group();
-  const body = grimy(new THREE.MeshPhysicalMaterial({ color, roughness: 0.3, metalness: 0.6, clearcoat: 1, clearcoatRoughness: 0.08 }), 0.9);
+  const body = cached(`car|${color}`, () => grimy(new THREE.MeshPhysicalMaterial({ color, roughness: 0.3, metalness: 0.6, clearcoat: 1, clearcoatRoughness: 0.08 }), 0.9));
   box(g, 1.8, 0.6, 4.2, body, 0, 0.62, 0);
   box(g, 1.6, 0.55, 2.2, body, 0, 1.18, 0.2);
   box(g, 1.5, 0.45, 0.05, M.glass, 0, 1.2, -0.92);
@@ -162,9 +172,40 @@ export function buildVehicle(kind: VehicleKind, wheels: THREE.Mesh[], rnd: () =>
     case 'car': g = buildCar(pick(['#e8e8e8', '#1c1c1e', '#8c95a0', '#7a1e1e', '#24456b']), wheels); break;
     case 'bus': g = buildBus(wheels); break;
   }
+  mergeStaticParts(g, wheels);
   // Sprint 8G: contact shadow for every vehicle; night headlight pool for motor vehicles.
   addGroundEffects(g, SPECS[kind].len, SPECS[kind].wid, kind !== 'rickshaw');
   return g;
+}
+
+/** Perf: bake every non-spinning part into one mesh per material (a rickshaw goes from ~12 draw calls to ~6).
+ * Wheels stay separate because they rotate. */
+function mergeStaticParts(g: THREE.Group, wheels: THREE.Mesh[]) {
+  const spinning = new Set<THREE.Object3D>(wheels);
+  const byMat = new Map<THREE.Material, THREE.BufferGeometry[]>();
+  const parts: THREE.Mesh[] = [];
+  g.updateMatrixWorld(true);
+  for (const child of g.children) {
+    const mesh = child as THREE.Mesh;
+    if (!mesh.isMesh || spinning.has(mesh) || Array.isArray(mesh.material) || mesh.children.length) continue;
+    const geo = mesh.geometry.clone().applyMatrix4(mesh.matrix);
+    if (geo.index === null) continue;
+    const list = byMat.get(mesh.material) ?? [];
+    list.push(geo);
+    byMat.set(mesh.material, list);
+    parts.push(mesh);
+  }
+  for (const [material, geos] of byMat) {
+    if (geos.length < 2) { geos.forEach((x) => x.dispose()); continue; }
+    const merged = mergeGeometries(geos, false);
+    geos.forEach((x) => x.dispose());
+    if (!merged) continue;
+    for (const m of parts) if (m.material === material) { m.removeFromParent(); m.geometry.dispose(); }
+    const mesh = new THREE.Mesh(merged, material);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    g.add(mesh);
+  }
 }
 
 export function pickKind(rnd: () => number): VehicleKind {

@@ -75,6 +75,8 @@ export interface LightingRig {
   rendererReady(): void;
   /** Legacy: fixed sun position (keeps the current preset's colours). */
   setTimeOfDay(elevationDeg: number, azimuthDeg?: number): void;
+  /** Quality: volumetric clouds and sky-coloured aerial fog are the two per-pixel costs that can be switched off. */
+  setFeatures(features: { clouds: boolean; aerialFog: boolean }): void;
   /** WeatherSystem: overcast/rain dimming and cloud amount (its cover value: lower = more clouds). */
   setWeather(sunMultiplier: number, cloudCover: number): void;
   /** Colour-grade blend for the current hour (GamePipeline.setLook). */
@@ -140,6 +142,25 @@ export function setupRealisticLighting(renderer: THREE.WebGPURenderer, scene: TH
   const fogLevel = uniform(1.0);
 
   let backendReady = false;
+  let cloudsOn = true;
+  let aerialOn = true;
+  let cloudTarget = 0.4;
+  const horizon = uniform(new THREE.Color(0xc8d0d4));
+  // Cheap fog for Low/Medium: flat haze colour that follows the hour and weather (no environment lookup).
+  const flatFog = () => {
+    const dist = length(positionWorld.sub(cameraPosition));
+    const tau = fogDensity.mul(dist);
+    const tint = mix(horizon.mul(fogLevel), fogTint.mul(fogLevel), fogTintMix);
+    return fog(tint, float(1.0).sub(exp(tau.mul(tau).negate())));
+  };
+  let aerialNode: ReturnType<typeof fog> | null = null;
+  let flatNode: ReturnType<typeof fog> | null = null;
+  const installFog = () => {
+    if (!backendReady) return;
+    if (aerialOn) { aerialNode ??= aerialFog(); scene.fogNode = aerialNode; }
+    else { flatNode ??= flatFog(); scene.fogNode = flatNode; }
+  };
+
   const bake = () => {
     if (!backendReady) return;   // PMREM needs an initialised backend; rendererReady() bakes once it is.
     sky.showSunDisc.value = 0;
@@ -148,7 +169,7 @@ export function setupRealisticLighting(renderer: THREE.WebGPURenderer, scene: TH
     scene.environment = envRT.texture;
     sky.showSunDisc.value = 1;
     scene.add(sky);
-    if (!scene.fogNode) scene.fogNode = aerialFog();
+    if (!scene.fogNode) installFog();
   };
 
   const aerialFog = () => {
@@ -230,17 +251,20 @@ export function setupRealisticLighting(renderer: THREE.WebGPURenderer, scene: TH
     // Weather fog colour is a daylight colour; dim it with the sky so storms at night stay dark.
     fogLevel.value = 1 - p.nightFactor * 0.85;
     interiorGlow.value = THREE.MathUtils.clamp(p.nightFactor / 0.8, 0, 1);
+    horizon.value.copy(p.hemiSky).lerp(new THREE.Color(0xd8d0c4), 0.45).multiplyScalar(1 - 0.8 * p.nightFactor);
     streetLamps.value = THREE.MathUtils.smoothstep(p.nightFactor, 0.12, 0.5);
     applySun();
-    bake();
   };
 
+  let appliedHour = -99;
   const setHour = (h: number) => {
     hour = h;
-    // ~45 real seconds per game hour: re-bake every 10 game minutes (sky-only scene, cheap).
-    if (Math.abs(h - bakedHour) < 1 / 6) return;
-    bakedHour = h;
+    // ~45 real seconds per game hour. Sun, sky and colours update every 5 game minutes (uniforms only);
+    // the environment map (6 sky renders + blur) is re-baked only every 30 game minutes (~22 s) — perf.
+    if (Math.abs(h - appliedHour) < 1 / 12) return;
+    appliedHour = h;
     applyPreset(blendPreset(h));
+    if (Math.abs(h - bakedHour) >= 0.5) { bakedHour = h; bake(); }
   };
 
   setHour(hour);
@@ -259,11 +283,17 @@ export function setupRealisticLighting(renderer: THREE.WebGPURenderer, scene: TH
 
   return {
     sun, sky, update, setHour,
-    rendererReady: () => { backendReady = true; bakedHour = -99; setHour(hour); },
+    rendererReady: () => { backendReady = true; bakedHour = -99; appliedHour = -99; setHour(hour); },
     setTimeOfDay: (elevationDeg, azimuthDeg = 215) => { placeSun(elevationDeg, azimuthDeg); bake(); },
+    setFeatures: (f) => {
+      cloudsOn = f.clouds;
+      sky.cloudCoverage.value = cloudsOn ? cloudTarget : 0;
+      if (aerialOn !== f.aerialFog) { aerialOn = f.aerialFog; installFog(); }
+    },
     setWeather: (multiplier, cloudCover) => {
       sunMultiplier = multiplier;
-      sky.cloudCoverage.value = THREE.MathUtils.clamp(1.17 - 1.7 * cloudCover, 0, 1);
+      cloudTarget = THREE.MathUtils.clamp(1.17 - 1.7 * cloudCover, 0, 1);
+      sky.cloudCoverage.value = cloudsOn ? cloudTarget : 0;
       sky.cloudDensity.value = 0.35 + 0.3 * (1 - multiplier);
       applySun();
     },

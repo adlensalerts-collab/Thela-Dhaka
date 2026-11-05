@@ -319,7 +319,8 @@ export class GameEngine {
 
     this.camera = new THREE.PerspectiveCamera(66, container.clientWidth / container.clientHeight, 0.1, 470);
     // Sprint 8D: WebGPU where available, WebGL 2 otherwise (decided inside WebGPURenderer.init()).
-    this.renderer = new WebGPURenderer({ antialias: true, powerPreference: 'high-performance' });
+    // Perf: no MSAA on Low (picked at start; a quality change takes effect on the next load).
+    this.renderer = new WebGPURenderer({ antialias: loadDisplaySettings().quality !== 'low', powerPreference: 'high-performance' });
     this.renderer.domElement.tabIndex = 0;
     this.renderer.domElement.style.outline = 'none';
     container.replaceChildren(this.renderer.domElement);
@@ -330,9 +331,8 @@ export class GameEngine {
       if (this.isDestroyed) return;
       this.lighting?.rendererReady();
       this.lighting?.setHour(this.gameHour());
-      this.pipeline = new GamePipeline(this.renderer, this.scene, this.camera);
-      this.pipeline.setBloomEnabled(this.qualityLevel !== 'low');
       this.rendererReady = true;
+      this.applyRenderFeatures();
       console.info(`[gfx] renderer backend: ${(this.renderer.backend as { isWebGPUBackend?: boolean }).isWebGPUBackend ? 'WebGPU' : 'WebGL 2'}`);
     }).catch((error) => console.error('[gfx] renderer init failed', error));
     this.initWorld();
@@ -558,6 +558,16 @@ export class GameEngine {
     this.lighting?.setBrightness(v);
   }
 
+  /** Sprint 8D perf: post-processing, clouds and fog follow the quality preset. The grade pipeline is only built
+   * when a preset needs it, so Low and Medium never compile or run it. */
+  private applyRenderFeatures() {
+    if (!this.rendererReady) return;
+    const preset = this.qualityPreset;
+    this.lighting?.setFeatures({ clouds: preset.clouds, aerialFog: preset.aerialFog });
+    if (preset.post !== 'none' && !this.pipeline) this.pipeline = new GamePipeline(this.renderer, this.scene, this.camera);
+    this.pipeline?.setBloomEnabled(preset.post === 'full');
+  }
+
   applyQuality(level: QualityLevel) {
     this.world?.chunks.setViewDistance(VIEW_DISTANCE[level]);
     const preset = QUALITY_PRESETS[level] || QUALITY_PRESETS[defaultQuality()];
@@ -566,7 +576,7 @@ export class GameEngine {
     this.qualityPreset = preset;
 
     this.renderer.shadowMap.enabled = preset.shadows;
-    this.pipeline?.setBloomEnabled(level !== 'low');
+    this.applyRenderFeatures();
 
     if (shadowsChanged) {
       this.scene.traverse((o) => {
@@ -3043,13 +3053,20 @@ export class GameEngine {
     }
 
     this.world?.chunks.update(this.camera.position);
-    if (!this.rendererReady || !this.pipeline) return;
-    if (this.lighting) {
-      this.lighting.setHour(this.gameHour());
-      const look = this.lighting.look();
-      this.pipeline.setLook(look.a, look.b, look.t);
+    if (!this.rendererReady) return;
+    this.lighting?.setHour(this.gameHour());
+    const look = this.lighting?.look();
+    const brightness = this.lighting?.getBrightness() ?? 1;
+    if (this.pipeline && this.qualityPreset.post !== 'none') {
+      this.renderer.toneMappingExposure = brightness;
+      if (look) this.pipeline.setLook(look.a, look.b, look.t);
+      this.pipeline.render();
+    } else {
+      // No grade pass: fold the hour's exposure into tone mapping so dusk and night stay readable.
+      const exposure = look ? look.a.exposure + (look.b.exposure - look.a.exposure) * look.t : 1;
+      this.renderer.toneMappingExposure = brightness * exposure;
+      this.renderer.render(this.scene, this.camera);
     }
-    this.pipeline.render();
   }
 
   private updateTrafficHorns(dt: number, playerX: number, playerZ: number) {
