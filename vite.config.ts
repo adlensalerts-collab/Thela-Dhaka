@@ -3,8 +3,8 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import {defineConfig, loadEnv} from 'vite';
 
-export default defineConfig(() => {
-  const isPages = process.env.GITHUB_PAGES === 'true';
+export default defineConfig(({ command }) => {
+  const isPages = command === 'build' && process.env.GITHUB_PAGES === 'true';
   const pagesEnv = isPages ? loadEnv('pages', __dirname, 'VITE_') : {};
   const pagesServerUrl =
     process.env.VITE_SERVER_URL !== undefined

@@ -1,8 +1,8 @@
 import type * as THREE from 'three';
 import type { Node } from 'three/webgpu';
 import {
-  uniform, Fn, float, vec2, vec3, mix, fract, sin, dot, floor, length, clamp, min, max, abs, fwidth, smoothstep, step, normalize, cross,
-  dFdx, dFdy, positionWorld, materialColor, materialRoughness, select,
+  uniform, Fn, float, vec2, vec3, mix, fract, sin, dot, floor, length, clamp, min, max, abs, fwidth, smoothstep, step,
+  normalWorld, positionWorld, materialColor, materialRoughness, select,
 } from 'three/tsl';
 
 export type WeatheredSurface = 'asphalt' | 'pavement' | 'plaster' | 'brick';
@@ -77,7 +77,7 @@ const pavementWear = Fn(() => {
  * shadow under each slab edge, and blotchy monsoon damp that collects under the slabs. Returns an RGB multiplier. */
 const facadeWeather = Fn(() => {
   const p = positionWorld;
-  const n = normalize(cross(dFdx(p), dFdy(p)));
+  const n = normalWorld;
   const wall = float(1.0).sub(smoothstep(0.3, 0.7, abs(n.y)));
   const across = select(abs(n.x).greaterThan(abs(n.z)), p.z, p.x);
   const inFloor = fract(p.y.div(3.2));                       // 0 at each slab, FLOOR = 3.2 m
@@ -94,7 +94,7 @@ const facadeWeather = Fn(() => {
 
 const plasterWear = Fn(() => {
   const p = positionWorld;
-  const n = normalize(cross(dFdx(p), dFdy(p)));
+  const n = normalWorld;
   const wall = float(1.0).sub(smoothstep(0.3, 0.7, abs(n.y)));
   const across = select(abs(n.x).greaterThan(abs(n.z)), p.z, p.x);
   const stripe = floor(across.mul(1.4));

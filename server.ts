@@ -507,6 +507,7 @@ async function startServer() {
       process.exit(1);
     }
     app.use(express.static(distPath));
+    app.use('/Thela-Dhaka', express.static(distPath));
     app.get('*', (_req, res) => {
       res.sendFile(distIndexPath);
     });

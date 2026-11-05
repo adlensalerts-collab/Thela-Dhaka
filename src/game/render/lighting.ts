@@ -167,13 +167,28 @@ export function setupRealisticLighting(renderer: THREE.WebGPURenderer, scene: TH
 
   const bake = () => {
     if (!backendReady) return;   // PMREM needs an initialised backend; rendererReady() bakes once it is.
+    const savedX = sky.position.x;
+    const savedY = sky.position.y;
+    const savedZ = sky.position.z;
     sky.showSunDisc.value = 0;
+    sky.position.set(0, 0, 0);
+    sky.updateMatrixWorld(true);
     envScene.add(sky);
-    envRT = pmrem.fromScene(envScene as unknown as THREE.Scene, 0, 0.1, 100, { renderTarget: envRT } as never) as THREE.RenderTarget;
-    scene.environment = envRT.texture;
-    sky.showSunDisc.value = 1;
-    scene.add(sky);
-    if (!scene.fogNode) installFog();
+    try {
+      envRT = pmrem.fromScene(envScene as unknown as THREE.Scene, 0, 0.1, 100, { renderTarget: envRT } as never) as THREE.RenderTarget;
+      scene.environment = envRT.texture;
+    } catch (err) {
+      console.warn('[gfx] PMREM sky bake failed:', err);
+    } finally {
+      sky.position.set(savedX, savedY, savedZ);
+      sky.updateMatrixWorld(true);
+      sky.showSunDisc.value = 1;
+      scene.add(sky);
+    }
+    if (!scene.fogNode) {
+      if (!envRT) aerialOn = false;
+      installFog();
+    }
   };
 
   const aerialFog = () => {
