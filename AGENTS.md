@@ -11,7 +11,7 @@
 - **Stale-copy check first:** before editing, confirm `src/game/map/districtWorld.ts` exists and `simulation.ts` has `export const USE_REAL_MAP = true`. If not, stop: the workspace is out of date with GitHub.
 - **Map data comes from OpenStreetMap only** (never Google Maps). Keep the credit "© OpenStreetMap contributors" on the title screen and minimap.
 - **Nothing may stand on a road.** Real map: `auditDistrict()` logs `[layout] … is on a road` in dev; that log must stay empty.
-- **Public rage is non-graphic:** no injuries, blood, beatings or health bars for people (`docs/game-design.md` §5).
+- **Public rage is graphic (owner decision, Nov 2026):** injuries, blood and beatings are shown. No health bars for NPCs (the vendor keeps his Life bar). Adults only: any child/school-age model flees and never fights or gets hurt. Nobody dies; no dismemberment or gore piles. Blood is cheap: pooled instanced decals (max 24, 8 on Low) plus short particles (`docs/game-design.md` §5).
 - **Baper Rasta** (baperrasta.com) is a style reference only: copy none of its sounds, art or text. No newspaper-style game over.
 - **Performance:** 1080p render cap; 60 fps target, up to 120 on 120 Hz screens. Crowd pedestrians use the compact rig (`compact: true`). Don't add per-object meshes where instancing works.
 - **Renderer is WebGPURenderer** (WebGL 2 fallback; `three` is aliased to `three/webgpu`). Never add `WebGLRenderer`, `ShaderMaterial`, `RawShaderMaterial` or `onBeforeCompile` — they don't run. Custom shading goes in TSL (`three/tsl`) node properties (`colorNode`, `emissiveNode`, …); see `src/game/render/surfaceWear.ts`. Render through `engine.pipeline`, not `renderer.render()`.

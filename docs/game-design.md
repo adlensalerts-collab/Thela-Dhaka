@@ -55,7 +55,7 @@ Between listed levels, interpolate. Smarter police behaviour (patrols, search, b
 
 ## 5. Public rage (জনতার রাগ)
 
-A crowd-anger meter that turns the street against the player. **Non-graphic:** no injuries, blood or beatings shown. Being caught means losing money, stock and time.
+A crowd-anger meter that turns the street against the player. **Graphic (owner decision, Nov 2026):** injuries, blood and beatings are shown: hit reactions and knock-downs, brawls, and a mob beating when the vendor is caught. Guardrails: no health bars for NPCs (the vendor keeps his Life bar); adult characters only (any child/school-age model flees and never fights or gets hurt); nobody dies and there is no dismemberment or gore pile (injured people limp off); blood is cheap, as pooled instanced decals plus short particles with a hard cap (24, or 8 on Low quality). Being caught means losing money, stock and time.
 
 **Rage rises from:**
 

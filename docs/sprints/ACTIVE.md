@@ -80,7 +80,15 @@ Known limits: frame rate not measured on a real GPU (headless uses software GL);
 | 12 | GTA-style minimap | ⏳ | Round, rotating radar drawn from the real road map: people, police (vision cones), markets, garages, aarots, cars, pulsing hotspots, angry-crowd zones |
 | 13 | Hotspots | ⏳ (partly covered by Sprint 10: hotspot pull by time of day) | Crowd gatherings driven by the day clock (office rush, bazaar hour, school release, evening market) |
 | 14 | Smarter police | ⏳ (G3 added 1–5 officers and simple footpath patrols from day 3) | Patrol routes on the road graph, line of sight, search last known position, backup, cutting off at junctions; fix chase speed (police 3.55 vs vendor 4.85 m/s) |
-| 15 | Public rage | ⏳ | Rage meter, angry crowd, mob chase and capture (non-graphic), escape rules, police interplay (game-design §5) |
+| 15 | Public rage | ⏳ | Rage meter, angry crowd, mob chase and capture (graphic: blood, injuries, beatings; no NPC health bars), escape rules, police interplay (game-design §5) |
+| 15a | More police + officer memory | 🔄 prompt sent | difficulty.ts police counts (2/3/4/5/6/7), per-officer memory, radio sharing, memory-led patrol |
+| 15b | NPC contact, injuries, blood decals | ⏳ prompt ready | Bump / stumble / knock-down from the thela, bleeding + limp, capped blood decals, NPCs never overlap |
+| 15c | Police hit → aggression | ⏳ after 15a | Officer hurt by the vendor, turns aggressive, arrests even at zero heat |
+| 15d | Police sight + approach | ⏳ | Vision +40 %, officers walk up to ~3 m when they spot the vendor |
+| 15e | Speech bubbles + Bangla police lines | ⏳ | `src/game/dialogue/*` |
+| 15f | NPC Bangla conversations | ⏳ | Alternating bubbles in chat groups |
+| 15g | NPC fights + mob beating | ⏳ | Brawls, onlookers filming, police break-up; reworks the legacy hostile mob |
+| 15h | Witness reactions | ⏳ | Panic, cower, call the police |
 | 16 | Multiplayer on the real map | ⏳ | Online 1v1 on New Market/Gulistan with day clock, rage and hotspots in sync |
 
 ---

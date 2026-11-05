@@ -30,8 +30,8 @@ Implement a deterministic, testable controller with explicit incident inputs, up
 - Pause/menu time must not advance rage, pursuit, freeze or incident timers. New day/retry resets daily capture counts and pending outcomes.
 - Scope this to solo vendor mode until multiplayer synchronization is designed.
 
-Strictly non-graphic: no injuries, blood, beatings, human health bars or violent attack animations. Do not activate the legacy hostile/injured pedestrian mechanic. Reuse compact rigs and existing crowd capacity; avoid per-person UI meshes or unbounded allocations. No borrowed Baper Rasta sounds, art or text.
+Graphic by design (owner decision, Nov 2026): show injuries, blood and beatings (hit reactions, mob beating on capture, brawls). No NPC health bars; adult characters only (child/school-age models flee and never fight or get hurt); nobody dies; no dismemberment or gore piles. Blood is cheap: instanced decals (max 24, 8 on Low) plus short particles. The legacy hostile/injured pedestrian mechanic may be reworked for this, but only as reviewed, bounded code. Reuse compact rigs and existing crowd capacity; avoid per-person UI meshes or unbounded allocations. No borrowed Baper Rasta sounds, art or text.
 
-The integration document must cover collisions, cancelled sales, junction blocking, sales refusal, police heat, non-graphic crowd movement, HUD, campaign/statistics outcomes and lifecycle cleanup. An isolated module must not be described as fully integrated.
+The integration document must cover collisions, cancelled sales, junction blocking, sales refusal, police heat, crowd movement and graphic reactions, HUD, campaign/statistics outcomes and lifecycle cleanup. An isolated module must not be described as fully integrated.
 
 Test incident amounts/multiplier, thresholds, decay, bounded repeat incidents, escape boundaries, capture rounding, five-second freeze, three-capture failure, pause, resets, repeated update/event idempotency and invalid inputs. Run npm run lint, relevant existing tests, and production/Pages builds. Report branch, commit, passed checks and pending integration explicitly.
