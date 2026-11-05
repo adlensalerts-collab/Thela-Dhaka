@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { createGlowPool } from '../render/glow';
 import type { Obstacle } from '../collision';
 import { pbrMaterial, applyWorldUV } from '../render/pbr';
 
@@ -280,10 +281,10 @@ export function buildAarot(scene: THREE.Scene, site: AarotSite): BuiltAarot {
   signBack.position.set(site.x, 5.65, site.z - 5.72);
   group.add(signBack);
 
-  // Market shed light illuminating the sign and produce bay
-  const shedLight = new THREE.PointLight('#4ade80', 2.1, 18, 1.6);
-  shedLight.position.set(site.x, 4.3, site.z - 2.5);
-  group.add(shedLight);
+  // Perf: a soft glow on the ground instead of a real PointLight (each dynamic light costs every lit pixel in the game).
+  const shedGlow = createGlowPool('#4ade80', 17, 0.42);
+  shedGlow.position.set(site.x, 0.09, site.z - 2.5);
+  group.add(shedGlow);
 
   // 8. Flat glowing GREEN ring (radius 4) on the ground at the entrance as the restock zone
   const ringGeo = new THREE.RingGeometry(3.45, 4.0, 48);

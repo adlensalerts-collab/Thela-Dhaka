@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { WebGPURenderer } from 'three/webgpu';
 import { GamePipeline } from './render/postfx';
+import { PerfProbe } from './render/perfProbe';
 import { Obstacle, resolveMovement } from './collision';
 import { SidewalkGraph } from './pathfinding';
 import { PedestrianManager, PedestrianNPC } from './pedestrians';
@@ -22,7 +23,7 @@ import { setupRealisticLighting, type LightingRig } from './render/lighting';
 import { SaleIndicator } from './ui/saleIndicator';
 import { createHumanRig, setPushPose, animateHuman } from './world/humans';
 import { buildDhakaBuilding } from './world/buildings';
-import { loadDisplaySettings, type DisplaySettings } from './render/display';
+import { loadDisplaySettings, saveDisplaySettings, type DisplaySettings } from './render/display';
 import {
   QualityLevel,
   QualityPreset,
@@ -258,6 +259,25 @@ export class GameEngine {
   adaptive = new AdaptiveResolution();
   currentPixelRatio: number = 0;
   fpsLimit: 60 | 120 | 0 = 0;
+  /** Set by the F3 benchmark: pauses the quality guard and adaptive resolution while it measures. */
+  perfBench = false;
+  /** F3 benchmark: stop redrawing the shadow map (measures the shadow pass without rebuilding any shader). */
+  perfSkipShadowPass = false;
+  perfProbe: PerfProbe | null = null;
+  private camForward = new THREE.Vector3();
+  private shadowFrame = 0;
+  /** Redraw the sun's shadow map only every Nth frame (quality preset); the map and its matrix stay consistent between redraws. */
+  private throttleShadows() {
+    const sun = this.lighting?.sun;
+    if (!sun) return;
+    if (this.perfSkipShadowPass) { sun.shadow.autoUpdate = false; return; }
+    const every = this.qualityPreset.shadowEvery;
+    if (!this.qualityPreset.shadows || every <= 1 || this.perfBench) { sun.shadow.autoUpdate = true; return; }
+    sun.shadow.autoUpdate = false;
+    if (this.shadowFrame++ % every === 0) sun.shadow.needsUpdate = true;
+  }
+  /** F3 benchmark helper: show or hide every walking pedestrian. */
+  crowdVisible(on: boolean) { for (const p of this.pedestrianManager?.pedestrians ?? []) p.mesh.visible = on; }
   showFps: boolean = false;
   limiterTime: number = 0;
   lastRenderTime: number = 0;
@@ -320,7 +340,13 @@ export class GameEngine {
     this.camera = new THREE.PerspectiveCamera(66, container.clientWidth / container.clientHeight, 0.1, 470);
     // Sprint 8D: WebGPU where available, WebGL 2 otherwise (decided inside WebGPURenderer.init()).
     // Perf: no MSAA on Low (picked at start; a quality change takes effect on the next load).
-    this.renderer = new WebGPURenderer({ antialias: loadDisplaySettings().quality !== 'low', powerPreference: 'high-performance' });
+    // MSAA only on High/Ultra (it multiplies pixel cost); ?perf also asks for GPU timestamp queries.
+    const startQuality = loadDisplaySettings().quality;
+    this.renderer = new WebGPURenderer({
+      antialias: startQuality === 'high' || startQuality === 'ultra',
+      powerPreference: 'high-performance',
+      trackTimestamp: new URLSearchParams(location.search).has('perf')
+    });
     this.renderer.domElement.tabIndex = 0;
     this.renderer.domElement.style.outline = 'none';
     container.replaceChildren(this.renderer.domElement);
@@ -333,6 +359,7 @@ export class GameEngine {
       this.lighting?.setHour(this.gameHour());
       this.rendererReady = true;
       this.applyRenderFeatures();
+      this.perfProbe = new PerfProbe(this);
       console.info(`[gfx] renderer backend: ${(this.renderer.backend as { isWebGPUBackend?: boolean }).isWebGPUBackend ? 'WebGPU' : 'WebGL 2'}`);
     }).catch((error) => console.error('[gfx] renderer init failed', error));
     this.initWorld();
@@ -568,35 +595,42 @@ export class GameEngine {
     this.pipeline?.setBloomEnabled(preset.post === 'full');
   }
 
+  /** 60 FPS guard: adaptive resolution lowers the render size first; if the game is still under ~55 FPS for
+   * 3 s at the smallest size, step the quality preset down one level (Ultra → High → Medium → Low), save it,
+   * and tell the UI. Never steps up by itself. Ignores loading hitches and menus. */
+  private slowMs = 0;
+  private guardCooldownMs = 0;
+  private guardFrameRate(frameMs: number, floorFps: number) {
+    if (!Number.isFinite(frameMs) || frameMs <= 0 || frameMs > 500) return;
+    if (this.state?.stage !== 'playing' || this.isMenuOrModalOpen) { this.slowMs = 0; return; }
+    this.guardCooldownMs = Math.max(0, this.guardCooldownMs - frameMs);
+    const slow = 1000 / frameMs < floorFps * 0.92;
+    this.slowMs = slow ? this.slowMs + frameMs : Math.max(0, this.slowMs - frameMs * 2);
+    if (this.slowMs < 3000 || this.guardCooldownMs > 0 || this.adaptive.scale > 0.61) return;
+    const order: QualityLevel[] = ['low', 'medium', 'high', 'ultra'];
+    const i = order.indexOf(this.qualityLevel);
+    this.slowMs = 0;
+    if (i <= 0) return;
+    const next = order[i - 1];
+    this.guardCooldownMs = 6000;
+    this.applyQuality(next);
+    saveDisplaySettings({ quality: next });
+    this.onEvent('quality_auto', next);
+  }
+
   applyQuality(level: QualityLevel) {
     this.world?.chunks.setViewDistance(VIEW_DISTANCE[level]);
     const preset = QUALITY_PRESETS[level] || QUALITY_PRESETS[defaultQuality()];
-    const shadowsChanged = this.renderer.shadowMap.enabled !== preset.shadows;
     this.qualityLevel = level;
     this.qualityPreset = preset;
 
-    this.renderer.shadowMap.enabled = preset.shadows;
+    this.renderer.shadowMap.enabled = true;   // see note below: castShadow is the switch
     this.applyRenderFeatures();
 
-    if (shadowsChanged) {
-      this.scene.traverse((o) => {
-        const m = (o as THREE.Mesh).material;
-        if (!m) return;
-        (Array.isArray(m) ? m : [m]).forEach((mat) => {
-          mat.needsUpdate = true;
-        });
-      });
-    }
-
-    if (this.lighting?.sun) {
-      this.lighting.sun.castShadow = preset.shadows;
-      if (this.lighting.sun.shadow.mapSize.width !== preset.shadowMapSize) {
-        this.lighting.sun.shadow.mapSize.set(preset.shadowMapSize, preset.shadowMapSize);
-        this.lighting.sun.shadow.map?.dispose();
-        this.lighting.sun.shadow.map = null;
-        this.lighting.sun.shadow.needsUpdate = true;
-      }
-    }
+    // WebGPURenderer: shadows are switched by the sun's castShadow alone (it is part of the light's cache key, so
+    // only the affected shaders rebuild). Never touch material.needsUpdate here (it rebuilt every material and
+    // froze the game for seconds) and never dispose the shadow map (the light node keeps a reference to it).
+    if (this.lighting?.sun) this.lighting.sun.castShadow = preset.shadows;
 
     const treesGroup = this.scene.getObjectByName('pavement-trees');
     if (treesGroup) {
@@ -1667,6 +1701,7 @@ export class GameEngine {
     if (s.customer) {
       s.customer.isEngagedInSale = false;
       s.customer.summonUntil = 0;
+      this.pedestrianManager?.markBought(s.customer);   // one purchase per person
     }
     this.state.sale = null;
     this.state.cash += s.price;
@@ -2892,9 +2927,10 @@ export class GameEngine {
     const frameMs = this.lastRenderTime > 0 ? now - this.lastRenderTime : 1000 / 60;
     this.lastRenderTime = now;
     const targetFps = effectiveLimit || displayFps;
-    if (this.adaptive.update(frameMs, targetFps)) {
+    if (!this.perfBench && this.adaptive.update(frameMs, targetFps)) {
       this.updatePixelRatio();
     }
+    if (!this.perfBench) this.guardFrameRate(frameMs, Math.min(targetFps, 60));
 
     // Measure FPS over 500 ms windows
     this.fpsFrameCount++;
@@ -3052,9 +3088,13 @@ export class GameEngine {
       this.streetSounds.setMurmur(murmur);
     }
 
-    this.world?.chunks.update(this.camera.position);
+    this.camera.getWorldDirection(this.camForward);
+    const fl = Math.hypot(this.camForward.x, this.camForward.z) || 1;
+    this.world?.chunks.update(this.camera.position, this.camForward.x / fl, this.camForward.z / fl);
     if (!this.rendererReady) return;
+    this.throttleShadows();
     this.lighting?.setHour(this.gameHour());
+    const renderStart = performance.now();
     const look = this.lighting?.look();
     const brightness = this.lighting?.getBrightness() ?? 1;
     if (this.pipeline && this.qualityPreset.post !== 'none') {
@@ -3067,6 +3107,7 @@ export class GameEngine {
       this.renderer.toneMappingExposure = brightness * exposure;
       this.renderer.render(this.scene, this.camera);
     }
+    this.perfProbe?.frame(performance.now() - renderStart);
   }
 
   private updateTrafficHorns(dt: number, playerX: number, playerZ: number) {

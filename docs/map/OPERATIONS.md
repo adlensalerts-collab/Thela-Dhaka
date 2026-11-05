@@ -51,6 +51,7 @@ Names only — never copy values from `.env*` files or tokens into docs or promp
 ## Renderer (Sprint 8D)
 - `vite.config.ts` aliases the bare `three` import to `node_modules/three/build/three.webgpu.js`, so the game, its addons and the character preview share one three.js copy and draw with `WebGPURenderer` (WebGPU where the browser has it, WebGL 2 otherwise; the console logs `[gfx] renderer backend: …`).
 - `GameEngine` renders only after `await renderer.init()` (the lighting rig bakes its sky environment then). Rendering goes through `GamePipeline.render()` (`src/game/render/postfx.ts`), never `renderer.render()` directly.
+- **Perf probe (any build):** press F3 or add `?perf` to the URL → live frame / CPU / GPU ms, draw calls, backend; "Run benchmark" measures what each feature costs; "Copy result" for a bug report. `?perf` also enables GPU timestamp queries.
 - Dev only: `window.__thelaEngine.hourOverride = 20.5` pins the lighting clock for screenshots (`null` = follow the day clock).
 
 ## Getting code into the repo

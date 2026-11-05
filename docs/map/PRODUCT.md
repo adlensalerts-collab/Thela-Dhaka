@@ -67,6 +67,8 @@ Renderer: `WebGPURenderer` (WebGPU, or WebGL 2 fallback). `vite.config.ts` alias
 | WebGPU lighting: SkyMesh sky + clouds, 2-cascade SunLight, sky PMREM, aerial fog, day-clock presets (dawn → night) | `src/game/render/lighting.ts` | `setupRealisticLighting`, `LightingRig.setHour`, `rendererReady`, `setWeather`, `look` |
 | Colour grade + bloom + vignette (TSL RenderPipeline; ACES once at output) | `src/game/render/postfx.ts` | `GamePipeline`, `LOOKS` |
 | Interior-mapped window glass, street-lamp heads + light pools, clock-driven glow | `src/game/render/windows.ts` | `createWindowMaterial`, `createLampHeadMaterial`, `createLampPoolMaterial`, `interiorGlow`, `streetLamps` |
+| Perf probe + benchmark overlay (F3 / `?perf`) | `src/game/render/perfProbe.ts` | `PerfProbe` (engine calls `perfProbe.frame()` each render) |
+| Ground glow quad used instead of PointLights | `src/game/render/glow.ts` | `createGlowPool` (garages, aarots) |
 | Vehicle look: road grime, painted rickshaw hoods, night lamps, contact shadows, headlight pools | `src/game/render/vehicleLook.ts` | `grimy`, `rickshawHoodMaterial`, `lampMaterial`, `addGroundEffects` (used by `world/traffic.ts`) |
 | Quality presets (render height, shadows, `post` none/grade/full, `clouds`, `aerialFog`), adaptive resolution | `src/game/render/quality.ts` | `QUALITY_PRESETS`, `defaultQuality` (phone Low, computer Medium), `AdaptiveResolution` |
 | Display settings storage | `src/game/render/display.ts` | `loadDisplaySettings` |

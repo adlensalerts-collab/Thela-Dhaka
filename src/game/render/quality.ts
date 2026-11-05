@@ -4,6 +4,8 @@ export interface QualityPreset {
   maxRenderHeight: number;
   shadows: boolean;
   shadowMapSize: number;   // per cascade (the sun has two)
+  /** Redraw the shadow map every N frames (the sun barely moves, so 2–3 is invisible; people lag by <50 ms). */
+  shadowEvery: number;
   leafShadows: boolean;
   /** Sprint 8D perf: 'none' = draw straight to the screen (no grade pass), 'grade' = grade only, 'full' = grade + bloom. */
   post: 'none' | 'grade' | 'full';
@@ -14,10 +16,10 @@ export interface QualityPreset {
 }
 
 export const QUALITY_PRESETS: Record<QualityLevel, QualityPreset> = {
-  low:    { maxRenderHeight: 540,  shadows: false, shadowMapSize: 512,  leafShadows: false, post: 'none',  clouds: false, aerialFog: false },
-  medium: { maxRenderHeight: 720,  shadows: true,  shadowMapSize: 1024, leafShadows: false, post: 'none',  clouds: true,  aerialFog: false },
-  high:   { maxRenderHeight: 1080, shadows: true,  shadowMapSize: 2048, leafShadows: true,  post: 'full',  clouds: true,  aerialFog: true  },
-  ultra:  { maxRenderHeight: 1440, shadows: true,  shadowMapSize: 2048, leafShadows: true,  post: 'full',  clouds: true,  aerialFog: true  }
+  low:    { maxRenderHeight: 540,  shadows: false, shadowMapSize: 512,  shadowEvery: 1,  leafShadows: false, post: 'none',  clouds: false, aerialFog: false },
+  medium: { maxRenderHeight: 720,  shadows: true,  shadowMapSize: 1024, shadowEvery: 3, leafShadows: false, post: 'none',  clouds: true,  aerialFog: false },
+  high:   { maxRenderHeight: 1080, shadows: true,  shadowMapSize: 2048, shadowEvery: 2, leafShadows: true,  post: 'full',  clouds: true,  aerialFog: true  },
+  ultra:  { maxRenderHeight: 1440, shadows: true,  shadowMapSize: 2048, shadowEvery: 1, leafShadows: true,  post: 'full',  clouds: true,  aerialFog: true  }
 };
 
 /** Phones and tablets start on Low, computers on Medium (Sprint 8D renderer is heavier than the old one). */

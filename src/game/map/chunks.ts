@@ -5,7 +5,8 @@ import * as THREE from 'three';
  * the view distance are hidden (the haze/fog already hides that range). View distance follows the
  * Sprint 7 quality preset.
  */
-export const VIEW_DISTANCE = { low: 170, medium: 230, high: 320, ultra: 420 } as const;
+// Tighter than before (170/230/320/420): the haze already hides most of that range, and every chunk is draw calls.
+export const VIEW_DISTANCE = { low: 130, medium: 180, high: 270, ultra: 360 } as const;
 
 export class ChunkManager {
   readonly root = new THREE.Group();
@@ -37,11 +38,18 @@ export class ChunkManager {
   setViewDistance(d: number) { this.viewDistance = d; }
 
   /** Call every frame (cheap: one distance check per chunk). */
-  update(camera: THREE.Vector3) {
-    const r = this.viewDistance + this.size * 0.71;
+  update(camera: THREE.Vector3, forwardX = 0, forwardZ = 0) {
+    const half = this.size * 0.71;
+    const r = this.viewDistance + half;
+    const hasForward = forwardX !== 0 || forwardZ !== 0;
+    // Chunks well behind the camera are skipped too (their shadows only matter close by, so keep 90 m of margin).
+    const behind = half + 90;
     for (const g of this.chunks.values()) {
       const c = g.userData.centre as THREE.Vector2;
-      g.visible = (c.x - camera.x) ** 2 + (c.y - camera.z) ** 2 < r * r;
+      const dx = c.x - camera.x, dz = c.y - camera.z;
+      let show = dx * dx + dz * dz < r * r;
+      if (show && hasForward && dx * forwardX + dz * forwardZ < -behind) show = false;
+      g.visible = show;
     }
   }
 

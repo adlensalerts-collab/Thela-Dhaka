@@ -8,6 +8,8 @@ import { SunLight } from 'three/examples/jsm/lights/SunLight.js';
 import { SunLightNode } from 'three/examples/jsm/lights/SunLightNode.js';
 import { LOOKS, type GradeLook } from './postfx';
 import { interiorGlow, streetLamps } from './windows';
+import { QUALITY_PRESETS } from './quality';
+import { loadDisplaySettings } from './display';
 
 /**
  * Sprint 8D — lighting rebuilt on WebGPURenderer, in the style of Slop New York
@@ -119,7 +121,9 @@ export function setupRealisticLighting(renderer: THREE.WebGPURenderer, scene: TH
 
   const sun = new SunLight(0xfff1dc, 6);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
+  // Sized once (the light node builds its render target at first use): 1024 on Low/Medium starts, 2048 on High/Ultra.
+  const shadowSize = Math.max(1024, QUALITY_PRESETS[loadDisplaySettings().quality]?.shadowMapSize ?? 2048);
+  sun.shadow.mapSize.set(shadowSize, shadowSize);
   sun.shadow.camera.near = 0.5;
   sun.shadow.camera.far = 180;      // street-level view distance; near cascade ends ~45 m
   sun.shadow.normalBias = 0.05;

@@ -14,14 +14,14 @@ export interface DisplaySettings {
 export const DEFAULT_DISPLAY: DisplaySettings = {
   brightness: 1,
   quality: defaultQuality(),
-  fpsLimit: 0,
+  fpsLimit: 60, // locked to 60 by default: steadier and cooler than chasing 120 Hz
   showFps: false
 };
 export const BRIGHTNESS_MIN = 0.5;
 export const BRIGHTNESS_MAX = 1.6;
 const KEY = 'thela_display_v1';
 /** Bumped with the Sprint 8D WebGPU renderer: quality saved before it is reset once to the new default. */
-const QUALITY_EPOCH = 2;
+const QUALITY_EPOCH = 3; // 3: also resets the saved FPS limit to the 60 lock
 
 function isValidQuality(q: unknown): q is QualityLevel {
   return typeof q === 'string' && q in QUALITY_PRESETS;
@@ -53,7 +53,7 @@ export function loadDisplaySettings(): DisplaySettings {
         ? Math.min(BRIGHTNESS_MAX, Math.max(BRIGHTNESS_MIN, b))
         : fallback.brightness,
       quality: p.qualityEpoch === QUALITY_EPOCH && isValidQuality(p.quality) ? p.quality : fallback.quality,
-      fpsLimit: isValidFpsLimit(p.fpsLimit) ? p.fpsLimit : fallback.fpsLimit,
+      fpsLimit: p.qualityEpoch === QUALITY_EPOCH && isValidFpsLimit(p.fpsLimit) ? p.fpsLimit : fallback.fpsLimit,
       showFps: typeof p.showFps === 'boolean' ? p.showFps : fallback.showFps
     };
     memoryDisplaySettings = { ...loaded };

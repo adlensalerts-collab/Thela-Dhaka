@@ -124,6 +124,9 @@ export default function App() {
               type: 'arrest_attempt'
             });
           }
+        } else if (type === 'quality_auto') {
+          setDisplaySettings((prev) => ({ ...prev, quality: data }));
+          showToast(`Graphics lowered to ${String(data).toUpperCase()} to keep 60 FPS`);
         } else if (type === 'pause') {
           engineRef.current?.pauseGame();
           setModalType('paused');

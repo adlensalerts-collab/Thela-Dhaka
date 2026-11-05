@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { createGlowPool } from '../render/glow';
 import type { Obstacle } from '../collision';
 import { pbrMaterial, applyWorldUV } from '../render/pbr';
 
@@ -247,10 +248,10 @@ export function buildGarage(scene: THREE.Scene, site: GarageSite): BuiltGarage {
   signBack.position.set(site.x, 5.65, site.z - 5.62);
   group.add(signBack);
 
-  // Warm workshop light illuminating the sign and bay
-  const bayLight = new THREE.PointLight('#fbbf24', 2.2, 18, 1.6);
-  bayLight.position.set(site.x, 4.3, site.z - 2.5);
-  group.add(bayLight);
+  // Perf: a soft glow on the ground instead of a real PointLight (each dynamic light costs every lit pixel in the game).
+  const bayGlow = createGlowPool('#fbbf24', 17, 0.42);
+  bayGlow.position.set(site.x, 0.09, site.z - 2.5);
+  group.add(bayGlow);
 
   // 6. Flat glowing amber ring (radius 4) on the ground at the entrance as the repair zone
   const ringGeo = new THREE.RingGeometry(3.45, 4.0, 48);

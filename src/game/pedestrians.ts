@@ -48,6 +48,10 @@ export interface PedestrianNPC {
   idleTimer: number;
   walkCycle: number;
   isEngagedInSale: boolean;
+  /** Each person buys from the vendor at most once per day (cleared at the day reset, or when everyone has bought). */
+  hasBought: boolean;
+  /** Perf: whether this rig currently casts a shadow (only the nearest few do). */
+  castsShadow?: boolean;
   isInjured: boolean;
   injuredTimer: number;
   hostileTimer: number;
@@ -430,6 +434,7 @@ export class PedestrianManager {
         idleTimer: 0,
         walkCycle: Math.random() * 10,
         isEngagedInSale: false,
+        hasBought: false,
         isInjured: false,
         injuredTimer: 0,
         hostileTimer: 0,
@@ -474,6 +479,7 @@ export class PedestrianManager {
       p.state = 'walking';
       p.idleTimer = 0;
       p.isEngagedInSale = false;
+      p.hasBought = false;
       p.isInjured = false;
       p.injuredTimer = 0;
       p.hostileTimer = 0;
@@ -823,7 +829,7 @@ export class PedestrianManager {
     };
     const chosen: Array<{ p: PedestrianNPC; route: Array<{ x: number; z: number }> }> = [];
     const nearby = this.pedestrians
-      .filter((p) => p.active && p.groupId === 0 && !p.isEngagedInSale && !p.summonUntil && (p.state === 'walking' || p.state === 'idle'))
+      .filter((p) => p.active && p.groupId === 0 && !p.hasBought && !p.isEngagedInSale && !p.summonUntil && (p.state === 'walking' || p.state === 'idle'))
       .map((p) => ({ p, d: Math.hypot(p.mesh.position.x - x, p.mesh.position.z - z) }))
       .filter((e) => e.d <= radius && e.d > 1.5)
       .sort((a, b) => a.d - b.d);
@@ -837,7 +843,7 @@ export class PedestrianManager {
     if (chosen.length < max) {
       // Parked (off-street) people count as far away: bringing them in also refills the street.
       const far = this.pedestrians
-        .filter((p) => p.groupId === 0 && !p.isEngagedInSale && !p.summonUntil && p.state !== 'hostile' && p.state !== 'injured'
+        .filter((p) => p.groupId === 0 && !p.hasBought && !p.isEngagedInSale && !p.summonUntil && p.state !== 'hostile' && p.state !== 'injured'
           && (!p.active || Math.hypot(p.mesh.position.x - x, p.mesh.position.z - z) > 90));
       const ring = this.graph.nodes.filter((n) => { const d = Math.hypot(n.x - x, n.z - z); return d >= 45 && d <= 60; });
       // shuffle the ring, then keep only spots with a direct walk to the thela
@@ -884,13 +890,19 @@ export class PedestrianManager {
     }
   }
 
+  /** A completed sale: this person will not buy again today. If everyone has bought, a fresh wave of customers starts. */
+  markBought(p: PedestrianNPC) {
+    p.hasBought = true;
+    if (!this.pedestrians.some((q) => !q.hasBought)) for (const q of this.pedestrians) q.hasBought = false;
+  }
+
   get summonedCount() { return this.pedestrians.filter((p) => p.summonUntil && p.summonUntil > this.clock).length; }
 
   getNearestPedestrian(x: number, z: number): { pedestrian: PedestrianNPC | null; distance: number } {
     let nearest: PedestrianNPC | null = null;
     let minDist = Infinity;
     for (const p of this.pedestrians) {
-      if (!p.active || p.state === 'injured' || p.state === 'hostile') continue;
+      if (!p.active || p.hasBought || p.state === 'injured' || p.state === 'hostile') continue;
       const d = Math.hypot(p.mesh.position.x - x, p.mesh.position.z - z);
       if (d < minDist) {
         minDist = d;
@@ -994,6 +1006,8 @@ export class PedestrianManager {
       }
     }
 
+    if (this.detailTimer === 12) this.updateRigShadows();
+
     this.impostors.begin();
     for (const p of this.pedestrians) {
       if (!p.active) { p.mesh.visible = false; p.lod = 'hidden'; continue; }
@@ -1017,6 +1031,19 @@ export class PedestrianManager {
       });
     }
     this.impostors.end();
+  }
+
+  /** Perf: every shadow caster is drawn once per shadow cascade, so only the nearest few rigs cast shadows. */
+  private updateRigShadows(maxCasters = 6) {
+    let rank = 0;
+    const casters = new Set<PedestrianNPC>();
+    for (const p of this.nearSet) { if (rank++ < maxCasters) casters.add(p); }
+    for (const p of this.pedestrians) {
+      const want = casters.has(p);
+      if (p.castsShadow === want) continue;
+      p.castsShadow = want;
+      p.mesh.traverse((o) => { if ((o as THREE.Mesh).isMesh) o.castShadow = want; });
+    }
   }
 
   /** Counts for the dev overlay / tests. */
