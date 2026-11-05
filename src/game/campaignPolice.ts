@@ -20,7 +20,17 @@ interface Patrol {
   visible: boolean;
   informed: boolean;
   mode: PoliceMode;
+  /** Sprint 15c: hurt by the vendor's thela. 'stagger' is a stumble, 'down' a knock-down, 'rising' getting back up. */
+  hurt: 'none' | 'stagger' | 'down' | 'rising';
+  hurtT: number;
+  hitCd: number;
+  kx: number;
+  kz: number;
 }
+
+const calm = () => ({ hurt: 'none' as const, hurtT: 0, hitCd: 0, kx: 0, kz: 0 });
+/** Seconds the officer lies down after a hard hit, and the time it takes to get up. */
+const DOWN_SECONDS = 3.0, RISE_SECONDS = 1.1, STAGGER_SECONDS = 0.7, AGGRO_SECONDS = 90;
 
 export interface PatrolWorld {
   graph: SidewalkGraph;
@@ -44,17 +54,22 @@ export class CampaignPolice {
   private lastSeen: (PolicePoint & { at: number; vx: number; vz: number }) | null = null;
   private components: number[] = [];
   private junctionStops: number[] = [];
+  /** Sprint 15c: while this clock value is in the future every officer is aggressive (the vendor hit one of them). */
+  private aggroUntil = 0;
+  private aggroStart = -999;
+  /** Called when an officer is injured (the engine draws blood from it). */
+  onInjury: ((x: number, z: number, heavy: boolean) => void) | null = null;
 
   constructor(primary: THREE.Group, readonly difficulty: DifficultyProfile,
     private world: PatrolWorld, scene: THREE.Scene) {
     this.patrols = [{ object: primary, rig: null, route: [], step: 0, phase: 0, nextRoute: 0, blockedUntil: 0,
-      home: { x: 0, z: 0 }, visible: false, informed: false, mode: 'post' }];
+      home: { x: 0, z: 0 }, visible: false, informed: false, mode: 'post', ...calm() }];
     for (let i = 1; i < difficulty.policeCount; i++) {
       const rig = createHumanRig({ outfit: 'police', compact: true, scale: 1.18, seed: 700 + i });
       rig.group.name = `campaign-police-${i}`;
       scene.add(rig.group);
       this.patrols.push({ object: rig.group, rig, route: [], step: 0, phase: 0, nextRoute: 0, blockedUntil: 0,
-        home: { x: 0, z: 0 }, visible: false, informed: false, mode: 'post' });
+        home: { x: 0, z: 0 }, visible: false, informed: false, mode: 'post', ...calm() });
     }
     // A* falls back to a straight line between disconnected nodes. Avoid that fallback.
     for (const node of world.graph.nodes) {
@@ -64,6 +79,7 @@ export class CampaignPolice {
         if (this.components[id] === undefined) { this.components[id] = node.id; pending.push(id); }
       }
     }
+    for (const patrol of this.patrols) patrol.object.rotation.order = 'YXZ';   // heading first, then fall pitch
     this.junctionStops = [...new Set((world.junctions ?? []).map(p => world.graph.findNearestNode(p.x, p.z)))]
       .filter(id => this.validStop(world.graph.nodes[id].x, world.graph.nodes[id].z));
   }
@@ -100,6 +116,8 @@ export class CampaignPolice {
       patrol.informed = false;
       patrol.mode = this.difficulty.patrolRoutes ? 'patrol' : 'post';
     }
+    for (const p of this.patrols) { Object.assign(p, calm()); p.object.rotation.x = 0; p.object.position.y = 0; }
+    this.aggroUntil = 0; this.aggroStart = -999;
     this.lastSeen = null; this.playerVisible = false; this.senseIn = 0;
     this.alertSeconds = 0; this.wasAlert = false; this.clock = 0; this.primarySpeed = 0;
   }
@@ -166,9 +184,89 @@ export class CampaignPolice {
       this.world.obstacles((from.x + to.x) / 2, (from.z + to.z) / 2));
   }
 
+  /** Sprint 15c: true for ~90 s after the vendor hit an officer. */
+  get aggressive() { return this.clock < this.aggroUntil; }
+
+  /** Upright officers only. When aggressive they arrest from further away and without line of sight, heat or alert. */
   canArrest(player: PolicePoint) {
-    return this.patrols.some(p => Math.hypot(p.object.position.x - player.x, p.object.position.z - player.z) < 2.1 &&
-      this.clearSight(p.object.position, player));
+    const aggro = this.aggressive;
+    return this.patrols.some(p => {
+      if (p.hurt !== 'none') return false;
+      const d = Math.hypot(p.object.position.x - player.x, p.object.position.z - player.z);
+      return aggro ? d < 2.6 : d < 2.1 && this.clearSight(p.object.position, player);
+    });
+  }
+
+  /**
+   * Sprint 15c: the vendor (moving at `vx`,`vz` m/s, thela about 1.2 m ahead of him) runs into an officer.
+   * A light hit makes the officer stumble; a hard hit (3.5 m/s or more) knocks them down. Either way every officer
+   * turns aggressive and is told where the vendor is. Returns what happened, or null.
+   */
+  vendorContact(player: PolicePoint, vx: number, vz: number): { index: number; heavy: boolean; x: number; z: number } | null {
+    const speed = Math.hypot(vx, vz);
+    if (!(speed >= 0.8)) return null;
+    const fx = vx / speed, fz = vz / speed;
+    const cart = { x: player.x + fx * 1.2, z: player.z + fz * 1.2 };
+    for (let i = 0; i < this.patrols.length; i++) {
+      const p = this.patrols[i], pos = p.object.position;
+      if (p.hurt !== 'none' || p.hitCd > 0) continue;
+      const touching = Math.hypot(pos.x - player.x, pos.z - player.z) < 1.25 || Math.hypot(pos.x - cart.x, pos.z - cart.z) < 1.25;
+      if (!touching) continue;
+      const tx = pos.x - player.x, tz = pos.z - player.z, len = Math.hypot(tx, tz) || 1;
+      if ((fx * tx + fz * tz) / len < 0.2) continue;       // moving away from the officer: not a hit
+      const heavy = speed >= 3.5;
+      p.hurt = heavy ? 'down' : 'stagger';
+      p.hurtT = heavy ? DOWN_SECONDS : STAGGER_SECONDS;
+      p.hitCd = 2.5;
+      p.kx = tx / len * (heavy ? 3.2 : 2.0); p.kz = tz / len * (heavy ? 3.2 : 2.0);
+      p.route = []; p.nextRoute = 0;
+      this.provoke(player);
+      this.onInjury?.(pos.x, pos.z, heavy);
+      return { index: i, heavy, x: pos.x, z: pos.z };
+    }
+    return null;
+  }
+
+  /** Every officer knows where the vendor is (radio: "officer down") and stays aggressive for AGGRO_SECONDS. */
+  private provoke(player: PolicePoint) {
+    this.aggroStart = this.clock;
+    this.aggroUntil = this.clock + AGGRO_SECONDS;
+    this.lastSeen = { x: player.x, z: player.z, at: this.clock, vx: 0, vz: 0 };
+    for (const p of this.patrols) { p.informed = true; p.route = []; p.nextRoute = 0; }
+  }
+
+  /** Hurt animation and recovery. Down officers lie on their back, then get up and join the chase. */
+  private stepHurt(patrol: Patrol, dt: number) {
+    const o = patrol.object;
+    patrol.hurtT -= dt;
+    const speed = Math.hypot(patrol.kx, patrol.kz);
+    if (speed > 0.05) {
+      const heading = Math.atan2(patrol.kx, -patrol.kz);
+      const moved = resolveMovement(o.position.x, o.position.z, patrol.kx * dt, patrol.kz * dt, heading, false,
+        this.world.obstacles(o.position.x, o.position.z), this.world.bounds);
+      o.position.x = moved.newX; o.position.z = moved.newZ;
+      const decay = Math.exp(-5 * dt); patrol.kx *= decay; patrol.kz *= decay;
+    }
+    if (patrol.hurt === 'stagger') {
+      o.rotation.x = Math.sin(patrol.hurtT * 18) * 0.2;
+      if (patrol.hurtT <= 0) this.recover(patrol);
+    } else if (patrol.hurt === 'down') {
+      const fall = Math.min(1, (DOWN_SECONDS - patrol.hurtT) / 0.3);
+      o.rotation.x = fall * Math.PI / 2;                   // falls backwards onto their back
+      o.position.y = fall * 0.12;
+      if (patrol.hurtT <= 0) { patrol.hurt = 'rising'; patrol.hurtT = RISE_SECONDS; }
+    } else {
+      const k = Math.max(0, patrol.hurtT / RISE_SECONDS);
+      o.rotation.x = k * k * Math.PI / 2;
+      o.position.y = k * 0.12;
+      if (patrol.hurtT <= 0) this.recover(patrol);
+    }
+  }
+
+  private recover(patrol: Patrol) {
+    patrol.hurt = 'none'; patrol.hurtT = 0; patrol.hitCd = 2.5;
+    patrol.object.rotation.x = 0; patrol.object.position.y = 0;
+    patrol.route = []; patrol.nextRoute = 0;
   }
 
   private sense(player: PolicePoint, range: number, remember: boolean) {
@@ -239,16 +337,26 @@ export class CampaignPolice {
     this.wasAlert = alert; this.alertSeconds = alert ? this.alertSeconds + dt : 0;
     this.senseIn -= dt;
     if (this.senseIn <= 0) {
-      this.sense(player, this.difficulty.policeVision * visibility, alert || heated);
+      this.sense(player, this.difficulty.policeVision * visibility * (this.aggressive ? 1.5 : 1), alert || heated || this.aggressive);
       this.senseIn = 0.1;
     }
     const tactics = policeTactics(this.difficulty.dayNumber);
-    const pursuing = (alert || heated && this.playerVisible) && this.lastSeen !== null;
+    const aggro = this.aggressive;
+    // "Officer down" radio call: for the first 6 s every officer is told exactly where the vendor is.
+    if (aggro && this.clock - this.aggroStart < 6) this.lastSeen = { x: player.x, z: player.z, at: this.clock, vx: 0, vz: 0 };
+    const pursuing = (alert || aggro || heated && this.playerVisible) && this.lastSeen !== null;
     for (let i = 0; i < this.patrols.length; i++) {
       const patrol = this.patrols[i], object = patrol.object;
       if (i === 0) this.primarySpeed = 0;
       patrol.nextRoute = Math.max(0, patrol.nextRoute - dt);
       patrol.blockedUntil = Math.max(0, patrol.blockedUntil - dt);
+      patrol.hitCd = Math.max(0, patrol.hitCd - dt);
+      if (patrol.hurt !== 'none') {
+        this.stepHurt(patrol, dt);
+        if (i === 0) this.primarySpeed = 0;
+        if (i > 0) object.visible = Math.hypot(object.position.x - camera.x, object.position.z - camera.z) < 90;
+        continue;
+      }
       const memory = this.lastSeen;
       let mode: PoliceMode = this.difficulty.patrolRoutes ? 'patrol' : 'post';
       if (pursuing && memory) {
@@ -264,7 +372,7 @@ export class CampaignPolice {
       let dx = 0, dz = 0, speed = 0;
 
       if (mode === 'chase' || mode === 'backup' || mode === 'intercept' || mode === 'search') {
-        speed = (mode === 'search' ? 2.8 : POLICE_CHASE_SPEED) * weatherSpeed;
+        speed = (mode === 'search' ? 2.8 : POLICE_CHASE_SPEED) * weatherSpeed * (aggro ? 1.15 : 1);
         const distToSighting = Math.hypot(memory!.x - object.position.x, memory!.z - object.position.z);
         const useDirect = mode === 'chase' && patrol.visible && distToSighting <= 14 &&
           patrol.blockedUntil <= 0 && this.clearSight(object.position, memory!);

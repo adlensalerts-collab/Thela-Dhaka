@@ -140,3 +140,50 @@ test('new day/bribe reset clears sightings and routes; invalid dt does not advan
   f.police.resetPositions(0,0);assert.equal(f.police.lastKnownPosition,null);assert.equal(f.police.playerVisible,false);
   assert.equal(f.police.detachExtras().length,4);assert.equal(f.police.count,0);
 });
+
+test('Sprint 15c: hitting an officer hurts them, makes police aggressive and allows arrest without alert, heat or sight',()=>{
+  const f=fixture();const injuries:Array<[number,number,boolean]>=[];f.police.onInjury=(x,z,h)=>injuries.push([x,z,h]);
+  f.player.set(0,0,1.2);
+  assert.equal(f.police.vendorContact(f.player,0,-.5),null,'too slow to count as a hit');
+  assert.equal(f.police.vendorContact(f.player,0,2),null,'moving away from the officer is not a hit');
+  const hit=f.police.vendorContact(f.player,0,-2);
+  assert.deepEqual(hit&&{heavy:hit.heavy,index:hit.index},{heavy:false,index:0});
+  assert.equal(f.patrols[0].hurt,'stagger');assert.equal(f.police.aggressive,true);
+  assert.equal(f.police.vendorContact(f.player,0,-2),null,'an officer who is already hurt cannot be hit again');
+  assert.deepEqual(injuries.map(i=>i[2]),[false]);
+  assert.deepEqual(f.police.lastKnownPosition,{x:0,z:1.2},'officer-down radio call shares the vendor position');
+  assert.equal(f.police.canArrest(f.player),false,'a staggering officer cannot arrest');
+  for(let i=0;i<10;i++) f.police.update(.1,f.player,false,1,f.camera,0,0);
+  assert.equal(f.patrols[0].hurt,'none');assert.equal(f.primary.rotation.x,0);
+  f.primary.position.set(0,0,0);f.player.set(0,0,2.4);f.setObstacles([{...wall,z:1.2,hw:5} as Obstacle]);
+  assert.equal(f.police.canArrest(f.player),true,'aggressive officers arrest through a wall at 2.4 m with no alert and zero heat');
+  f.player.z=3;assert.equal(f.police.canArrest(f.player),false,'but not from further than 2.6 m');
+});
+
+test('Sprint 15c: a hard hit knocks the officer down for about 3 s, then they get up',()=>{
+  const f=fixture();const injuries:boolean[]=[];f.police.onInjury=(_x,_z,h)=>injuries.push(h);
+  f.player.set(0,0,1.2);
+  const hit=f.police.vendorContact(f.player,0,-4.5);
+  assert.equal(hit?.heavy,true);assert.equal(f.patrols[0].hurt,'down');assert.deepEqual(injuries,[true]);
+  f.police.update(.5,f.player,true,1,f.camera,0,0);
+  assert.ok(Math.abs(f.primary.rotation.x-Math.PI/2)<1e-6,'lying flat on their back');
+  assert.ok(f.primary.position.z<=0&&f.primary.position.y>0);
+  assert.equal(f.police.canArrest(f.player),false);
+  for(let i=0;i<30;i++) f.police.update(.1,f.player,true,1,f.camera,0,0);
+  assert.equal(f.patrols[0].hurt,'rising');assert.ok(f.primary.rotation.x>0&&f.primary.rotation.x<Math.PI/2);
+  for(let i=0;i<7;i++) f.police.update(.1,f.player,true,1,f.camera,0,0);
+  assert.equal(f.patrols[0].hurt,'none');assert.equal(f.primary.rotation.x,0);assert.equal(f.primary.position.y,0);
+});
+
+test('Sprint 15c: aggression lasts about 90 s and a new day clears it',()=>{
+  const f=fixture();f.player.set(0,0,1.2);f.police.vendorContact(f.player,0,-2);
+  assert.equal(f.police.aggressive,true);
+  for(let i=0;i<89;i++) f.police.update(1,f.player,true,1,f.camera,0,0);
+  assert.equal(f.police.aggressive,true);
+  f.police.update(2,f.player,true,1,f.camera,0,0);assert.equal(f.police.aggressive,false);
+  f.police.vendorContact(f.player,0,-2);
+  f.patrols[0].hitCd=0;f.patrols[0].hurt='none';f.primary.position.set(0,0,0);
+  f.police.vendorContact(f.player,0,-4.5);
+  f.police.resetPositions(0,0);
+  assert.equal(f.police.aggressive,false);assert.equal(f.patrols[0].hurt,'none');assert.equal(f.primary.rotation.x,0);
+});

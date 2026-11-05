@@ -10,6 +10,7 @@ Names only — never copy values from `.env*` files or tokens into docs or promp
 | Campaign rules and ending UI checks | `npx tsx --test scripts/campaign.test.tsx scripts/campaign-ui.test.tsx` | Solo campaign boundaries, result actions, captured ending time and online/police UI isolation |
 | Campaign difficulty and level briefing checks | `npx tsx --test scripts/difficulty.test.tsx` | Design anchors, interpolation, bounded Endless populations, district/target preview and paused briefing routing |
 | Crowd schedule, behavior, crossings and instancing checks | `npx --yes vite-node@3 scripts/crowd.test.ts` | Needs Vite's `import.meta.env`; verifies the real footpath graph and 120-person pool |
+| Police sight, chase, backup and officer-hit checks | `npx --yes vite-node@3 scripts/police.test.ts` | Needs Vite's `import.meta.env`; cone/line-of-sight, tactics, routes, Sprint 15c stumble/knock-down/aggression/arrest |
 | Radar projection and payload checks | `npx tsx --test scripts/radar.test.ts` | Heading transforms, circular bounds, nearest-actor caps and off-screen service bearings |
 | Hotspot schedule and event-label checks | `npx tsx --test scripts/hotspots.test.ts scripts/hotspotEvents.test.ts` | Exact window boundaries, peak/night waves, sparse districts, immutable schedules, nearest active site and dynamic labels |
 | Police perception and pursuit checks | `npx --yes vite-node@3 scripts/police.test.ts` | Facing/weather, exact wall occlusion, last sighting, tactical unlocks, backup, interception, speed balance, disconnected routes and resets |

@@ -83,7 +83,7 @@ Known limits: frame rate not measured on a real GPU (headless uses software GL);
 | 15 | Public rage | ⏳ | Rage meter, angry crowd, mob chase and capture (graphic: blood, injuries, beatings; no NPC health bars), escape rules, police interplay (game-design §5) |
 | 15a | More police + officer memory | 🔄 prompt sent | difficulty.ts police counts (2/3/4/5/6/7), per-officer memory, radio sharing, memory-led patrol |
 | 15b | NPC contact, injuries, blood decals | ⏳ prompt ready | Bump / stumble / knock-down from the thela, bleeding + limp, capped blood decals, NPCs never overlap |
-| 15c | Police hit → aggression | ⏳ after 15a | Officer hurt by the vendor, turns aggressive, arrests even at zero heat |
+| 15c | Police hit → aggression | 🔄 built by Claude, on hold until 15a + 15b are merged | `CampaignPolice.vendorContact` (stumble < 3.5 m/s, knock-down ≥ 3.5 m/s: lies 3 s, rises 1.1 s), `aggressive` for 90 s (all officers told the vendor's position for 6 s, sight ×1.5, speed ×1.15, no escape timer), `canArrest` from 2.6 m without sight/alert/heat, `onInjury` hook for blood (wire to `bloodDecals.ts` after 15b). Engine: `onOfficerHit` (+25/+40 heat, toast). 13 police tests pass (`vite-node scripts/police.test.ts`) |
 | 15d | Police sight + approach | ⏳ | Vision +40 %, officers walk up to ~3 m when they spot the vendor |
 | 15e | Speech bubbles + Bangla police lines | ⏳ | `src/game/dialogue/*` |
 | 15f | NPC Bangla conversations | ⏳ | Alternating bubbles in chat groups |

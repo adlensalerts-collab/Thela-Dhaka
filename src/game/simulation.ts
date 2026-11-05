@@ -1630,6 +1630,7 @@ export class GameEngine {
           Math.hypot(to.x - from.x, to.z - from.z) / 2 + 1) ?? this.obstacles,
         junctions: this.world?.roads.nodes.filter(node => node.edges.length >= 3),
       }, this.scene);
+      this.campaignPolice.onInjury = (x, z, heavy) => this.onOfficerInjured(x, z, heavy);
       this.campaignPolice.resetPositions(this.human.position.x, this.human.position.z);
       this.state.policePositions = this.campaignPolice.positions();
       this.state.officerX = this.officer.position.x;
@@ -2278,6 +2279,27 @@ export class GameEngine {
     }
   }
 
+  private lastPoliceX = NaN;
+  private lastPoliceZ = NaN;
+
+  /** Sprint 15c: the vendor hit an officer. Assault raises heat, starts a chase at once and cannot be escaped by hiding. */
+  private onOfficerHit(heavy: boolean) {
+    this.state.heat = Math.min(100, this.state.heat + (heavy ? 40 : 25));
+    this.state.cooldown = 0;
+    this.state.escape = 0;
+    if (!this.state.alert) { this.state.alert = true; this.stats.chasesStarted++; }
+    this.playBeep(heavy ? 520 : 680, 0.22, 'sawtooth');
+    this.onEvent('notify', heavy
+      ? 'অফিসার মাটিতে! এবার ছাড় নেই · Officer down — they will arrest you on sight!'
+      : 'পুলিশকে ধাক্কা! · You hit an officer — they are coming for you!');
+    this.publishState(true);
+  }
+
+  /** Hook for the blood decals (Sprint 15b adds bloodDecals.ts); heavy = a bloody knock-down. */
+  private onOfficerInjured(x: number, z: number, heavy: boolean) {
+    void x; void z; void heavy;
+  }
+
   private updateChaseAlert(dist: number, policeSightRange: number, visible = true) {
     if (
       !this.state.alert &&
@@ -2591,6 +2613,18 @@ export class GameEngine {
         this.state.cooldown,
         visibilityFactor
       );
+      // Sprint 15c: running the thela into an officer hurts them and turns every officer aggressive.
+      if (this.campaignPolice) {
+        const hvx = Number.isFinite(this.lastPoliceX) ? (this.human.position.x - this.lastPoliceX) / dt : 0;
+        const hvz = Number.isFinite(this.lastPoliceZ) ? (this.human.position.z - this.lastPoliceZ) / dt : 0;
+        const hit = this.campaignPolice.vendorContact(this.human.position, hvx, hvz);
+        if (hit) this.onOfficerHit(hit.heavy);
+        if (this.campaignPolice.aggressive && !this.state.alert) {
+          this.state.alert = true; this.state.escape = 0; this.stats.chasesStarted++;
+          this.publishState(true);
+        }
+      }
+      this.lastPoliceX = this.human.position.x; this.lastPoliceZ = this.human.position.z;
       const dist = this.campaignPolice?.nearestDistance(this.human.position.x, this.human.position.z) ?? distBefore;
       this.updateChaseAlert(dist, policeSightRange, this.campaignPolice?.playerVisible ?? false);
       if (this.state.alert) {
@@ -2603,7 +2637,9 @@ export class GameEngine {
           }
           return;
         }
-        this.updateChaseEscape(dt, dist, policeEscapeDist, !(this.campaignPolice?.playerVisible ?? false));
+        // Aggressive officers do not give up: no escape timer while they are after you for hitting one of them.
+        if (this.campaignPolice?.aggressive) this.state.escape = 0;
+        else this.updateChaseEscape(dt, dist, policeEscapeDist, !(this.campaignPolice?.playerVisible ?? false));
       }
     } else if (this.state.mode === 'online_vendor' && this.remoteActive) {
       const dist = this.vector2(this.human.position, this.officer.position);
