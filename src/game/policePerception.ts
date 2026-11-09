@@ -46,6 +46,30 @@ export function policeLineOfSight(a: PolicePoint,b: PolicePoint,obstacles: reado
   return true;
 }
 
+export interface OfficerMemorySummary {
+  readonly id: number;
+  readonly sightings: number;
+  readonly lastSeenAt: number;
+  readonly x: number;
+  readonly z: number;
+}
+
+export function knowsVendor(sightings: number): boolean {
+  return Number.isFinite(sightings) && sightings >= 2;
+}
+
+export function officerVisionRange(baseRange: number, sightings: number): number {
+  if (!Number.isFinite(baseRange) || baseRange <= 0) return 0;
+  if (!Number.isFinite(sightings) || sightings < 2) return baseRange;
+  const mult = sightings >= 4 ? 1.4 : 1.25;
+  return Math.min(baseRange * mult, baseRange + 10);
+}
+
+export function officerReactionDelay(baseDelay: number, sightings: number): number {
+  if (!Number.isFinite(baseDelay) || baseDelay <= 0) return 0;
+  return knowsVendor(sightings) ? baseDelay * 0.7 : baseDelay;
+}
+
 export function policeTactics(day: number) {
   return {search:day>=3,backup:day>=5,intercept:day>=8};
 }

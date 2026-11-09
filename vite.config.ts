@@ -5,7 +5,7 @@ import {defineConfig, loadEnv} from 'vite';
 
 export default defineConfig(({ command }) => {
   const isPages = command === 'build' && process.env.GITHUB_PAGES === 'true';
-  const pagesEnv = isPages ? loadEnv('pages', __dirname, 'VITE_') : {};
+  const pagesEnv = isPages ? loadEnv('pages', import.meta.dirname, 'VITE_') : {};
   const pagesServerUrl =
     process.env.VITE_SERVER_URL !== undefined
       ? process.env.VITE_SERVER_URL
@@ -24,9 +24,9 @@ export default defineConfig(({ command }) => {
     build: {
       rolldownOptions: {
         input: {
-          game: path.resolve(__dirname, 'index.html'),
-          characters: path.resolve(__dirname, 'character-preview.html'),
-          sounds: path.resolve(__dirname, 'sound-preview.html'),
+          game: path.resolve(import.meta.dirname, 'index.html'),
+          characters: path.resolve(import.meta.dirname, 'character-preview.html'),
+          sounds: path.resolve(import.meta.dirname, 'sound-preview.html'),
         },
       },
     },
@@ -35,8 +35,8 @@ export default defineConfig(({ command }) => {
       // WebGPU build, so there is one copy of three.js and WebGPURenderer can draw every object.
       // WebGPURenderer falls back to WebGL 2 by itself on browsers without WebGPU.
       alias: [
-        { find: /^three$/, replacement: path.resolve(__dirname, 'node_modules/three/build/three.webgpu.js') },
-        { find: '@', replacement: path.resolve(__dirname, '.') },
+        { find: /^three$/, replacement: path.resolve(import.meta.dirname, 'node_modules/three/build/three.webgpu.js') },
+        { find: '@', replacement: path.resolve(import.meta.dirname, '.') },
       ],
     },
     server: {

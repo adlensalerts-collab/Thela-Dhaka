@@ -15,12 +15,12 @@ export interface DifficultyProfile {
 
 // Game-design §4. Traffic counts and rage multipliers make qualitative tiers explicit.
 const ANCHORS = [
-  { day: 1, police: 1, vision: 25, traffic: 24, rage: 1, patience: 20 },
-  { day: 3, police: 2, vision: 30, traffic: 36, rage: 1, patience: 18 },
-  { day: 5, police: 2, vision: 35, traffic: 36, rage: 1.25, patience: 16 },
-  { day: 6, police: 3, vision: 35, traffic: 48, rage: 1.25, patience: 15 },
-  { day: 8, police: 4, vision: 40, traffic: 48, rage: 1.5, patience: 13 },
-  { day: 10, police: 5, vision: 45, traffic: 60, rage: 1.5, patience: 12 },
+  { day: 1, police: 2, vision: 25, traffic: 24, rage: 1, patience: 20 },
+  { day: 3, police: 3, vision: 30, traffic: 36, rage: 1, patience: 18 },
+  { day: 5, police: 4, vision: 35, traffic: 36, rage: 1.25, patience: 16 },
+  { day: 6, police: 5, vision: 35, traffic: 48, rage: 1.25, patience: 15 },
+  { day: 8, police: 6, vision: 40, traffic: 48, rage: 1.5, patience: 13 },
+  { day: 10, police: 7, vision: 45, traffic: 60, rage: 1.5, patience: 12 },
 ] as const;
 
 export function difficultyForDay(dayNumber: number): DifficultyProfile {
@@ -34,7 +34,7 @@ export function difficultyForDay(dayNumber: number): DifficultyProfile {
   const rageMultiplier = lerp(lower.rage, upper.rage);
   return Object.freeze({
     dayNumber,
-    policeCount: Math.round(lerp(lower.police, upper.police)),
+    policeCount: Math.min(7, Math.round(lerp(lower.police, upper.police))),
     policeVision: lerp(lower.vision, upper.vision),
     trafficCount,
     traffic: trafficCount < 30 ? 'Light' : trafficCount < 42 ? 'Medium' : trafficCount < 54 ? 'Heavy' : 'Very heavy',

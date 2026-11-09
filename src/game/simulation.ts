@@ -2297,7 +2297,9 @@ export class GameEngine {
 
   /** Hook for the blood decals (Sprint 15b adds bloodDecals.ts); heavy = a bloody knock-down. */
   private onOfficerInjured(x: number, z: number, heavy: boolean) {
-    void x; void z; void heavy;
+    if (heavy) {
+      this.pedestrianManager?.bloodDecals.spawnKnockdownBlood(x, z);
+    }
   }
 
   private updateChaseAlert(dist: number, policeSightRange: number, visible = true) {
@@ -2748,14 +2750,26 @@ export class GameEngine {
 
       this.crowdCharacters.update(this.customers, this.camera.position, this.qualityLevel, dt);
 
-      for (const ped of this.pedestrianManager.pedestrians) {
-        const distToPlayer = this.vector2(p.position, ped.mesh.position);
-        if (distToPlayer < 1.25 && distToPlayer > 0.01) {
-          const pushX = (ped.mesh.position.x - p.position.x) / distToPlayer;
-          const pushZ = (ped.mesh.position.z - p.position.z) / distToPlayer;
-          ped.mesh.position.x += pushX * dt * 1.5;
-          ped.mesh.position.z += pushZ * dt * 1.5;
+      if (
+        this.pedestrianManager.resolvePlayerContact(
+          p.position.x,
+          p.position.z,
+          this.state.heading,
+          this.currentSpeed,
+          isVendor,
+          this.qualityLevel === 'low'
+        ) &&
+        this.state.sale
+      ) {
+        if (this.state.sale.customer) {
+          this.state.sale.customer.isEngagedInSale = false;
+          this.state.sale.customer.summonUntil = 0;
         }
+        this.state.sale = null;
+        this.stats.salesInterrupted++;
+        this.playBeep(220, 0.2, 'sawtooth');
+        this.onEvent('notify', 'Sale interrupted — no payment.');
+        this.publishState(true);
       }
     }
 

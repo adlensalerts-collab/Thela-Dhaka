@@ -1,10 +1,12 @@
 import * as THREE from 'three';
+import { checkRigCollision, type CircleObstacle } from './collision';
 import { SidewalkGraph } from './pathfinding';
+import { BloodDecals } from './render/bloodDecals';
 import { createHumanRig, outfitForArchetype } from './world/humans';
 import { CrowdImpostors } from './crowd/crowdImpostors';
 import { activeFraction, hotspotTripChance, hotspotWeight, weightedIndex } from './crowd/crowdSchedule';
 
-/** Sprint 10 — what a pedestrian is doing besides walking (all non-graphic). */
+/** Sprint 10 — what a pedestrian is doing besides walking. */
 export type PedestrianActivity = 'none' | 'chat' | 'phone_call' | 'stall' | 'look' | 'wait_cross';
 
 /** Optional probes the engine supplies so pedestrians can respect roads and traffic. */
@@ -54,6 +56,9 @@ export interface PedestrianNPC {
   castsShadow?: boolean;
   isInjured: boolean;
   injuredTimer: number;
+  stumbleTimer: number;
+  limpTimer: number;
+  knockbackDist: number;
   hostileTimer: number;
   hitCooldown: number;
   attackCooldown: number;
@@ -111,6 +116,13 @@ const ARCHETYPES: PedestrianArchetype[] = [
   { name: 'Tea Stall Regular', bnName: 'চা প্রেমিক', shirtColor: '#966046', pantsColor: '#1f2b38', speed: 1.55 }
 ];
 
+const pedCollider: CircleObstacle = { type: 'circle', x: 0, z: 0, radius: 0.36 };
+
+/** Adults only: if any archetype is a child or school-age model, it only gets a bump and runs away. */
+function isChildOrSchoolArchetype(a: PedestrianArchetype): boolean {
+  return /child|kid|school|minor/i.test(a.name) || /শিশু|স্কুল/.test(a.bnName);
+}
+
 function colorsOf(group: THREE.Group) {
   const o = (group.userData.humanOptions ?? {}) as { shirt?: string; bottom?: string; skin?: string };
   return {
@@ -142,7 +154,9 @@ export class PedestrianManager {
   private detailTimer = 0;
   private nextGroupId = 1;
   private nearSet = new Set<PedestrianNPC>();
+  private nearBuffer: PedestrianNPC[] = [];
   private impostors: CrowdImpostors;
+  bloodDecals: BloodDecals;
   private disposed = false;
   /** Max simultaneous chat groups. */
   get groupLimit() { return Math.max(2, Math.floor(this.poolSize / 20)); }
@@ -225,6 +239,7 @@ export class PedestrianManager {
     // Far-tier crowd: added now (with 0 instances) so world teardown finds it with the district.
     this.impostors = new CrowdImpostors(this.poolSize);
     this.scene.add(this.impostors.group);
+    this.bloodDecals = new BloodDecals(this.scene);
     this.initPool();
   }
 
@@ -256,10 +271,10 @@ export class PedestrianManager {
   }
 
   private updateRageSprite(p: PedestrianNPC) {
-    const isChasing = p.state === 'hostile' || p.state === 'injured';
+    const isChasing = p.state === 'hostile';
     const displayRage = isChasing ? 100 : Math.min(100, Math.round(p.rage));
 
-    if (displayRage <= 1 && !isChasing && p.damageTaken <= 0) {
+    if (displayRage <= 1 && !isChasing && p.state !== 'injured' && p.damageTaken <= 0) {
       if (p.rageSprite) p.rageSprite.visible = false;
       return;
     }
@@ -365,7 +380,7 @@ export class PedestrianManager {
     ctx.lineTo(warnX, barY + barH - 1);
     ctx.stroke();
 
-    // No health/injury strip: public rage is non-graphic (docs/game-design.md §5).
+    // No health/injury strip or damage numbers on the HUD card: graphic injuries, blood decals and limping are shown on the character and street instead (Sprint 15b).
 
     p.rageTexture.needsUpdate = true;
   }
@@ -413,6 +428,7 @@ export class PedestrianManager {
         Math.hypot(initDx, initDz) > 0.01
           ? Math.atan2(initDx, -initDz)
           : Math.random() * Math.PI * 2;
+      rig.group.rotation.order = 'YXZ';
       rig.group.rotation.y = -initialHeading;
 
       this.pedestrians.push({
@@ -437,6 +453,9 @@ export class PedestrianManager {
         hasBought: false,
         isInjured: false,
         injuredTimer: 0,
+        stumbleTimer: 0,
+        limpTimer: 0,
+        knockbackDist: 0,
         hostileTimer: 0,
         hitCooldown: 0,
         attackCooldown: 0,
@@ -466,10 +485,13 @@ export class PedestrianManager {
   }
 
   reset() {
+    this.bloodDecals.clear();
     for (const p of this.pedestrians) {
       const startNodeId = (Math.random() * this.graph.nodes.length) | 0;
       const startNode = this.graph.nodes[startNodeId];
       p.mesh.position.set(startNode.x, 0, startNode.z);
+      p.mesh.rotation.x = 0;
+      p.mesh.rotation.z = 0;
       const targetNodeId = this.graph.getRandomDestination(startNodeId, 30);
       const path = this.graph.findAStarPath(startNodeId, targetNodeId);
       p.currentNodeId = startNodeId;
@@ -482,6 +504,9 @@ export class PedestrianManager {
       p.hasBought = false;
       p.isInjured = false;
       p.injuredTimer = 0;
+      p.stumbleTimer = 0;
+      p.limpTimer = 0;
+      p.knockbackDist = 0;
       p.hostileTimer = 0;
       p.hitCooldown = 0;
       p.attackCooldown = 0;
@@ -495,7 +520,10 @@ export class PedestrianManager {
       p.rightArm.rotation.set(0, 0, 0.06);
       p.leftLeg.rotation.set(0, 0, 0);
       p.rightLeg.rotation.set(0, 0, 0);
-      if (p.rageSprite) p.rageSprite.visible = false;
+      if (p.rageSprite) {
+        p.rageSprite.visible = false;
+        p.rageSprite.position.set(0, 2.42, 0);
+      }
       this.clearActivity(p);
       p.texting = false;
       p.hurryTimer = 0;
@@ -513,40 +541,118 @@ export class PedestrianManager {
     stepHostileFn?: (mesh: THREE.Group, dirX: number, dirZ: number, speed: number) => number
   ) {
     this.clock += dt;
+    this.bloodDecals.update(dt);
     if (this.minutes !== null || this.lastCam) this.updateDensity(dt);
     this.updateGroups(dt);
     for (let i = 0; i < this.pedestrians.length; i++) {
       const p = this.pedestrians[i];
       if (!p.active) continue;
       if (p.hurryTimer > 0) p.hurryTimer = Math.max(0, p.hurryTimer - dt);
+      if (p.limpTimer > 0) {
+        p.limpTimer = Math.max(0, p.limpTimer - dt);
+        if (p.limpTimer <= 0 && p.state !== 'injured') p.isInjured = false;
+      }
 
       if (p.hitCooldown > 0) p.hitCooldown = Math.max(0, p.hitCooldown - dt);
       if (p.attackCooldown > 0) p.attackCooldown = Math.max(0, p.attackCooldown - dt);
 
-      // Apply physical knockback velocity if recently struck by the vendor's vehicle
+      // Apply physical knockback velocity (clamped off carriageways and capped at 1.5 m)
       if (Math.abs(p.knockbackVx) > 0.02 || Math.abs(p.knockbackVz) > 0.02) {
-        p.mesh.position.x = THREE.MathUtils.clamp(p.mesh.position.x + p.knockbackVx * dt, -this.bounds.x, this.bounds.x);
-        p.mesh.position.z = THREE.MathUtils.clamp(p.mesh.position.z + p.knockbackVz * dt, -this.bounds.z, this.bounds.z);
+        let stepX = p.knockbackVx * dt;
+        let stepZ = p.knockbackVz * dt;
+        const stepLen = Math.hypot(stepX, stepZ);
+        const remaining = Math.max(0, 1.5 - p.knockbackDist);
+        if (stepLen > remaining && stepLen > 0.0001) {
+          const scale = remaining / stepLen;
+          stepX *= scale;
+          stepZ *= scale;
+        }
+        const nx = THREE.MathUtils.clamp(p.mesh.position.x + stepX, -this.bounds.x, this.bounds.x);
+        const nz = THREE.MathUtils.clamp(p.mesh.position.z + stepZ, -this.bounds.z, this.bounds.z);
+        if (remaining > 0.001 && !this.probes?.isOnCarriageway(nx, nz)) {
+          p.mesh.position.x = nx;
+          p.mesh.position.z = nz;
+          p.knockbackDist += Math.hypot(stepX, stepZ);
+        } else {
+          p.knockbackVx = 0;
+          p.knockbackVz = 0;
+        }
         p.knockbackVx = THREE.MathUtils.damp(p.knockbackVx, 0, 7, dt);
         p.knockbackVz = THREE.MathUtils.damp(p.knockbackVz, 0, 7, dt);
       }
 
-      // Injured state: pedestrian stumbles in pain after collision, then turns hostile to chase vendor
+      // Injured state (knock-down): falls hard, lies 3 s, then gets up slowly holding head or arm, then limps away
       if (p.state === 'injured') {
-        p.rage = 100;
-        p.walkCycle += dt * 10;
+        p.walkCycle += dt * 6;
         p.injuredTimer -= dt;
-        p.body.rotation.x = -0.55;
-        p.body.rotation.z = Math.sin(p.walkCycle) * 0.25;
-        p.leftArm.rotation.x = 0.65;
-        p.rightArm.rotation.x = 0.65;
-        p.leftLeg.rotation.x = -0.25;
-        p.rightLeg.rotation.x = 0.25;
-
-        if (p.injuredTimer <= 0) {
-          p.state = 'hostile';
+        const holdHead = (p.id & 1) === 0;
+        if (p.injuredTimer > 1.2) {
+          // Lying on the ground for 3 s (injuredTimer starts at 4.2 s -> 3.0 s lying + 1.2 s getting up)
+          const fallElapsed = Math.max(0, 4.2 - p.injuredTimer);
+          const fallT = Math.min(1, fallElapsed / 0.22);
+          p.mesh.rotation.x = THREE.MathUtils.lerp(0, 1.42, fallT);
+          p.mesh.position.y = THREE.MathUtils.lerp(0, 0.14, fallT);
+          p.body.rotation.x = 0.08;
+          p.body.rotation.z = Math.sin(p.walkCycle * 0.5) * 0.05;
+          p.leftArm.rotation.x = -0.35;
+          p.leftArm.rotation.z = -0.25;
+          p.rightArm.rotation.x = holdHead ? -2.1 : -0.95;
+          p.rightArm.rotation.z = holdHead ? -0.4 : -0.3;
+          p.leftLeg.rotation.x = -0.12;
+          p.rightLeg.rotation.x = 0.18;
+        } else if (p.injuredTimer > 0) {
+          // Getting up slowly over 1.2 s holding their head or arm
+          const riseT = 1 - p.injuredTimer / 1.2;
+          p.mesh.rotation.x = THREE.MathUtils.lerp(1.42, 0, riseT);
+          p.mesh.position.y = THREE.MathUtils.lerp(0.14, 0, riseT);
+          p.body.rotation.x = THREE.MathUtils.lerp(0.35, 0.14, riseT);
+          p.body.rotation.z = Math.sin(p.walkCycle) * 0.12;
+          if (holdHead) {
+            p.rightArm.rotation.x = -2.15;
+            p.rightArm.rotation.z = -0.42;
+            p.leftArm.rotation.x = 0.25 * (1 - riseT);
+            p.leftArm.rotation.z = -0.1;
+          } else {
+            p.rightArm.rotation.x = -1.1;
+            p.rightArm.rotation.z = -0.5;
+            p.leftArm.rotation.x = -0.75;
+            p.leftArm.rotation.z = 0.35;
+          }
+          p.leftLeg.rotation.x = (1 - riseT) * -0.35;
+          p.rightLeg.rotation.x = (1 - riseT) * 0.35;
+        } else {
+          p.mesh.rotation.x = 0;
+          p.mesh.position.y = 0;
           p.body.rotation.x = 0;
           p.body.rotation.z = 0;
+          p.isInjured = true;
+          p.limpTimer = 60;
+          p.state = 'walking';
+          if (p.path.length === 0 || p.pathIndex >= p.path.length) {
+            this.startTrip(p);
+          }
+        }
+        this.updateRageSprite(p);
+        continue;
+      }
+
+      // Stumble state: staggers back about 0.8 m over 0.5 s with arms out
+      if (p.stumbleTimer > 0) {
+        p.stumbleTimer = Math.max(0, p.stumbleTimer - dt);
+        p.walkCycle += dt * 11;
+        p.body.rotation.x = -0.26 * (p.stumbleTimer / 0.5);
+        p.body.rotation.z = Math.sin(p.walkCycle) * 0.18;
+        p.leftArm.rotation.x = -0.9;
+        p.leftArm.rotation.z = -0.55;
+        p.rightArm.rotation.x = -0.9;
+        p.rightArm.rotation.z = 0.55;
+        p.leftLeg.rotation.x = Math.sin(p.walkCycle) * 0.45;
+        p.rightLeg.rotation.x = -Math.sin(p.walkCycle) * 0.45;
+        if (p.stumbleTimer <= 0) {
+          p.body.rotation.x = 0;
+          p.body.rotation.z = 0;
+          p.leftArm.rotation.z = -0.06;
+          p.rightArm.rotation.z = 0.06;
         }
         this.updateRageSprite(p);
         continue;
@@ -778,7 +884,7 @@ export class PedestrianManager {
         const alignment = Math.max(0, Math.cos(angleDiff));
         const hurrying = !!p.summonUntil && this.clock < p.summonUntil;     // customer heading to the thela
         const crossingNow = p.crossingRoad && p.crossWait >= 6;
-        const walkSpeed = p.isInjured ? p.speed * 0.8
+        const walkSpeed = p.isInjured ? p.speed * 0.6
           : hurrying ? Math.max(2.6, p.speed * 1.9)
           : p.hurryTimer > 0 || crossingNow ? p.speed * 1.4
           : p.texting ? p.speed * 0.8 : p.speed;
@@ -787,13 +893,19 @@ export class PedestrianManager {
         p.mesh.position.x += dirX * moveDist;
         p.mesh.position.z += dirZ * moveDist;
 
-        // Animate natural limb swings during walking
+        // Animate natural limb swings during walking (with visible limp / holding head or arm if injured)
         p.walkCycle += walkSpeed * Math.max(0.35, alignment) * dt * 5.2;
-        const swing = Math.sin(p.walkCycle) * 0.45;
+        const swing = Math.sin(p.walkCycle) * (p.isInjured ? 0.32 : 0.45);
         p.leftLeg.rotation.x = -swing;
-        p.rightLeg.rotation.x = swing;
+        p.rightLeg.rotation.x = p.isInjured ? swing * 0.45 : swing;
         p.leftArm.rotation.x = swing * 0.85;
-        if (p.texting && !crossingNow) {
+        if (p.isInjured) {
+          const holdHead = (p.id & 1) === 0;
+          p.rightArm.rotation.x = holdHead ? -2.0 : -1.05;
+          p.rightArm.rotation.z = -0.4;
+          p.body.rotation.x = 0.14;
+          p.body.rotation.z = Math.sin(p.walkCycle) * 0.14;
+        } else if (p.texting && !crossingNow) {
           p.rightArm.rotation.x = -0.95;       // phone held in front, eyes down
           p.rightArm.rotation.z = -0.22;
           p.body.rotation.x = 0.06;
@@ -804,6 +916,219 @@ export class PedestrianManager {
         }
         p.leftArm.rotation.z = -0.06;
         p.body.position.y = p.body.userData.baseY + Math.abs(Math.sin(p.walkCycle * 2)) * 0.04; // Torso step bob
+      }
+    }
+    this.separateNearPedestrians(dt);
+  }
+
+  private clampOffRoad(fromX: number, fromZ: number, dx: number, dz: number, maxDist: number): { x: number; z: number } {
+    const len = Math.hypot(dx, dz);
+    if (len < 0.0001) return { x: fromX, z: fromZ };
+    const capped = Math.min(len, maxDist);
+    const ux = dx / len;
+    const uz = dz / len;
+    let bestX = fromX;
+    let bestZ = fromZ;
+    const steps = 4;
+    for (let s = 1; s <= steps; s++) {
+      const d = (capped * s) / steps;
+      const cx = THREE.MathUtils.clamp(fromX + ux * d, -this.bounds.x, this.bounds.x);
+      const cz = THREE.MathUtils.clamp(fromZ + uz * d, -this.bounds.z, this.bounds.z);
+      if (this.probes?.isOnCarriageway(cx, cz)) break;
+      bestX = cx;
+      bestZ = cz;
+    }
+    return { x: bestX, z: bestZ };
+  }
+
+  /**
+   * Sprint 15b — Contact check between the player (vendor + thela cart, or police officer)
+   * and pedestrians, reusing checkRigCollision from collision.ts.
+   * Returns true if the pedestrian hit was engaged in a sale (so the engine can interrupt it).
+   */
+  resolvePlayerContact(
+    px: number,
+    pz: number,
+    heading: number,
+    playerSpeed: number,
+    isVendor: boolean,
+    isLowQuality = false
+  ): boolean {
+    this.bloodDecals.setLowQuality(isLowQuality);
+    let saleCustomerHit = false;
+    const moveDirX = Math.sin(heading);
+    const moveDirZ = -Math.cos(heading);
+    const playerVx = moveDirX * playerSpeed;
+    const playerVz = moveDirZ * playerSpeed;
+
+    for (let i = 0; i < this.pedestrians.length; i++) {
+      const p = this.pedestrians[i];
+      if (!p.active || p.state === 'injured') continue;
+
+      const pedX = p.mesh.position.x;
+      const pedZ = p.mesh.position.z;
+      // Quick bounding reject before exact rig check
+      if (Math.abs(pedX - px) > 3.2 || Math.abs(pedZ - pz) > 3.2) continue;
+
+      pedCollider.x = pedX;
+      pedCollider.z = pedZ;
+      const res = checkRigCollision(px, pz, heading, isVendor, pedCollider);
+      if (!res.collided) continue;
+
+      // Outward direction from the colliding rig circle toward the pedestrian
+      let outX = -res.normalX;
+      let outZ = -res.normalZ;
+      const outLen = Math.hypot(outX, outZ);
+      if (outLen > 0.0001) {
+        outX /= outLen;
+        outZ /= outLen;
+      } else {
+        outX = moveDirX;
+        outZ = moveDirZ;
+      }
+
+      // Always separate overlap up to 1.5 m without pushing onto a carriageway
+      const pushDist = Math.min(1.5, Math.max(0.08, res.penetration + 0.06));
+      const pushed = this.clampOffRoad(pedX, pedZ, outX * pushDist, outZ * pushDist, 1.5);
+      p.mesh.position.x = pushed.x;
+      p.mesh.position.z = pushed.z;
+
+      if (p.hitCooldown > 0) continue;
+
+      // Interrupt any active sale with this customer immediately
+      if (p.isEngagedInSale) {
+        p.isEngagedInSale = false;
+        p.summonUntil = 0;
+        saleCustomerHit = true;
+      }
+      p.summonUntil = 0;
+      if (p.activity !== 'none' || p.groupId !== 0) {
+        this.clearActivity(p);
+      }
+
+      const approachDot = playerVx * outX + playerVz * outZ;
+      const closingSpeed = approachDot < -0.15 ? 0 : Math.max(0, Math.abs(playerSpeed), approachDot);
+      const isProtected = isChildOrSchoolArchetype(p.archetype);
+
+      if (isProtected || closingSpeed < 1.5) {
+        // Bump (< 1.5 m/s, or child/school-age archetype): step aside and turn to look; rage +8
+        p.hitCooldown = 0.75;
+        p.rage = Math.min(100, p.rage + 8);
+        // Step aside perpendicular to vendor's heading (away from centerline)
+        const sideSign = (pedX - px) * -moveDirZ + (pedZ - pz) * moveDirX >= 0 ? 1 : -1;
+        const sideX = -moveDirZ * sideSign * 0.45 + outX * 0.25;
+        const sideZ = moveDirX * sideSign * 0.45 + outZ * 0.25;
+        const stepped = this.clampOffRoad(p.mesh.position.x, p.mesh.position.z, sideX, sideZ, 0.65);
+        p.mesh.position.x = stepped.x;
+        p.mesh.position.z = stepped.z;
+        p.knockbackDist = 0;
+        p.knockbackVx = 0;
+        p.knockbackVz = 0;
+
+        if (isProtected) {
+          p.state = 'walking';
+          p.hurryTimer = 6;
+        } else {
+          this.startActivity(p, 'look', 1.4, px, pz);
+        }
+      } else if (closingSpeed <= 3.5) {
+        // Stumble (1.5–3.5 m/s): staggers back about 0.8 m over 0.5 s with arms out; rage +20
+        p.hitCooldown = 0.95;
+        p.rage = Math.min(100, p.rage + 20);
+        p.stumbleTimer = 0.5;
+        p.knockbackDist = 0;
+        // Damped velocity with initial ~2.8 m/s integrates to ~0.8 m over 0.5 s (capped at 1.5 m)
+        p.knockbackVx = outX * 2.8;
+        p.knockbackVz = outZ * 2.8;
+        p.heading = Math.atan2(-outX, outZ);
+        p.mesh.rotation.y = -p.heading;
+      } else {
+        // Knock-down (> 3.5 m/s): falls hard, lies 3 s, gets up holding head/arm; rage +40; limps at 60% for 60 s
+        p.hitCooldown = 4.4;
+        p.rage = Math.min(100, p.rage + 40);
+        p.damageTaken = Math.min(100, p.damageTaken + 40);
+        p.isInjured = true;
+        p.state = 'injured';
+        p.injuredTimer = 4.2; // 3.0 s lying + 1.2 s getting up slowly
+        p.stumbleTimer = 0;
+        p.knockbackDist = 0;
+        p.knockbackVx = outX * 3.4;
+        p.knockbackVz = outZ * 3.4;
+        // Face toward the impact so pitching +X tips their back and head along (outX, outZ)
+        p.heading = Math.atan2(-outX, outZ);
+        p.mesh.rotation.y = -p.heading;
+
+        const restSpot = this.clampOffRoad(p.mesh.position.x, p.mesh.position.z, outX * 0.45, outZ * 0.45, 1.5);
+        const headSpot = this.clampOffRoad(restSpot.x, restSpot.z, outX * 1.15, outZ * 1.15, 1.5);
+        this.bloodDecals.spawnKnockdownBlood(headSpot.x, headSpot.z);
+        this.notifyEvent('accident', restSpot.x, restSpot.z);
+      }
+      this.updateRageSprite(p);
+    }
+
+    return saleCustomerHit;
+  }
+
+  /**
+   * Soft separation to 0.7 m between near-tier pedestrians only (p.lod === 'near'),
+   * using an in-place sorted sweep along X (O(n), zero per-frame allocations).
+   */
+  private separateNearPedestrians(dt: number) {
+    if (!(dt > 0)) return;
+    let count = 0;
+    for (let i = 0; i < this.pedestrians.length; i++) {
+      const p = this.pedestrians[i];
+      if (p.active && p.lod === 'near' && p.state !== 'injured') {
+        this.nearBuffer[count++] = p;
+      }
+    }
+    this.nearBuffer.length = count;
+    if (count < 2) return;
+
+    // In-place insertion sort by X coordinate
+    for (let i = 1; i < count; i++) {
+      const cur = this.nearBuffer[i];
+      const curX = cur.mesh.position.x;
+      let j = i - 1;
+      while (j >= 0 && this.nearBuffer[j].mesh.position.x > curX) {
+        this.nearBuffer[j + 1] = this.nearBuffer[j];
+        j--;
+      }
+      this.nearBuffer[j + 1] = cur;
+    }
+
+    const minSep = 0.7;
+    const minSepSq = minSep * minSep;
+    const maxStep = Math.min(0.18, dt * 2.6);
+    for (let i = 0; i < count; i++) {
+      const a = this.nearBuffer[i];
+      const ax = a.mesh.position.x;
+      const az = a.mesh.position.z;
+      for (let j = i + 1; j < count; j++) {
+        const b = this.nearBuffer[j];
+        const dx = b.mesh.position.x - ax;
+        if (dx >= minSep) break;
+        const dz = b.mesh.position.z - az;
+        const d2 = dx * dx + dz * dz;
+        if (d2 >= minSepSq) continue;
+        const d = Math.sqrt(d2);
+        const nx = d > 0.0001 ? dx / d : 1;
+        const nz = d > 0.0001 ? dz / d : 0;
+        const push = Math.min((minSep - d) * 0.5, maxStep);
+
+        const aNextX = THREE.MathUtils.clamp(a.mesh.position.x - nx * push, -this.bounds.x, this.bounds.x);
+        const aNextZ = THREE.MathUtils.clamp(a.mesh.position.z - nz * push, -this.bounds.z, this.bounds.z);
+        if (!this.probes?.isOnCarriageway(aNextX, aNextZ)) {
+          a.mesh.position.x = aNextX;
+          a.mesh.position.z = aNextZ;
+        }
+
+        const bNextX = THREE.MathUtils.clamp(b.mesh.position.x + nx * push, -this.bounds.x, this.bounds.x);
+        const bNextZ = THREE.MathUtils.clamp(b.mesh.position.z + nz * push, -this.bounds.z, this.bounds.z);
+        if (!this.probes?.isOnCarriageway(bNextX, bNextZ)) {
+          b.mesh.position.x = bNextX;
+          b.mesh.position.z = bNextZ;
+        }
       }
     }
   }
@@ -1066,6 +1391,7 @@ export class PedestrianManager {
     if (this.disposed) return;
     this.disposed = true;
     this.impostors.dispose();
+    this.bloodDecals.dispose();
     for (const p of this.pedestrians) {
       p.rageTexture?.dispose();
       (p.rageSprite?.material as THREE.SpriteMaterial | undefined)?.dispose();

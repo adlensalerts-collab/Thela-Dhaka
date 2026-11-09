@@ -134,11 +134,11 @@ test('route replans preserve progress and cannot bridge disconnected graph compo
 
 test('new day/bribe reset clears sightings and routes; invalid dt does not advance AI; teardown removes extras',()=>{
   const f=fixture(10);f.police.resetPositions(0,0);
-  assert.equal(f.police.count,5);assert.ok(f.police.positions().every(p=>Math.hypot(p.x,p.z)>=50));
+  assert.equal(f.police.count,7);assert.ok(f.police.positions().every(p=>Math.hypot(p.x,p.z)>=50));
   const before=f.police.positions();for(const dt of [0,-1,NaN,Infinity]) f.police.update(dt,f.player,true,1,f.camera,100,0);
   assert.deepEqual(f.police.positions(),before);
   f.police.resetPositions(0,0);assert.equal(f.police.lastKnownPosition,null);assert.equal(f.police.playerVisible,false);
-  assert.equal(f.police.detachExtras().length,4);assert.equal(f.police.count,0);
+  assert.equal(f.police.detachExtras().length,6);assert.equal(f.police.count,0);
 });
 
 test('Sprint 15c: hitting an officer hurts them, makes police aggressive and allows arrest without alert, heat or sight',()=>{

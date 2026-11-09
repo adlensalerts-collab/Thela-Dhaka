@@ -3,10 +3,24 @@ import { resolveMovement, type Obstacle } from './collision';
 import type { SidewalkGraph } from './pathfinding';
 import type { DifficultyProfile } from './difficulty';
 import { animateHuman, createHumanRig, type HumanRig } from './world/humans';
-import { inPoliceView, policeLineOfSight, policeTactics, POLICE_CHASE_SPEED,
-  POLICE_VISION_HALF_ANGLE, type PolicePoint } from './policePerception';
+import {
+  inPoliceView,
+  knowsVendor,
+  officerReactionDelay,
+  officerVisionRange,
+  policeLineOfSight,
+  policeTactics,
+  POLICE_CHASE_SPEED,
+  POLICE_VISION_HALF_ANGLE,
+  type OfficerMemorySummary,
+  type PolicePoint,
+} from './policePerception';
 
 export type PoliceMode = 'post' | 'patrol' | 'chase' | 'search' | 'backup' | 'intercept';
+
+const SLIDE_OFFSETS = [1.1, -1.1, 1.57, -1.57] as const;
+
+export type PoliceHurtState = 'none' | 'stagger' | 'down' | 'rising';
 
 interface Patrol {
   object: THREE.Group;
@@ -20,17 +34,20 @@ interface Patrol {
   visible: boolean;
   informed: boolean;
   mode: PoliceMode;
-  /** Sprint 15c: hurt by the vendor's thela. 'stagger' is a stumble, 'down' a knock-down, 'rising' getting back up. */
-  hurt: 'none' | 'stagger' | 'down' | 'rising';
-  hurtT: number;
+  sightings: number;
+  lastSeenAt: number;
+  lastSeenX: number;
+  lastSeenZ: number;
+  lastSightingAt: number;
+  unseenSeconds: number;
+  nextMemoryPatrolAt: number;
+  onMemoryPatrol: boolean;
+  hurt: PoliceHurtState;
+  hurtFor: number;
   hitCd: number;
-  kx: number;
-  kz: number;
+  knockVx: number;
+  knockVz: number;
 }
-
-const calm = () => ({ hurt: 'none' as const, hurtT: 0, hitCd: 0, kx: 0, kz: 0 });
-/** Seconds the officer lies down after a hard hit, and the time it takes to get up. */
-const DOWN_SECONDS = 3.0, RISE_SECONDS = 1.1, STAGGER_SECONDS = 0.7, AGGRO_SECONDS = 90;
 
 export interface PatrolWorld {
   graph: SidewalkGraph;
@@ -47,29 +64,38 @@ export class CampaignPolice {
   private routeSequence = 0;
   primarySpeed = 0;
   playerVisible = false;
+  onInjury?: (x: number, z: number, heavy: boolean) => void;
   private senseIn = 0;
   private clock = 0;
   private alertSeconds = 0;
   private wasAlert = false;
+  private aggressiveFor = 0;
+  private radioFor = 0;
   private lastSeen: (PolicePoint & { at: number; vx: number; vz: number }) | null = null;
   private components: number[] = [];
   private junctionStops: number[] = [];
-  /** Sprint 15c: while this clock value is in the future every officer is aggressive (the vendor hit one of them). */
-  private aggroUntil = 0;
-  private aggroStart = -999;
-  /** Called when an officer is injured (the engine draws blood from it). */
-  onInjury: ((x: number, z: number, heavy: boolean) => void) | null = null;
 
   constructor(primary: THREE.Group, readonly difficulty: DifficultyProfile,
     private world: PatrolWorld, scene: THREE.Scene) {
-    this.patrols = [{ object: primary, rig: null, route: [], step: 0, phase: 0, nextRoute: 0, blockedUntil: 0,
-      home: { x: 0, z: 0 }, visible: false, informed: false, mode: 'post', ...calm() }];
+    this.patrols = [{
+      object: primary, rig: null, route: [], step: 0, phase: 0, nextRoute: 0, blockedUntil: 0,
+      home: { x: 0, z: 0 }, visible: false, informed: false, mode: 'post',
+      sightings: 0, lastSeenAt: 0, lastSeenX: 0, lastSeenZ: 0,
+      lastSightingAt: -Infinity, unseenSeconds: 0, nextMemoryPatrolAt: 0, onMemoryPatrol: false,
+      hurt: 'none', hurtFor: 0, hitCd: 0, knockVx: 0, knockVz: 0,
+    }];
     for (let i = 1; i < difficulty.policeCount; i++) {
       const rig = createHumanRig({ outfit: 'police', compact: true, scale: 1.18, seed: 700 + i });
       rig.group.name = `campaign-police-${i}`;
+      rig.group.position.set(50, 0, 50);
       scene.add(rig.group);
-      this.patrols.push({ object: rig.group, rig, route: [], step: 0, phase: 0, nextRoute: 0, blockedUntil: 0,
-        home: { x: 0, z: 0 }, visible: false, informed: false, mode: 'post', ...calm() });
+      this.patrols.push({
+        object: rig.group, rig, route: [], step: 0, phase: 0, nextRoute: 0, blockedUntil: 0,
+        home: { x: 50, z: 50 }, visible: false, informed: false, mode: 'post',
+        sightings: 0, lastSeenAt: 0, lastSeenX: 0, lastSeenZ: 0,
+        lastSightingAt: -Infinity, unseenSeconds: 0, nextMemoryPatrolAt: 0, onMemoryPatrol: false,
+        hurt: 'none', hurtFor: 0, hitCd: 0, knockVx: 0, knockVz: 0,
+      });
     }
     // A* falls back to a straight line between disconnected nodes. Avoid that fallback.
     for (const node of world.graph.nodes) {
@@ -79,12 +105,27 @@ export class CampaignPolice {
         if (this.components[id] === undefined) { this.components[id] = node.id; pending.push(id); }
       }
     }
-    for (const patrol of this.patrols) patrol.object.rotation.order = 'YXZ';   // heading first, then fall pitch
     this.junctionStops = [...new Set((world.junctions ?? []).map(p => world.graph.findNearestNode(p.x, p.z)))]
       .filter(id => this.validStop(world.graph.nodes[id].x, world.graph.nodes[id].z));
   }
 
   get count() { return this.patrols.length; }
+
+  get aggressive() { return this.aggressiveFor > 0; }
+
+  get memorySummary(): readonly OfficerMemorySummary[] {
+    return Object.freeze(
+      this.patrols.map((p, id) =>
+        Object.freeze({
+          id,
+          sightings: p.sightings,
+          lastSeenAt: p.lastSeenAt,
+          x: p.lastSeenX,
+          z: p.lastSeenZ,
+        })
+      )
+    );
+  }
 
   private validStop(x: number, z: number) {
     if (this.world.isRoad(x, z)) return false;
@@ -110,16 +151,29 @@ export class CampaignPolice {
       selected.push(best);
       const patrol = this.patrols[i];
       patrol.object.position.set(best.x, 0, best.z);
+      patrol.object.rotation.x = 0;
       patrol.object.rotation.y = -Math.atan2(playerX - best.x, best.z - playerZ);
       patrol.route = []; patrol.step = 0; patrol.nextRoute = 0; patrol.blockedUntil = 0;
       patrol.home = { x: best.x, z: best.z }; patrol.visible = false;
       patrol.informed = false;
       patrol.mode = this.difficulty.patrolRoutes ? 'patrol' : 'post';
+      patrol.sightings = 0;
+      patrol.lastSeenAt = 0;
+      patrol.lastSeenX = 0;
+      patrol.lastSeenZ = 0;
+      patrol.lastSightingAt = -Infinity;
+      patrol.unseenSeconds = 0;
+      patrol.nextMemoryPatrolAt = 0;
+      patrol.onMemoryPatrol = false;
+      patrol.hurt = 'none';
+      patrol.hurtFor = 0;
+      patrol.hitCd = 0;
+      patrol.knockVx = 0;
+      patrol.knockVz = 0;
     }
-    for (const p of this.patrols) { Object.assign(p, calm()); p.object.rotation.x = 0; p.object.position.y = 0; }
-    this.aggroUntil = 0; this.aggroStart = -999;
     this.lastSeen = null; this.playerVisible = false; this.senseIn = 0;
     this.alertSeconds = 0; this.wasAlert = false; this.clock = 0; this.primarySpeed = 0;
+    this.aggressiveFor = 0; this.radioFor = 0;
   }
 
   nearestDistance(x: number, z: number) {
@@ -144,11 +198,39 @@ export class CampaignPolice {
       });
     }
     if (!candidates.length) { patrol.nextRoute = 2; return; }
+    if (patrol.lastSeenAt > 0) {
+      const outsideMemory = candidates.filter(
+        (n) => Math.hypot(n.x - patrol.lastSeenX, n.z - patrol.lastSeenZ) > 20
+      );
+      if (outsideMemory.length) candidates = outsideMemory;
+    }
     const junctions = candidates.filter(n => this.junctionStops.includes(n.id));
     if (junctions.length) candidates = junctions;
     const destination = candidates[(this.routeSequence++ * 31) % candidates.length];
     patrol.route = this.world.graph.findAStarPath(this.world.graph.findNearestNode(x, z), destination.id);
     patrol.step = 0; patrol.nextRoute = 2;
+  }
+
+  private planMemoryRoute(patrol: Patrol): boolean {
+    const { x, z } = patrol.object.position;
+    const start = this.world.graph.findNearestNode(x, z);
+    const candidates = this.world.graph.nodes.filter((n) =>
+      this.components[n.id] === this.components[start] &&
+      Math.hypot(n.x - patrol.lastSeenX, n.z - patrol.lastSeenZ) <= 20 &&
+      this.validStop(n.x, n.z)
+    );
+    if (!candidates.length) return false;
+    const away = candidates.filter((n) => Math.hypot(n.x - x, n.z - z) >= 1.5);
+    const pool = away.length ? away : candidates;
+    const destination = pool[(this.routeSequence++ * 31) % pool.length];
+    const rawPath = this.world.graph.findAStarPath(start, destination.id);
+    const safePath = rawPath.filter((pt) => !this.world.isRoad(pt.x, pt.z));
+    patrol.route = safePath.length ? safePath : [{ x: destination.x, z: destination.z }];
+    patrol.step = 0;
+    patrol.nextRoute = 2;
+    patrol.onMemoryPatrol = true;
+    patrol.nextMemoryPatrolAt = this.clock + 40;
+    return true;
   }
 
   private planChaseRoute(patrol: Patrol, playerX: number, playerZ: number) {
@@ -161,9 +243,10 @@ export class CampaignPolice {
         goalId = node.id; distance = d;
       }
     }
+    const reRouteDelay = officerReactionDelay(0.9, patrol.sightings);
     const goal = this.world.graph.nodes[goalId], previous = patrol.route[patrol.route.length - 1];
     if (goal && previous && previous.x === goal.x && previous.z === goal.z && patrol.step < patrol.route.length) {
-      patrol.nextRoute = 0.9; return;
+      patrol.nextRoute = reRouteDelay; return;
     }
     patrol.route = goalId < 0 ? [] : this.world.graph.findAStarPath(startId, goalId);
     patrol.step = 0;
@@ -174,7 +257,7 @@ export class CampaignPolice {
       if (t >= 0 && t <= 1 && Math.hypot(x - a.x - t * dx, z - a.z - t * dz) < 1.5 &&
         this.clearSight(patrol.object.position, b)) patrol.step = 1;
     }
-    patrol.nextRoute = 0.9;
+    patrol.nextRoute = reRouteDelay;
   }
 
   get lastKnownPosition(): PolicePoint | null { return this.lastSeen ? { x: this.lastSeen.x, z: this.lastSeen.z } : null; }
@@ -184,96 +267,80 @@ export class CampaignPolice {
       this.world.obstacles((from.x + to.x) / 2, (from.z + to.z) / 2));
   }
 
-  /** Sprint 15c: true for ~90 s after the vendor hit an officer. */
-  get aggressive() { return this.clock < this.aggroUntil; }
-
-  /** Upright officers only. When aggressive they arrest from further away and without line of sight, heat or alert. */
-  canArrest(player: PolicePoint) {
-    const aggro = this.aggressive;
-    return this.patrols.some(p => {
-      if (p.hurt !== 'none') return false;
-      const d = Math.hypot(p.object.position.x - player.x, p.object.position.z - player.z);
-      return aggro ? d < 2.6 : d < 2.1 && this.clearSight(p.object.position, player);
-    });
-  }
-
-  /**
-   * Sprint 15c: the vendor (moving at `vx`,`vz` m/s, thela about 1.2 m ahead of him) runs into an officer.
-   * A light hit makes the officer stumble; a hard hit (3.5 m/s or more) knocks them down. Either way every officer
-   * turns aggressive and is told where the vendor is. Returns what happened, or null.
-   */
-  vendorContact(player: PolicePoint, vx: number, vz: number): { index: number; heavy: boolean; x: number; z: number } | null {
+  vendorContact(vendor: PolicePoint, vx: number, vz: number): { index: number; heavy: boolean } | null {
     const speed = Math.hypot(vx, vz);
-    if (!(speed >= 0.8)) return null;
-    const fx = vx / speed, fz = vz / speed;
-    const cart = { x: player.x + fx * 1.2, z: player.z + fz * 1.2 };
+    if (!(speed >= 1.2) || !Number.isFinite(speed)) return null;
     for (let i = 0; i < this.patrols.length; i++) {
-      const p = this.patrols[i], pos = p.object.position;
+      const p = this.patrols[i];
       if (p.hurt !== 'none' || p.hitCd > 0) continue;
-      const touching = Math.hypot(pos.x - player.x, pos.z - player.z) < 1.25 || Math.hypot(pos.x - cart.x, pos.z - cart.z) < 1.25;
-      if (!touching) continue;
-      const tx = pos.x - player.x, tz = pos.z - player.z, len = Math.hypot(tx, tz) || 1;
-      if ((fx * tx + fz * tz) / len < 0.2) continue;       // moving away from the officer: not a hit
-      const heavy = speed >= 3.5;
+      const dx = p.object.position.x - vendor.x;
+      const dz = p.object.position.z - vendor.z;
+      const dist = Math.hypot(dx, dz);
+      if (dist > 1.65) continue;
+      const closing = dist > 1e-5 ? (vx * dx + vz * dz) / dist : speed;
+      if (closing < 1.2) continue;
+      const heavy = closing >= 3.5;
       p.hurt = heavy ? 'down' : 'stagger';
-      p.hurtT = heavy ? DOWN_SECONDS : STAGGER_SECONDS;
-      p.hitCd = 2.5;
-      p.kx = tx / len * (heavy ? 3.2 : 2.0); p.kz = tz / len * (heavy ? 3.2 : 2.0);
-      p.route = []; p.nextRoute = 0;
-      this.provoke(player);
-      this.onInjury?.(pos.x, pos.z, heavy);
-      return { index: i, heavy, x: pos.x, z: pos.z };
+      p.hurtFor = heavy ? 3.0 : 0.85;
+      p.hitCd = heavy ? 4.2 : 1.2;
+      const ux = dist > 1e-5 ? dx / dist : 0;
+      const uz = dist > 1e-5 ? dz / dist : -1;
+      p.knockVx = ux * (heavy ? 2.4 : 1.4);
+      p.knockVz = uz * (heavy ? 2.4 : 1.4);
+      p.object.rotation.x = heavy ? Math.PI / 2 : 0.35;
+      p.object.position.y = heavy ? 0.18 : 0;
+      this.aggressiveFor = 90;
+      this.radioFor = 6;
+      this.lastSeen = { x: vendor.x, z: vendor.z, at: this.clock, vx, vz };
+      for (let j = 0; j < this.patrols.length; j++) {
+        this.patrols[j].informed = true;
+      }
+      this.onInjury?.(p.object.position.x, p.object.position.z, heavy);
+      return { index: i, heavy };
     }
     return null;
   }
 
-  /** Every officer knows where the vendor is (radio: "officer down") and stays aggressive for AGGRO_SECONDS. */
-  private provoke(player: PolicePoint) {
-    this.aggroStart = this.clock;
-    this.aggroUntil = this.clock + AGGRO_SECONDS;
-    this.lastSeen = { x: player.x, z: player.z, at: this.clock, vx: 0, vz: 0 };
-    for (const p of this.patrols) { p.informed = true; p.route = []; p.nextRoute = 0; }
-  }
-
-  /** Hurt animation and recovery. Down officers lie on their back, then get up and join the chase. */
-  private stepHurt(patrol: Patrol, dt: number) {
-    const o = patrol.object;
-    patrol.hurtT -= dt;
-    const speed = Math.hypot(patrol.kx, patrol.kz);
-    if (speed > 0.05) {
-      const heading = Math.atan2(patrol.kx, -patrol.kz);
-      const moved = resolveMovement(o.position.x, o.position.z, patrol.kx * dt, patrol.kz * dt, heading, false,
-        this.world.obstacles(o.position.x, o.position.z), this.world.bounds);
-      o.position.x = moved.newX; o.position.z = moved.newZ;
-      const decay = Math.exp(-5 * dt); patrol.kx *= decay; patrol.kz *= decay;
+  canArrest(player: PolicePoint) {
+    if (this.aggressive) {
+      return this.patrols.some(
+        (p) =>
+          p.hurt === 'none' &&
+          Math.hypot(p.object.position.x - player.x, p.object.position.z - player.z) <= 2.6
+      );
     }
-    if (patrol.hurt === 'stagger') {
-      o.rotation.x = Math.sin(patrol.hurtT * 18) * 0.2;
-      if (patrol.hurtT <= 0) this.recover(patrol);
-    } else if (patrol.hurt === 'down') {
-      const fall = Math.min(1, (DOWN_SECONDS - patrol.hurtT) / 0.3);
-      o.rotation.x = fall * Math.PI / 2;                   // falls backwards onto their back
-      o.position.y = fall * 0.12;
-      if (patrol.hurtT <= 0) { patrol.hurt = 'rising'; patrol.hurtT = RISE_SECONDS; }
-    } else {
-      const k = Math.max(0, patrol.hurtT / RISE_SECONDS);
-      o.rotation.x = k * k * Math.PI / 2;
-      o.position.y = k * 0.12;
-      if (patrol.hurtT <= 0) this.recover(patrol);
-    }
-  }
-
-  private recover(patrol: Patrol) {
-    patrol.hurt = 'none'; patrol.hurtT = 0; patrol.hitCd = 2.5;
-    patrol.object.rotation.x = 0; patrol.object.position.y = 0;
-    patrol.route = []; patrol.nextRoute = 0;
+    return this.patrols.some(
+      (p) =>
+        p.hurt === 'none' &&
+        Math.hypot(p.object.position.x - player.x, p.object.position.z - player.z) < 2.1 &&
+        this.clearSight(p.object.position, player)
+    );
   }
 
   private sense(player: PolicePoint, range: number, remember: boolean) {
     this.playerVisible = false;
-    for (const p of this.patrols) {
-      p.visible = inPoliceView(p.object.position, -p.object.rotation.y, player, range) && this.clearSight(p.object.position, player);
-      if (p.visible && remember) p.informed = true;
+    const aggBonus = this.aggressive ? 1.5 : 1;
+    for (let i = 0; i < this.patrols.length; i++) {
+      const p = this.patrols[i];
+      if (p.hurt !== 'none') {
+        p.visible = false;
+        continue;
+      }
+      const wasVisible = p.visible;
+      const effectiveRange = officerVisionRange(range, p.sightings) * aggBonus;
+      p.visible = inPoliceView(p.object.position, -p.object.rotation.y, player, effectiveRange) &&
+        this.clearSight(p.object.position, player);
+      if (p.visible) {
+        if (!wasVisible && this.clock - p.lastSightingAt >= 10) {
+          p.sightings += 1;
+          p.lastSightingAt = this.clock;
+        }
+        p.lastSeenAt = this.clock;
+        p.lastSeenX = player.x;
+        p.lastSeenZ = player.z;
+        p.unseenSeconds = 0;
+        if (remember) p.informed = true;
+      }
       this.playerVisible ||= p.visible;
     }
     if (this.playerVisible && remember) {
@@ -282,6 +349,52 @@ export class CampaignPolice {
       let vz = elapsed > 0 ? (player.z - previous!.z) / elapsed : 0;
       const speed = Math.hypot(vx, vz); if (speed > 8) { vx *= 8 / speed; vz *= 8 / speed; }
       this.lastSeen = { x: player.x, z: player.z, at: this.clock, vx, vz };
+    }
+  }
+
+  private decayMemory(dt: number) {
+    for (let i = 0; i < this.patrols.length; i++) {
+      const p = this.patrols[i];
+      if (p.visible) {
+        p.unseenSeconds = 0;
+        continue;
+      }
+      if (p.sightings <= 0) {
+        p.unseenSeconds = 0;
+        continue;
+      }
+      p.unseenSeconds += dt;
+      while (p.unseenSeconds >= 90 && p.sightings > 0) {
+        p.sightings = Math.max(0, p.sightings - 1);
+        p.unseenSeconds -= 90;
+      }
+      if (p.sightings === 0) p.unseenSeconds = 0;
+    }
+  }
+
+  private shareRadioMemory() {
+    for (let i = 0; i < this.patrols.length; i++) {
+      const a = this.patrols[i];
+      for (let j = i + 1; j < this.patrols.length; j++) {
+        const b = this.patrols[j];
+        if (Math.hypot(a.object.position.x - b.object.position.x, a.object.position.z - b.object.position.z) > 15) continue;
+        if (a.sightings > b.sightings) {
+          b.sightings = a.sightings;
+          b.unseenSeconds = Math.min(b.unseenSeconds, a.unseenSeconds);
+        } else if (b.sightings > a.sightings) {
+          a.sightings = b.sightings;
+          a.unseenSeconds = Math.min(a.unseenSeconds, b.unseenSeconds);
+        }
+        if (a.lastSeenAt > b.lastSeenAt) {
+          b.lastSeenAt = a.lastSeenAt;
+          b.lastSeenX = a.lastSeenX;
+          b.lastSeenZ = a.lastSeenZ;
+        } else if (b.lastSeenAt > a.lastSeenAt) {
+          a.lastSeenAt = b.lastSeenAt;
+          a.lastSeenX = b.lastSeenX;
+          a.lastSeenZ = b.lastSeenZ;
+        }
+      }
     }
   }
 
@@ -317,6 +430,70 @@ export class CampaignPolice {
     } else patrol.nextRoute = 1;
   }
 
+  private stepHurt(patrol: Patrol, dt: number): boolean {
+    if (patrol.hurt === 'none') return false;
+    const object = patrol.object;
+    if ((patrol.hurt === 'stagger' && patrol.hurtFor > 0.35) || (patrol.hurt === 'down' && patrol.hurtFor > 2.4)) {
+      const nearObs = this.world.obstacles(object.position.x, object.position.z);
+      const moved = resolveMovement(
+        object.position.x,
+        object.position.z,
+        patrol.knockVx * dt,
+        patrol.knockVz * dt,
+        -object.rotation.y,
+        false,
+        nearObs,
+        this.world.bounds
+      );
+      if (!this.world.isRoad(moved.newX, moved.newZ)) {
+        object.position.x = moved.newX;
+        object.position.z = moved.newZ;
+      }
+    }
+    patrol.hurtFor -= dt;
+    if (patrol.hurt === 'stagger') {
+      if (patrol.hurtFor <= 0) {
+        patrol.hurt = 'none';
+        patrol.hurtFor = 0;
+        object.rotation.x = 0;
+        object.position.y = 0;
+      } else {
+        object.rotation.x = 0.35 * Math.max(0, Math.min(1, patrol.hurtFor / 0.85));
+      }
+    } else if (patrol.hurt === 'down') {
+      if (patrol.hurtFor <= 0) {
+        patrol.hurt = 'rising';
+        patrol.hurtFor = 1.1 + patrol.hurtFor;
+        if (patrol.hurtFor <= 0) {
+          patrol.hurt = 'none';
+          patrol.hurtFor = 0;
+          object.rotation.x = 0;
+          object.position.y = 0;
+        } else {
+          const t = Math.max(0, Math.min(1, patrol.hurtFor / 1.1));
+          object.rotation.x = (Math.PI / 2) * t;
+          object.position.y = 0.18 * t;
+        }
+      } else {
+        object.rotation.x = Math.PI / 2;
+        object.position.y = 0.18;
+      }
+    } else if (patrol.hurt === 'rising') {
+      if (patrol.hurtFor <= 0) {
+        patrol.hurt = 'none';
+        patrol.hurtFor = 0;
+        object.rotation.x = 0;
+        object.position.y = 0;
+      } else {
+        const t = Math.max(0, Math.min(1, patrol.hurtFor / 1.1));
+        object.rotation.x = (Math.PI / 2) * t;
+        object.position.y = 0.18 * t;
+      }
+    }
+    if (patrol.rig) animateHuman(patrol.rig, patrol.phase, 0, false, dt);
+    return true;
+  }
+
   update(
     dt: number,
     player: THREE.Vector3,
@@ -330,49 +507,66 @@ export class CampaignPolice {
     if (!(dt > 0) || !Number.isFinite(dt)) return;
     const heated = heat >= 18 && cooldown <= 0;
     this.clock += dt;
-    if (this.wasAlert && !alert) {
-      this.lastSeen = null; this.senseIn = 0;
-      for (const p of this.patrols) { p.route = []; p.nextRoute = 0; p.informed = false; }
+    this.aggressiveFor = Math.max(0, this.aggressiveFor - dt);
+    if (this.radioFor > 0) {
+      this.radioFor = Math.max(0, this.radioFor - dt);
+      this.lastSeen = { x: player.x, z: player.z, at: this.clock, vx: 0, vz: 0 };
     }
-    this.wasAlert = alert; this.alertSeconds = alert ? this.alertSeconds + dt : 0;
+    if (this.wasAlert && !alert && !this.aggressive) {
+      this.lastSeen = null; this.senseIn = 0;
+      for (let i = 0; i < this.patrols.length; i++) {
+        const p = this.patrols[i];
+        p.route = []; p.nextRoute = 0; p.informed = false; p.onMemoryPatrol = false; p.nextMemoryPatrolAt = 0;
+      }
+    }
+    this.wasAlert = alert; this.alertSeconds = (alert || this.aggressive) ? this.alertSeconds + dt : 0;
     this.senseIn -= dt;
     if (this.senseIn <= 0) {
-      this.sense(player, this.difficulty.policeVision * visibility * (this.aggressive ? 1.5 : 1), alert || heated || this.aggressive);
+      this.sense(player, this.difficulty.policeVision * visibility, alert || heated || this.aggressive);
       this.senseIn = 0.1;
     }
+    this.decayMemory(dt);
+    this.shareRadioMemory();
+
     const tactics = policeTactics(this.difficulty.dayNumber);
-    const aggro = this.aggressive;
-    // "Officer down" radio call: for the first 6 s every officer is told exactly where the vendor is.
-    if (aggro && this.clock - this.aggroStart < 6) this.lastSeen = { x: player.x, z: player.z, at: this.clock, vx: 0, vz: 0 };
-    const pursuing = (alert || aggro || heated && this.playerVisible) && this.lastSeen !== null;
+    const pursuing = (alert || this.aggressive || heated && this.playerVisible) && this.lastSeen !== null;
     for (let i = 0; i < this.patrols.length; i++) {
       const patrol = this.patrols[i], object = patrol.object;
       if (i === 0) this.primarySpeed = 0;
-      patrol.nextRoute = Math.max(0, patrol.nextRoute - dt);
-      patrol.blockedUntil = Math.max(0, patrol.blockedUntil - dt);
       patrol.hitCd = Math.max(0, patrol.hitCd - dt);
-      if (patrol.hurt !== 'none') {
-        this.stepHurt(patrol, dt);
-        if (i === 0) this.primarySpeed = 0;
+      if (this.stepHurt(patrol, dt)) {
         if (i > 0) object.visible = Math.hypot(object.position.x - camera.x, object.position.z - camera.z) < 90;
         continue;
       }
+      patrol.nextRoute = Math.max(0, patrol.nextRoute - dt);
+      patrol.blockedUntil = Math.max(0, patrol.blockedUntil - dt);
       const memory = this.lastSeen;
-      let mode: PoliceMode = this.difficulty.patrolRoutes ? 'patrol' : 'post';
+      const hasRecentMemory = !pursuing && knowsVendor(patrol.sightings) &&
+        patrol.lastSeenAt > 0 && (this.clock - patrol.lastSeenAt) < 120;
+      if (!hasRecentMemory) patrol.onMemoryPatrol = false;
+
+      let mode: PoliceMode = (this.difficulty.patrolRoutes || (hasRecentMemory && (patrol.onMemoryPatrol || this.clock >= patrol.nextMemoryPatrolAt)))
+        ? 'patrol'
+        : 'post';
       if (pursuing && memory) {
         const distance = Math.hypot(object.position.x - memory.x, object.position.z - memory.z);
-        if (patrol.visible) mode = 'chase';
-        else if (this.playerVisible && tactics.backup && this.alertSeconds >= 1.5 + i * 0.6 &&
+        const backupDelay = officerReactionDelay(1.5 + Math.min(i, 3) * 0.6, patrol.sightings);
+        if (patrol.visible || this.radioFor > 0) mode = 'chase';
+        else if (this.playerVisible && tactics.backup && this.alertSeconds >= backupDelay &&
           distance < (tactics.intercept ? 120 : 80)) {
           mode = tactics.intercept && i === this.patrols.length - 1 ? 'intercept' : 'backup';
           patrol.informed = true;
-        } else if (alert && patrol.informed && distance < (tactics.backup ? 120 : 65)) mode = 'search';
+        } else if ((alert || this.aggressive) && patrol.informed && distance < (tactics.backup ? 120 : 65)) mode = 'search';
       }
-      if (mode !== patrol.mode) { patrol.route = []; patrol.step = 0; patrol.nextRoute = 0; patrol.mode = mode; }
+      if (mode !== patrol.mode) {
+        patrol.route = []; patrol.step = 0; patrol.nextRoute = 0; patrol.mode = mode;
+        if (mode !== 'patrol') patrol.onMemoryPatrol = false;
+      }
       let dx = 0, dz = 0, speed = 0;
+      const aggSpeed = this.aggressive ? 1.15 : 1;
 
       if (mode === 'chase' || mode === 'backup' || mode === 'intercept' || mode === 'search') {
-        speed = (mode === 'search' ? 2.8 : POLICE_CHASE_SPEED) * weatherSpeed * (aggro ? 1.15 : 1);
+        speed = (mode === 'search' ? 2.8 : POLICE_CHASE_SPEED) * weatherSpeed * aggSpeed;
         const distToSighting = Math.hypot(memory!.x - object.position.x, memory!.z - object.position.z);
         const useDirect = mode === 'chase' && patrol.visible && distToSighting <= 14 &&
           patrol.blockedUntil <= 0 && this.clearSight(object.position, memory!);
@@ -403,9 +597,28 @@ export class CampaignPolice {
           }
         }
       } else if (mode === 'patrol') {
+        if (hasRecentMemory && !patrol.onMemoryPatrol && this.clock >= patrol.nextMemoryPatrolAt) {
+          this.planMemoryRoute(patrol);
+        }
         while (patrol.step < patrol.route.length && Math.hypot(patrol.route[patrol.step].x - object.position.x,
           patrol.route[patrol.step].z - object.position.z) < 0.7) patrol.step++;
-        if (patrol.step >= patrol.route.length && patrol.nextRoute <= 0) this.planRoute(patrol);
+        if (patrol.onMemoryPatrol && patrol.route.length > 0 && patrol.step >= patrol.route.length) {
+          patrol.onMemoryPatrol = false;
+          patrol.route = [];
+          patrol.step = 0;
+          patrol.nextRoute = 0;
+          patrol.nextMemoryPatrolAt = Math.max(patrol.nextMemoryPatrolAt, this.clock + 10);
+          if (!this.difficulty.patrolRoutes) {
+            patrol.mode = 'post';
+          }
+        }
+        if (patrol.mode === 'patrol' && patrol.step >= patrol.route.length && patrol.nextRoute <= 0) {
+          if (hasRecentMemory && (patrol.onMemoryPatrol || this.clock >= patrol.nextMemoryPatrolAt)) {
+            if (!this.planMemoryRoute(patrol)) this.planRoute(patrol);
+          } else {
+            this.planRoute(patrol);
+          }
+        }
         const target = patrol.route[patrol.step];
         if (target) { dx = target.x - object.position.x; dz = target.z - object.position.z; speed = 1.35 * weatherSpeed; }
       } else if (patrol.home && Math.hypot(object.position.x - patrol.home.x, object.position.z - patrol.home.z) > 8) {
@@ -446,7 +659,8 @@ export class CampaignPolice {
 
         // If blocked by a corner or stall, try sliding around the obstacle
         if (travelled < step * 0.35) {
-          for (const angleOffset of [1.1, -1.1, 1.57, -1.57]) {
+          for (let k = 0; k < SLIDE_OFFSETS.length; k++) {
+            const angleOffset = SLIDE_OFFSETS[k];
             const altHeading = heading + angleOffset;
             const altVx = Math.sin(altHeading) * step;
             const altVz = -Math.cos(altHeading) * step;
@@ -468,7 +682,7 @@ export class CampaignPolice {
               if (travelled >= step * 0.5) break;
             }
           }
-          if (alert) {
+          if (alert || this.aggressive) {
             patrol.blockedUntil = 1.4;
             patrol.nextRoute = 0.4;
           }
@@ -478,7 +692,7 @@ export class CampaignPolice {
         object.position.x = moved.newX; object.position.z = moved.newZ; object.rotation.y = -heading;
         patrol.phase += travelled * 2.2;
         if (patrol.rig) animateHuman(patrol.rig, patrol.phase, Math.min(1, travelled / dt / 5), false, dt);
-        if (!alert && travelled < step * 0.1) { patrol.route = []; patrol.nextRoute = Math.min(patrol.nextRoute, 0.5); }
+        if (!alert && !this.aggressive && travelled < step * 0.1) { patrol.route = []; patrol.nextRoute = Math.min(patrol.nextRoute, 0.5); }
       } else {
         if (mode === 'post' || mode === 'search') object.rotation.y += dt * 0.65;
         if (patrol.rig) animateHuman(patrol.rig, patrol.phase, 0, false, dt);
