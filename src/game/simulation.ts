@@ -1631,6 +1631,10 @@ export class GameEngine {
         junctions: this.world?.roads.nodes.filter(node => node.edges.length >= 3),
       }, this.scene);
       this.campaignPolice.onInjury = (x, z, heavy) => this.onOfficerInjured(x, z, heavy);
+      this.campaignPolice.onApproach = (event) => {
+        if (event === 'warning') this.onEvent('notify', 'এই! এখানে বেচাকেনা করা যাবে না! · An officer is warning you — no selling here!');
+        else if (event === 'stand_down') this.onEvent('notify', 'অফিসার চলে গেলেন · The officer moves on.');
+      };
       this.campaignPolice.resetPositions(this.human.position.x, this.human.position.z);
       this.state.policePositions = this.campaignPolice.positions();
       this.state.officerX = this.officer.position.x;
@@ -2621,6 +2625,11 @@ export class GameEngine {
         const hvz = Number.isFinite(this.lastPoliceZ) ? (this.human.position.z - this.lastPoliceZ) / dt : 0;
         const hit = this.campaignPolice.vendorContact(this.human.position, hvx, hvz);
         if (hit) this.onOfficerHit(hit.heavy);
+        if (this.campaignPolice.takeEscalation() && !this.state.alert) {
+          this.state.alert = true; this.state.escape = 0; this.stats.chasesStarted++;
+          this.onEvent('notify', 'পুলিশ ধাওয়া করছে! · The officer has had enough — run!');
+          this.publishState(true);
+        }
         if (this.campaignPolice.aggressive && !this.state.alert) {
           this.state.alert = true; this.state.escape = 0; this.stats.chasesStarted++;
           this.publishState(true);

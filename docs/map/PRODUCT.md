@@ -68,6 +68,8 @@ Renderer: `WebGPURenderer` (WebGPU, or WebGL 2 fallback). `vite.config.ts` alias
 | Colour grade + bloom + vignette (TSL RenderPipeline; ACES once at output) | `src/game/render/postfx.ts` | `GamePipeline`, `LOOKS` |
 | Interior-mapped window glass, street-lamp heads + light pools, clock-driven glow | `src/game/render/windows.ts` | `createWindowMaterial`, `createLampHeadMaterial`, `createLampPoolMaterial`, `interiorGlow`, `streetLamps` |
 | Perf probe + benchmark overlay (F3 / `?perf`) | `src/game/render/perfProbe.ts` | `PerfProbe` (engine calls `perfProbe.frame()` each render) |
+| Officer approach state machine (spot → walk up → warn → escalate / stand down) | `src/game/policeApproach.ts` | `stepApproach`, `chooseApproacher`, `createApproach` (used by `CampaignPolice`) |
+| Instanced ground blood decals (max 24, 8 on Low) for knock-downs | `src/game/render/bloodDecals.ts` | `BloodDecals` (owned by `PedestrianManager`; officers use `pedestrianManager.bloodDecals`) |
 | Ground glow quad used instead of PointLights | `src/game/render/glow.ts` | `createGlowPool` (garages, aarots) |
 | Vehicle look: road grime, painted rickshaw hoods, night lamps, contact shadows, headlight pools | `src/game/render/vehicleLook.ts` | `grimy`, `rickshawHoodMaterial`, `lampMaterial`, `addGroundEffects` (used by `world/traffic.ts`) |
 | Quality presets (render height, shadows, `post` none/grade/full, `clouds`, `aerialFog`), adaptive resolution | `src/game/render/quality.ts` | `QUALITY_PRESETS`, `defaultQuality` (phone Low, computer Medium), `AdaptiveResolution` |

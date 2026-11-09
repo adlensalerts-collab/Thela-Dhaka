@@ -15,12 +15,12 @@ export interface DifficultyProfile {
 
 // Game-design §4. Traffic counts and rage multipliers make qualitative tiers explicit.
 const ANCHORS = [
-  { day: 1, police: 2, vision: 25, traffic: 24, rage: 1, patience: 20 },
-  { day: 3, police: 3, vision: 30, traffic: 36, rage: 1, patience: 18 },
-  { day: 5, police: 4, vision: 35, traffic: 36, rage: 1.25, patience: 16 },
-  { day: 6, police: 5, vision: 35, traffic: 48, rage: 1.25, patience: 15 },
-  { day: 8, police: 6, vision: 40, traffic: 48, rage: 1.5, patience: 13 },
-  { day: 10, police: 7, vision: 45, traffic: 60, rage: 1.5, patience: 12 },
+  { day: 1, police: 2, vision: 35, traffic: 24, rage: 1, patience: 20 },
+  { day: 3, police: 3, vision: 42, traffic: 36, rage: 1, patience: 18 },
+  { day: 5, police: 4, vision: 49, traffic: 36, rage: 1.25, patience: 16 },
+  { day: 6, police: 5, vision: 49, traffic: 48, rage: 1.25, patience: 15 },
+  { day: 8, police: 6, vision: 56, traffic: 48, rage: 1.5, patience: 13 },
+  { day: 10, police: 7, vision: 63, traffic: 60, rage: 1.5, patience: 12 },
 ] as const;
 
 export function difficultyForDay(dayNumber: number): DifficultyProfile {

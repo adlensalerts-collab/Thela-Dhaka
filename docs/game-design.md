@@ -44,14 +44,18 @@ Push the thela through a real Dhaka district → find customers (hotspots, footp
 
 | Level | Police on map | Police vision | Traffic | Rage sensitivity | Customer patience |
 |---|---|---|---|---|---|
-| 1 | 1 | 25 m | Light | Low | 20 s |
-| 3 | 2 | 30 m | Medium | Low | 18 s |
-| 5 | 2 | 35 m | Medium | Medium | 16 s |
-| 6 (Gulistan) | 3 | 35 m | Heavy | Medium | 15 s |
-| 8 | 4 | 40 m | Heavy | High | 13 s |
-| 10 | 5 | 45 m | Very heavy | High | 12 s |
+| 1 | 2 | 35 m | Light | Low | 20 s |
+| 3 | 3 | 42 m | Medium | Low | 18 s |
+| 5 | 4 | 49 m | Medium | Medium | 16 s |
+| 6 (Gulistan) | 5 | 49 m | Heavy | Medium | 15 s |
+| 8 | 6 | 56 m | Heavy | High | 13 s |
+| 10 | 7 | 63 m | Very heavy | High | 12 s |
 
-Between listed levels, interpolate. Smarter police behaviour (patrols, search, backup) unlocks gradually from Level 3.
+Between listed levels, interpolate (Nov 2026: more officers and +40 % sight than the first design). Smarter police behaviour (patrols, search, backup) unlocks gradually from Level 3.
+
+**Officer memory (Sprint 15a):** each officer counts how often they have *re*-spotted the vendor (a new sighting needs him to leave and re-enter view, at least 10 s apart). At 2 sightings they "know" him (sight ×1.25, at most +10 m, and 30 % faster backup reaction); at 4, ×1.4 (same cap). One sighting is forgotten per 90 s unseen. Officers near each other share what they know. An officer who knows the vendor and saw him less than 120 s ago patrols near that spot, once every 40 s.
+
+**Officer approach (Sprint 15d):** an officer who spots the vendor (and is not chasing) walks up to about 3 m, then warns him for 5 s. If the vendor walks away (6.5 m+) or the officer loses sight, they stand down and cool off for 25 s. If he is still within 4.8 m when the warning ends, or his heat is 6+, the officer starts a chase.
 
 ## 5. Public rage (জনতার রাগ)
 

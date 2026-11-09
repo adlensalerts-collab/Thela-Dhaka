@@ -187,3 +187,79 @@ test('Sprint 15c: aggression lasts about 90 s and a new day clears it',()=>{
   f.police.resetPositions(0,0);
   assert.equal(f.police.aggressive,false);assert.equal(f.patrols[0].hurt,'none');assert.equal(f.primary.rotation.x,0);
 });
+
+/** Park every officer except the first far away, so a test is about one officer. */
+function isolate(f: ReturnType<typeof fixture>) { for(let i=1;i<f.patrols.length;i++) f.patrols[i].object.position.set(50,0,50); }
+
+function engaged(f: ReturnType<typeof fixture>) { return f.patrols.filter((p: any) => p.approach.phase !== 'idle' && p.approach.phase !== 'cooldown').length; }
+
+test('Sprint 15d: an officer who spots the vendor walks up to about 3 m, warns him, then stands down if he is not selling',()=>{
+  const f=fixture(1);isolate(f);f.player.set(0,0,-20);
+  const events:string[]=[];f.police.onApproach=(e)=>events.push(e);
+  const start=()=>{f.primary.rotation.y=0;};
+  start();
+  let steps=0;
+  while(f.patrols[0].approach.phase!=='warn'&&steps++<400) f.police.update(.1,f.player,false,1,f.camera,0,0);
+  assert.equal(f.patrols[0].approach.phase,'warn','reached the warning phase');
+  assert.ok(Math.hypot(f.primary.position.x-f.player.x,f.primary.position.z-f.player.z)<=3.6,'stopped within about 3 m of the vendor');
+  assert.ok(events.includes('spotted')&&events.includes('warning'));
+  f.player.z-=12;                                          // the vendor walks away when told to
+  f.police.update(.1,f.player,false,1,f.camera,0,0);
+  assert.ok(events.includes('stand_down'),'he complied: the officer moves on');
+  assert.equal(f.police.takeEscalation(),false);
+});
+
+test('Sprint 15d: a vendor who stands his ground through the whole warning is chased',()=>{
+  const f=fixture(1);isolate(f);f.player.set(0,0,-20);f.primary.rotation.y=0;
+  let steps=0;
+  while(f.patrols[0].approach.phase!=='warn'&&steps++<400) f.police.update(.1,f.player,false,1,f.camera,0,0);
+  let escalated=false;
+  for(let i=0;i<80&&!escalated;i++){f.police.update(.1,f.player,false,1,f.camera,0,0);escalated=f.police.takeEscalation();}
+  assert.equal(escalated,true,'still within 4.8 m after the warning: escalate');
+});
+
+test('Sprint 15d: if the vendor keeps doing something suspicious during the warning, the officer escalates to a chase',()=>{
+  const f=fixture(1);isolate(f);f.player.set(0,0,-20);f.primary.rotation.y=0;
+  let steps=0;
+  while(f.patrols[0].approach.phase!=='warn'&&steps++<400) f.police.update(.1,f.player,false,1,f.camera,10,0);
+  assert.equal(f.patrols[0].approach.phase,'warn');
+  let escalated=false;
+  for(let i=0;i<80&&!escalated;i++){f.police.update(.1,f.player,false,1,f.camera,10,0);escalated=f.police.takeEscalation();}
+  assert.equal(escalated,true);
+  assert.ok(f.police.lastKnownPosition,'the officer knows where the vendor is');
+});
+
+test('Sprint 15d: no approach during a chase, and only one officer walks up at a time',()=>{
+  const f=fixture(1);isolate(f);f.player.set(0,0,-15);f.primary.rotation.y=0;
+  for(let i=0;i<30;i++) f.police.update(.1,f.player,true,0,f.camera,0,0);
+  assert.equal(engaged(f),0,'alert: officers chase, they do not approach');
+  const g=fixture(3);isolate(g);g.player.set(0,0,-15);g.patrols[1].object.position.set(4,0,0);g.patrols[2].object.position.set(-4,0,0);
+  for(const p of g.patrols) p.object.rotation.y=0;
+  for(let i=0;i<15;i++) g.police.update(.1,g.player,false,1,g.camera,0,0);
+  assert.equal(engaged(g),1,'the nearest officer approaches, the others keep to their routes');
+});
+
+/** The vendor steps out of sight for 12 s and back in, `times` times: each re-sighting counts once. */
+function resight(f: ReturnType<typeof fixture>, times: number) {
+  for(let k=0;k<times;k++){
+    f.player.set(0,0,200);for(let i=0;i<12;i++) f.police.update(1,f.player,false,0,f.camera,0,0);
+    f.player.set(0,0,-15);f.primary.rotation.y=0;f.police.update(.2,f.player,false,0,f.camera,0,0);
+  }
+}
+
+test('Sprint 15a: each new sighting counts once (at least 10 s apart) and memory fades after about 90 s unseen',()=>{
+  const f=fixture(1);isolate(f);
+  resight(f,3);
+  const seen=f.police.memorySummary[0].sightings;
+  assert.equal(seen,3,'three separate sightings');
+  f.player.set(0,0,200);
+  for(let i=0;i<200;i++) f.police.update(1,f.player,false,0,f.camera,0,0);
+  assert.ok(f.police.memorySummary[0].sightings<seen,'memory fades when the vendor is gone');
+});
+
+test('Sprint 15a: officers within radio range share what they know',()=>{
+  const f=fixture(2);isolate(f);f.patrols[1].object.position.set(5,0,0);f.patrols[1].object.rotation.y=Math.PI;
+  resight(f,3);
+  const [a,b]=f.police.memorySummary;
+  assert.ok(a.sightings>=2);assert.equal(b.sightings,a.sightings,'officer 1 faces away but learned it by radio');
+});

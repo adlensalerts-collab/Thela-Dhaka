@@ -2,6 +2,15 @@ import * as THREE from 'three';
 import { resolveMovement, type Obstacle } from './collision';
 import type { SidewalkGraph } from './pathfinding';
 import type { DifficultyProfile } from './difficulty';
+import {
+  chooseApproacher,
+  createApproach,
+  stepApproach,
+  type ApproachCandidate,
+  type ApproachEvent,
+  type ApproachOutput,
+  type ApproachState,
+} from './policeApproach';
 import { animateHuman, createHumanRig, type HumanRig } from './world/humans';
 import {
   inPoliceView,
@@ -42,6 +51,8 @@ interface Patrol {
   unseenSeconds: number;
   nextMemoryPatrolAt: number;
   onMemoryPatrol: boolean;
+  /** Sprint 15d: walk up to the vendor, warn him, then escalate or stand down. */
+  approach: ApproachState;
   hurt: PoliceHurtState;
   hurtFor: number;
   hitCd: number;
@@ -65,6 +76,17 @@ export class CampaignPolice {
   primarySpeed = 0;
   playerVisible = false;
   onInjury?: (x: number, z: number, heavy: boolean) => void;
+  /** Sprint 15d: an officer's approach changed (spotted, warning, stand_down, lost). Escalation is read with takeEscalation(). */
+  onApproach?: (event: ApproachEvent, officer: number, x: number, z: number) => void;
+  private escalation = false;
+  private approachId = -1;
+  private approachOut: ApproachOutput = { phase: 'idle', targetX: 0, targetZ: 0, hasTarget: false, speed: 0, event: 'none' };
+  private approachCandidates: ApproachCandidate[] = [];
+  private lastPlayerX = Number.NaN;
+  private lastPlayerZ = Number.NaN;
+  private vendorSpeed = 0;
+  /** True once after an officer's warning ran out while the vendor was still doing something suspicious: the engine starts a chase. */
+  takeEscalation() { const e = this.escalation; this.escalation = false; return e; }
   private senseIn = 0;
   private clock = 0;
   private alertSeconds = 0;
@@ -81,7 +103,7 @@ export class CampaignPolice {
       object: primary, rig: null, route: [], step: 0, phase: 0, nextRoute: 0, blockedUntil: 0,
       home: { x: 0, z: 0 }, visible: false, informed: false, mode: 'post',
       sightings: 0, lastSeenAt: 0, lastSeenX: 0, lastSeenZ: 0,
-      lastSightingAt: -Infinity, unseenSeconds: 0, nextMemoryPatrolAt: 0, onMemoryPatrol: false,
+      lastSightingAt: -Infinity, unseenSeconds: 0, nextMemoryPatrolAt: 0, onMemoryPatrol: false, approach: createApproach(),
       hurt: 'none', hurtFor: 0, hitCd: 0, knockVx: 0, knockVz: 0,
     }];
     for (let i = 1; i < difficulty.policeCount; i++) {
@@ -93,7 +115,7 @@ export class CampaignPolice {
         object: rig.group, rig, route: [], step: 0, phase: 0, nextRoute: 0, blockedUntil: 0,
         home: { x: 50, z: 50 }, visible: false, informed: false, mode: 'post',
         sightings: 0, lastSeenAt: 0, lastSeenX: 0, lastSeenZ: 0,
-        lastSightingAt: -Infinity, unseenSeconds: 0, nextMemoryPatrolAt: 0, onMemoryPatrol: false,
+        lastSightingAt: -Infinity, unseenSeconds: 0, nextMemoryPatrolAt: 0, onMemoryPatrol: false, approach: createApproach(),
         hurt: 'none', hurtFor: 0, hitCd: 0, knockVx: 0, knockVz: 0,
       });
     }
@@ -165,6 +187,7 @@ export class CampaignPolice {
       patrol.unseenSeconds = 0;
       patrol.nextMemoryPatrolAt = 0;
       patrol.onMemoryPatrol = false;
+      patrol.approach = createApproach();
       patrol.hurt = 'none';
       patrol.hurtFor = 0;
       patrol.hitCd = 0;
@@ -174,6 +197,7 @@ export class CampaignPolice {
     this.lastSeen = null; this.playerVisible = false; this.senseIn = 0;
     this.alertSeconds = 0; this.wasAlert = false; this.clock = 0; this.primarySpeed = 0;
     this.aggressiveFor = 0; this.radioFor = 0;
+    this.approachId = -1; this.escalation = false; this.lastPlayerX = Number.NaN; this.vendorSpeed = 0;
   }
 
   nearestDistance(x: number, z: number) {
@@ -530,11 +554,27 @@ export class CampaignPolice {
 
     const tactics = policeTactics(this.difficulty.dayNumber);
     const pursuing = (alert || this.aggressive || heated && this.playerVisible) && this.lastSeen !== null;
+    // Sprint 15d: the nearest officer who can see the vendor may walk up to him (never during a chase).
+    if (Number.isFinite(this.lastPlayerX)) {
+      const v = Math.hypot(player.x - this.lastPlayerX, player.z - this.lastPlayerZ) / dt;
+      this.vendorSpeed += (v - this.vendorSpeed) * Math.min(1, dt * 3);
+    }
+    this.lastPlayerX = player.x; this.lastPlayerZ = player.z;
+    const cands = this.approachCandidates;
+    while (cands.length < this.patrols.length) cands.push({ id: 0, x: 0, z: 0, visible: false, busy: false, cooldown: false });
+    cands.length = this.patrols.length;
+    for (let i = 0; i < this.patrols.length; i++) {
+      const p = this.patrols[i], c = cands[i];
+      c.id = i; c.x = p.object.position.x; c.z = p.object.position.z;
+      c.visible = p.visible; c.busy = pursuing || p.hurt !== 'none'; c.cooldown = p.approach.phase === 'cooldown';
+    }
+    this.approachId = pursuing ? -1 : chooseApproacher(cands, player.x, player.z, this.approachId);
     for (let i = 0; i < this.patrols.length; i++) {
       const patrol = this.patrols[i], object = patrol.object;
       if (i === 0) this.primarySpeed = 0;
       patrol.hitCd = Math.max(0, patrol.hitCd - dt);
       if (this.stepHurt(patrol, dt)) {
+        patrol.approach.phase = 'idle'; patrol.approach.timer = 0; patrol.approach.lostFor = 0;
         if (i > 0) object.visible = Math.hypot(object.position.x - camera.x, object.position.z - camera.z) < 90;
         continue;
       }
@@ -640,6 +680,31 @@ export class CampaignPolice {
         }
       }
 
+      // Sprint 15d: spotted -> walk up -> warn -> escalate or stand down. Overrides patrol/post movement.
+      let approachActive = false;
+      if (!pursuing) {
+        const ap = patrol.approach;
+        if (i === this.approachId || ap.phase !== 'idle') {
+          stepApproach(ap, {
+            dt, clock: this.clock, officerX: object.position.x, officerZ: object.position.z,
+            vendorX: player.x, vendorZ: player.z, visible: patrol.visible, alert: alert || this.aggressive,
+            busy: patrol.hurt !== 'none', vendorSelling: heat >= 6 && cooldown <= 0, vendorSpeed: this.vendorSpeed,
+          }, this.approachOut);
+          const out = this.approachOut;
+          if (out.event !== 'none') this.handleApproachEvent(out.event, i, patrol, player);
+          approachActive = out.phase === 'noticing' || out.phase === 'approach' || out.phase === 'warn';
+          if (out.phase === 'approach' && out.hasTarget) {
+            dx = out.targetX - object.position.x; dz = out.targetZ - object.position.z;
+            speed = out.speed * weatherSpeed; patrol.route = []; patrol.step = 0;
+          } else if (approachActive) {
+            dx = 0; dz = 0; speed = 0;
+            object.rotation.y = -Math.atan2(player.x - object.position.x, -(player.z - object.position.z));
+          }
+        }
+      } else if (patrol.approach.phase !== 'idle') {
+        patrol.approach.phase = 'idle'; patrol.approach.timer = 0; patrol.approach.lostFor = 0;
+      }
+
       const distance = Math.hypot(dx, dz);
       if (distance > 0.01 && speed > 0) {
         let heading = Math.atan2(dx, -dz);
@@ -694,11 +759,20 @@ export class CampaignPolice {
         if (patrol.rig) animateHuman(patrol.rig, patrol.phase, Math.min(1, travelled / dt / 5), false, dt);
         if (!alert && !this.aggressive && travelled < step * 0.1) { patrol.route = []; patrol.nextRoute = Math.min(patrol.nextRoute, 0.5); }
       } else {
-        if (mode === 'post' || mode === 'search') object.rotation.y += dt * 0.65;
+        if ((mode === 'post' || mode === 'search') && !approachActive) object.rotation.y += dt * 0.65;
         if (patrol.rig) animateHuman(patrol.rig, patrol.phase, 0, false, dt);
       }
       if (i > 0) object.visible = Math.hypot(object.position.x - camera.x, object.position.z - camera.z) < 90;
     }
+  }
+
+  private handleApproachEvent(event: ApproachEvent, index: number, patrol: Patrol, player: PolicePoint) {
+    if (event === 'escalate') {
+      this.escalation = true;
+      this.lastSeen = { x: player.x, z: player.z, at: this.clock, vx: 0, vz: 0 };
+      patrol.informed = true;
+    }
+    this.onApproach?.(event, index, patrol.object.position.x, patrol.object.position.z);
   }
 
   positions() { return this.patrols.map(({ object, mode }) => ({ x: object.position.x, z: object.position.z,

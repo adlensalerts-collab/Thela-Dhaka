@@ -10,9 +10,9 @@ import { StatsTracker } from '../src/game/stats';
 
 test('design anchors have exact police, vision and customer patience settings', () => {
   const expected = [
-    [1, 1, 25, 24, 1, 20], [3, 2, 30, 36, 1, 18],
-    [5, 2, 35, 36, 1.25, 16], [6, 3, 35, 48, 1.25, 15],
-    [8, 4, 40, 48, 1.5, 13], [10, 5, 45, 60, 1.5, 12],
+    [1, 2, 35, 24, 1, 20], [3, 3, 42, 36, 1, 18],
+    [5, 4, 49, 36, 1.25, 16], [6, 5, 49, 48, 1.25, 15],
+    [8, 6, 56, 48, 1.5, 13], [10, 7, 63, 60, 1.5, 12],
   ];
   for (const [day, police, vision, traffic, rage, patience] of expected) {
     const profile = difficultyForDay(day);
@@ -23,11 +23,11 @@ test('design anchors have exact police, vision and customer patience settings', 
 });
 
 test('intermediate days interpolate, with integer police/traffic populations', () => {
-  assert.equal(difficultyForDay(2).policeVision, 27.5);
+  assert.equal(difficultyForDay(2).policeVision, 38.5);
   assert.equal(difficultyForDay(2).customerPatience, 19);
-  assert.equal(difficultyForDay(2).policeCount, 2);
+  assert.equal(difficultyForDay(2).policeCount, 3);
   assert.equal(difficultyForDay(4).rageMultiplier, 1.125);
-  assert.equal(difficultyForDay(7).policeVision, 37.5);
+  assert.equal(difficultyForDay(7).policeVision, 52.5);
   assert.equal(difficultyForDay(9).customerPatience, 12.5);
   assert.equal(difficultyForDay(9).trafficCount, 54);
   for (let day = 2; day <= 10; day++) {
@@ -61,7 +61,7 @@ test('briefings use campaign days for districts and never cart upgrade levels', 
 
 test('level briefing shows the next target/settings and has only Start day / Main menu actions', () => {
   const markup = renderToStaticMarkup(<LevelBriefing dayNumber={6} onStart={()=>{}} onMainMenu={()=>{}} />);
-  for (const text of ['Day 6','Gulistan','2,690','3 officers','35 m','48','15 s','Start day','Main menu']) {
+  for (const text of ['Day 6','Gulistan','2,690','5 officers','49 m','48','15 s','Start day','Main menu']) {
     assert.ok(markup.includes(text),text);
   }
   assert.equal((markup.match(/<button/g) ?? []).length,2);
