@@ -263,3 +263,15 @@ test('Sprint 15a: officers within radio range share what they know',()=>{
   const [a,b]=f.police.memorySummary;
   assert.ok(a.sightings>=2);assert.equal(b.sightings,a.sightings,'officer 1 faces away but learned it by radio');
 });
+
+test('Sprint 15e: officerObject and nearestIndex let the engine attach speech bubbles to the right officer',()=>{
+  const f=fixture(3);
+  f.patrols[0].object.position.set(0,0,0);f.patrols[1].object.position.set(10,0,0);f.patrols[2].object.position.set(30,0,0);
+  assert.equal(f.police.officerObject(0),f.primary);
+  assert.equal(f.police.officerObject(99),null);assert.equal(f.police.officerObject(-1),null);
+  assert.equal(f.police.nearestIndex(9,0),1);
+  assert.equal(f.police.nearestIndex(9,0,1),0,'excluding the nearest returns the next one');
+  assert.equal(f.police.nearestIndex(29,0,2),1);
+  f.police.detachExtras();
+  assert.equal(f.police.nearestIndex(0,0),-1,'no officers: -1');
+});

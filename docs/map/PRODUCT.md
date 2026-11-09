@@ -68,6 +68,8 @@ Renderer: `WebGPURenderer` (WebGPU, or WebGL 2 fallback). `vite.config.ts` alias
 | Colour grade + bloom + vignette (TSL RenderPipeline; ACES once at output) | `src/game/render/postfx.ts` | `GamePipeline`, `LOOKS` |
 | Interior-mapped window glass, street-lamp heads + light pools, clock-driven glow | `src/game/render/windows.ts` | `createWindowMaterial`, `createLampHeadMaterial`, `createLampPoolMaterial`, `interiorGlow`, `streetLamps` |
 | Perf probe + benchmark overlay (F3 / `?perf`) | `src/game/render/perfProbe.ts` | `PerfProbe` (engine calls `perfProbe.frame()` each render) |
+| Speech bubbles over heads (pooled sprites, Bangla font stack) | `src/game/dialogue/speechBubble.ts` | `SpeechBubbles.say/update/clear/setLowQuality` (engine field `bubbles`) |
+| Bangla police lines by situation, no immediate repeats | `src/game/dialogue/policeLines.ts` | `POLICE_LINES`, `PoliceLinePicker` (engine: `policeSay`, `policeSayNearest`) |
 | Street fights between pedestrians (approach, argue, blows, knock-down, police break-up) | `src/game/pedestrians.ts` | `PedestrianManager.startFight`, `updateFights`, `activeFightPoint`, `setFightRate`, `officers` (engine sets it each frame) |
 | Officer approach state machine (spot → walk up → warn → escalate / stand down) | `src/game/policeApproach.ts` | `stepApproach`, `chooseApproacher`, `createApproach` (used by `CampaignPolice`) |
 | Instanced ground blood decals (max 24, 8 on Low) for knock-downs | `src/game/render/bloodDecals.ts` | `BloodDecals` (owned by `PedestrianManager`; officers use `pedestrianManager.bloodDecals`) |

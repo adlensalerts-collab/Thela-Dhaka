@@ -200,6 +200,20 @@ export class CampaignPolice {
     this.approachId = -1; this.escalation = false; this.lastPlayerX = Number.NaN; this.vendorSpeed = 0;
   }
 
+  /** The officer's 3D object (speech bubbles attach to it), or null for a bad index. */
+  officerObject(index: number): THREE.Object3D | null { return this.patrols[index]?.object ?? null; }
+
+  /** Index of the officer nearest to (x, z), skipping `exclude`; -1 when there is none. */
+  nearestIndex(x: number, z: number, exclude = -1): number {
+    let best = -1, bestDist = Infinity;
+    for (let i = 0; i < this.patrols.length; i++) {
+      if (i === exclude) continue;
+      const o = this.patrols[i].object.position, d = Math.hypot(o.x - x, o.z - z);
+      if (d < bestDist) { bestDist = d; best = i; }
+    }
+    return best;
+  }
+
   nearestDistance(x: number, z: number) {
     let distance = Infinity;
     for (const patrol of this.patrols) distance = Math.min(distance,

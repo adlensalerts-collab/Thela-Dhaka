@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { WebGPURenderer } from 'three/webgpu';
 import { GamePipeline } from './render/postfx';
 import { PerfProbe } from './render/perfProbe';
+import { SpeechBubbles, type BubbleTone } from './dialogue/speechBubble';
+import { PoliceLinePicker, type PoliceSituation } from './dialogue/policeLines';
 import { Obstacle, resolveMovement } from './collision';
 import { SidewalkGraph } from './pathfinding';
 import { PedestrianManager, PedestrianNPC } from './pedestrians';
@@ -279,6 +281,21 @@ export class GameEngine {
     sun.shadow.autoUpdate = false;
     if (this.shadowFrame++ % every === 0) sun.shadow.needsUpdate = true;
   }
+  /** Sprint 15e: speech bubbles over officers' heads (Bangla lines). Created once the renderer is ready. */
+  bubbles: SpeechBubbles | null = null;
+  private policeTalk = new PoliceLinePicker();
+  private prevAlert = false;
+  private chaseShoutIn = 0;
+  private policeSay(index: number, situation: PoliceSituation, tone: BubbleTone = 'normal', seconds = 2.8) {
+    const officer = this.campaignPolice?.officerObject(index);
+    if (officer && this.bubbles) this.bubbles.say(officer, this.policeTalk.pick(situation), seconds, tone);
+  }
+  /** The officer nearest the vendor says a line; returns that officer's index (-1 if none). */
+  private policeSayNearest(situation: PoliceSituation, tone: BubbleTone = 'normal', seconds = 2.8, exclude = -1) {
+    const i = this.campaignPolice?.nearestIndex(this.human.position.x, this.human.position.z, exclude) ?? -1;
+    if (i >= 0) this.policeSay(i, situation, tone, seconds);
+    return i;
+  }
   /** F3 benchmark helper: show or hide every walking pedestrian. */
   crowdVisible(on: boolean) { for (const p of this.pedestrianManager?.pedestrians ?? []) p.mesh.visible = on; }
   showFps: boolean = false;
@@ -363,6 +380,8 @@ export class GameEngine {
       this.rendererReady = true;
       this.applyRenderFeatures();
       this.perfProbe = new PerfProbe(this);
+      this.bubbles = new SpeechBubbles(this.scene);
+      this.bubbles.setLowQuality(this.qualityLevel === 'low');
       console.info(`[gfx] renderer backend: ${(this.renderer.backend as { isWebGPUBackend?: boolean }).isWebGPUBackend ? 'WebGPU' : 'WebGL 2'}`);
     }).catch((error) => console.error('[gfx] renderer init failed', error));
     this.initWorld();
@@ -596,6 +615,7 @@ export class GameEngine {
     this.lighting?.setFeatures({ clouds: preset.clouds, aerialFog: preset.aerialFog });
     if (preset.post !== 'none' && !this.pipeline) this.pipeline = new GamePipeline(this.renderer, this.scene, this.camera);
     this.pipeline?.setBloomEnabled(preset.post === 'full');
+    this.bubbles?.setLowQuality(this.qualityLevel === 'low');
   }
 
   /** 60 FPS guard: adaptive resolution lowers the render size first; if the game is still under ~55 FPS for
@@ -1634,9 +1654,13 @@ export class GameEngine {
         junctions: this.world?.roads.nodes.filter(node => node.edges.length >= 3),
       }, this.scene);
       this.campaignPolice.onInjury = (x, z, heavy) => this.onOfficerInjured(x, z, heavy);
-      this.campaignPolice.onApproach = (event) => {
-        if (event === 'warning') this.onEvent('notify', 'এই! এখানে বেচাকেনা করা যাবে না! · An officer is warning you — no selling here!');
-        else if (event === 'stand_down') this.onEvent('notify', 'অফিসার চলে গেলেন · The officer moves on.');
+      this.campaignPolice.onApproach = (event, index) => {
+        if (event === 'spotted') this.policeSay(index, 'spotted');
+        else if (event === 'warning') {
+          this.policeSay(index, 'warning', 'angry', 3.4);
+          this.onEvent('notify', 'পুলিশ সতর্ক করছে · An officer is warning you: no selling here!');
+        } else if (event === 'stand_down') this.policeSay(index, 'stand_down');
+        else if (event === 'lost') this.policeSay(index, 'lost');
       };
       this.campaignPolice.resetPositions(this.human.position.x, this.human.position.z);
       this.state.policePositions = this.campaignPolice.positions();
@@ -2129,6 +2153,7 @@ export class GameEngine {
     }
     this.stats.spentBribes += cost;
     this.campaignPolice?.resetPositions(this.human.position.x, this.human.position.z);
+    this.bubbles?.clear();
     this.stats.bribesPaid++;
     this.syncDayAccountingState();
     if (this.checkSoloVendorFailure()) {
@@ -2290,7 +2315,7 @@ export class GameEngine {
   private lastPoliceZ = NaN;
 
   /** Sprint 15c: the vendor hit an officer. Assault raises heat, starts a chase at once and cannot be escaped by hiding. */
-  private onOfficerHit(heavy: boolean) {
+  private onOfficerHit(heavy: boolean, officer = -1) {
     this.state.heat = Math.min(100, this.state.heat + (heavy ? 40 : 25));
     this.state.cooldown = 0;
     this.state.escape = 0;
@@ -2299,6 +2324,10 @@ export class GameEngine {
     this.onEvent('notify', heavy
       ? 'অফিসার মাটিতে! এবার ছাড় নেই · Officer down — they will arrest you on sight!'
       : 'পুলিশকে ধাক্কা! · You hit an officer — they are coming for you!');
+    if (heavy) {                                                   // the hurt officer cries out, a colleague is furious
+      this.policeSay(officer, 'hurt', 'shout', 2.6);
+      this.policeSayNearest('hit', 'angry', 3.0, officer);
+    } else this.policeSay(officer, 'hit', 'angry', 3.0);
     this.publishState(true);
   }
 
@@ -2335,6 +2364,7 @@ export class GameEngine {
         this.state.escape = 0;
         this.stats.chasesEscaped++;
         this.onEvent('notify', 'Escaped police! Stay out of sight.');
+        this.policeSayNearest('lost', 'normal', 3.2);
         this.publishState(true);
       }
     } else {
@@ -2627,7 +2657,7 @@ export class GameEngine {
         const hvx = Number.isFinite(this.lastPoliceX) ? (this.human.position.x - this.lastPoliceX) / dt : 0;
         const hvz = Number.isFinite(this.lastPoliceZ) ? (this.human.position.z - this.lastPoliceZ) / dt : 0;
         const hit = this.campaignPolice.vendorContact(this.human.position, hvx, hvz);
-        if (hit) this.onOfficerHit(hit.heavy);
+        if (hit) this.onOfficerHit(hit.heavy, hit.index);
         if (this.campaignPolice.takeEscalation() && !this.state.alert) {
           this.state.alert = true; this.state.escape = 0; this.stats.chasesStarted++;
           this.onEvent('notify', 'পুলিশ ধাওয়া করছে! · The officer has had enough — run!');
@@ -2641,12 +2671,23 @@ export class GameEngine {
       this.lastPoliceX = this.human.position.x; this.lastPoliceZ = this.human.position.z;
       const dist = this.campaignPolice?.nearestDistance(this.human.position.x, this.human.position.z) ?? distBefore;
       this.updateChaseAlert(dist, policeSightRange, this.campaignPolice?.playerVisible ?? false);
+      // Sprint 15e: the chase starts with a shout and a radio call, then the nearest officer keeps shouting.
+      if (this.state.alert && !this.prevAlert) {
+        const n = this.policeSayNearest('chase', 'shout', 2.8);
+        this.policeSayNearest('radio', 'normal', 3.2, n);
+        this.chaseShoutIn = 7;
+      } else if (this.state.alert) {
+        this.chaseShoutIn -= dt;
+        if (this.chaseShoutIn <= 0) { this.chaseShoutIn = 7 + Math.random() * 3; this.policeSayNearest('chase', 'shout', 2.6); }
+      }
+      this.prevAlert = this.state.alert;
       if (this.state.alert) {
         if (this.campaignPolice?.canArrest(this.human.position)) {
           if (!this.isMenuOrModalOpen) {
             this.stats.timesCaught++;
             this.isMenuOrModalOpen = true;
             this.clearInputs();
+            this.policeSayNearest('arrest', 'shout', 3.5);
             this.onEvent('bribe_prompt');
           }
           return;
@@ -2756,6 +2797,7 @@ export class GameEngine {
       this.pedestrianManager.officers = this.state.policePositions ?? NO_OFFICERS;
       this.pedestrianManager.setFightRate(this.state.difficulty?.rageMultiplier ?? 1);
       this.pedestrianManager.update(dt);
+      this.bubbles?.update(dt, this.camera);
       this.updateHotspotCrowd(dt, p);
       // Bound articulated rigs near the camera; draw the far crowd with instancing.
       const cam = this.camera.position;
@@ -3260,6 +3302,8 @@ export class GameEngine {
       this.campaignPolice = null;
     }
     this.pedestrianManager?.dispose();
+    this.bubbles?.dispose();
+    this.bubbles = null;
     this.crowdCharacters.dispose();
     for (const actor of [this.human, this.officer, this.npcVendor]) actor?.userData.rig?.visual?.dispose();
     cancelAnimationFrame(this.animId);
