@@ -87,7 +87,7 @@ Known limits: frame rate not measured on a real GPU (headless uses software GL);
 | 15d | Police approach | ✅ module by AI Studio (`30f538f`), wired by Claude | `policeApproach.ts` (notice 0.8 s → walk up at 1.95 m/s to ~3 m → warn 5 s → stand down or escalate; 25 s cooldown; one officer at a time) integrated in `CampaignPolice.update`; `takeEscalation()` starts a chase; Bangla toasts until 15e bubbles |
 | 15e | Speech bubbles + Bangla police lines | ⏳ | `src/game/dialogue/*` |
 | 15f | NPC Bangla conversations | ⏳ | Alternating bubbles in chat groups |
-| 15g | NPC fights + mob beating | ⏳ | Brawls, onlookers filming, police break-up; reworks the legacy hostile mob |
+| 15g | NPC street fights | 🔄 built by Claude (fight part), awaiting upload | `PedestrianManager.startFight` / `updateFights`: two free adults walk up, argue (pointing), trade 3–5 blows, the loser is knocked down bleeding (same fall + blood decal as a hard thela hit), the winner catches their breath and walks off; up to 6 bystanders stop and watch; an officer within 14 m scatters everyone; a vendor hit that knocks a fighter down ends it; `setFightRate` (~60 s / rage multiplier), `activeFightPoint()` for officers (15h). Mob beating of the vendor is still the dormant legacy code. 4 new crowd tests |
 | 15h | Witness reactions | ⏳ | Panic, cower, call the police |
 | 16 | Multiplayer on the real map | ⏳ | Online 1v1 on New Market/Gulistan with day clock, rage and hotspots in sync |
 

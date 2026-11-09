@@ -188,6 +188,9 @@ export interface GameState {
 const _toHuman = new THREE.Vector3();
 const _lookTarget = new THREE.Vector3();
 
+/** Shared empty list: the crowd reads officer positions every frame without allocating. */
+const NO_OFFICERS: ReadonlyArray<{ x: number; z: number }> = [];
+
 export class GameEngine {
   container: HTMLDivElement;
   scene: THREE.Scene;
@@ -2750,6 +2753,8 @@ export class GameEngine {
       this.refreshHotspotSchedule();
       this.pedestrianManager.setTimeOfDay(this.state.mode === 'vendor'
         ? getDayClockMinutes(this.state.dayElapsedSeconds) : Number.NaN);
+      this.pedestrianManager.officers = this.state.policePositions ?? NO_OFFICERS;
+      this.pedestrianManager.setFightRate(this.state.difficulty?.rageMultiplier ?? 1);
       this.pedestrianManager.update(dt);
       this.updateHotspotCrowd(dt, p);
       // Bound articulated rigs near the camera; draw the far crowd with instancing.

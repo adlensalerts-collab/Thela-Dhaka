@@ -31,6 +31,24 @@ export interface PedestrianArchetype {
   speed: number;
 }
 
+/** Sprint 15g: a street fight between two pedestrians. */
+export interface FightRec {
+  a: PedestrianNPC;
+  b: PedestrianNPC;
+  phase: 'approach' | 'faceoff' | 'brawl' | 'aftermath';
+  t: number;
+  blows: number;
+  maxBlows: number;
+  /** 1 right after a blow, fading to 0 (drives the punch / recoil poses). */
+  swing: number;
+  /** Who throws the next blow: 0 = a, 1 = b. */
+  attacker: 0 | 1;
+  blowIn: number;
+  cx: number;
+  cz: number;
+  winner: PedestrianNPC | null;
+}
+
 export interface PedestrianNPC {
   id: number;
   mesh: THREE.Group;
@@ -46,7 +64,7 @@ export interface PedestrianNPC {
   pathIndex: number;
   speed: number;
   heading: number;
-  state: 'walking' | 'idle' | 'browsing' | 'injured' | 'hostile';
+  state: 'walking' | 'idle' | 'browsing' | 'injured' | 'hostile' | 'brawl';
   idleTimer: number;
   walkCycle: number;
   isEngagedInSale: boolean;
@@ -54,6 +72,8 @@ export interface PedestrianNPC {
   hasBought: boolean;
   /** Perf: whether this rig currently casts a shadow (only the nearest few do). */
   castsShadow?: boolean;
+  /** Sprint 15g: the street fight this person is in, if any. */
+  fight: FightRec | null;
   isInjured: boolean;
   injuredTimer: number;
   stumbleTimer: number;
@@ -149,6 +169,13 @@ export class PedestrianManager {
   private probes: CrowdRoadProbes | null = null;
   private browse: Array<BrowsePoint & { node: number }> = [];
   private lastCam: { x: number; z: number } | null = null;
+  /** Sprint 15g: street fights. `officers` is set by the engine each frame; an officer within 14 m breaks a fight up. */
+  officers: ReadonlyArray<{ x: number; z: number }> = [];
+  fights: FightRec[] = [];
+  fightsStarted = 0;
+  maxFights = 1;
+  private fightEvery = 60;
+  private fightTimer = 30;
   private groupTimer = 0;
   private densityTimer = 0;
   private detailTimer = 0;
@@ -451,6 +478,7 @@ export class PedestrianManager {
         walkCycle: Math.random() * 10,
         isEngagedInSale: false,
         hasBought: false,
+        fight: null,
         isInjured: false,
         injuredTimer: 0,
         stumbleTimer: 0,
@@ -502,6 +530,7 @@ export class PedestrianManager {
       p.idleTimer = 0;
       p.isEngagedInSale = false;
       p.hasBought = false;
+      p.fight = null;
       p.isInjured = false;
       p.injuredTimer = 0;
       p.stumbleTimer = 0;
@@ -532,6 +561,7 @@ export class PedestrianManager {
       p.mesh.visible = true;
     }
     this.nearSet.clear();
+    this.fights.length = 0;
     this.densityTimer = 0;
   }
 
@@ -544,6 +574,7 @@ export class PedestrianManager {
     this.bloodDecals.update(dt);
     if (this.minutes !== null || this.lastCam) this.updateDensity(dt);
     this.updateGroups(dt);
+    this.updateFights(dt);
     for (let i = 0; i < this.pedestrians.length; i++) {
       const p = this.pedestrians[i];
       if (!p.active) continue;
@@ -654,6 +685,13 @@ export class PedestrianManager {
           p.leftArm.rotation.z = -0.06;
           p.rightArm.rotation.z = 0.06;
         }
+        this.updateRageSprite(p);
+        continue;
+      }
+
+      // Sprint 15g: street fight (poses; positions and blows are driven by updateFights)
+      if (p.state === 'brawl') {
+        this.animateBrawl(p, dt);
         this.updateRageSprite(p);
         continue;
       }
@@ -1168,7 +1206,7 @@ export class PedestrianManager {
     if (chosen.length < max) {
       // Parked (off-street) people count as far away: bringing them in also refills the street.
       const far = this.pedestrians
-        .filter((p) => p.groupId === 0 && !p.hasBought && !p.isEngagedInSale && !p.summonUntil && p.state !== 'hostile' && p.state !== 'injured'
+        .filter((p) => p.groupId === 0 && !p.hasBought && !p.isEngagedInSale && !p.summonUntil && p.state !== 'hostile' && p.state !== 'injured' && p.state !== 'brawl'
           && (!p.active || Math.hypot(p.mesh.position.x - x, p.mesh.position.z - z) > 90));
       const ring = this.graph.nodes.filter((n) => { const d = Math.hypot(n.x - x, n.z - z); return d >= 45 && d <= 60; });
       // shuffle the ring, then keep only spots with a direct walk to the thela
@@ -1227,7 +1265,7 @@ export class PedestrianManager {
     let nearest: PedestrianNPC | null = null;
     let minDist = Infinity;
     for (const p of this.pedestrians) {
-      if (!p.active || p.hasBought || p.state === 'injured' || p.state === 'hostile') continue;
+      if (!p.active || p.hasBought || p.state === 'injured' || p.state === 'hostile' || p.state === 'brawl') continue;
       const d = Math.hypot(p.mesh.position.x - x, p.mesh.position.z - z);
       if (d < minDist) {
         minDist = d;
@@ -1309,7 +1347,7 @@ export class PedestrianManager {
     this.refreshFocus();
     const forced = (p: PedestrianNPC) =>
       p.isEngagedInSale || (!!p.summonUntil && p.summonUntil > this.clock) ||
-      p.state === 'hostile' || p.state === 'injured' || !!p.rageSprite?.visible;
+      p.state === 'hostile' || p.state === 'injured' || p.state === 'brawl' || !!p.rageSprite?.visible;
 
     this.detailTimer -= 1;
     if (this.detailTimer <= 0) {
@@ -1385,6 +1423,199 @@ export class PedestrianManager {
       if (p.crossingRoad && p.crossWait > 0 && p.crossWait < 6) waiting++;
     }
     return { pool: this.poolSize, active, near, far, impostors: this.impostors.drawn, chatting, phones, browsing, watching, waitingToCross: waiting, groups: this.groupEnds.size };
+  }
+
+  // ---------------------------------------------------------------- Sprint 15g: street fights
+  /** Fights get more frequent as the street gets angrier (rage multiplier 1 = about every 60 s, 1.5 = about every 40 s). */
+  setFightRate(rageMultiplier: number) {
+    this.fightEvery = 60 / Math.max(0.5, Number.isFinite(rageMultiplier) ? rageMultiplier : 1);
+  }
+
+  /** Where a fight is going on right now (for officers to walk to), or null. */
+  activeFightPoint(): { x: number; z: number } | null {
+    const f = this.fights[0];
+    return f ? { x: f.cx, z: f.cz } : null;
+  }
+
+  /** Two free adults square up: walk to each other, argue, trade blows; the loser is knocked down and bleeds. */
+  startFight(a: PedestrianNPC, b: PedestrianNPC): boolean {
+    if (a === b || a.fight || b.fight || !this.isFree(a, true) || !this.isFree(b, true)) return false;
+    if (isChildOrSchoolArchetype(a.archetype) || isChildOrSchoolArchetype(b.archetype)) return false;
+    for (const p of [a, b]) {
+      this.clearActivity(p);
+      p.path = []; p.pathIndex = 0; p.texting = false;
+      p.state = 'brawl';
+      p.rage = Math.max(p.rage, 55);
+    }
+    const rec: FightRec = {
+      a, b, phase: 'approach', t: 0, blows: 0, maxBlows: 3 + Math.floor(Math.random() * 3), swing: 0,
+      attacker: 0, blowIn: 0.4, winner: null,
+      cx: (a.mesh.position.x + b.mesh.position.x) / 2, cz: (a.mesh.position.z + b.mesh.position.z) / 2,
+    };
+    a.fight = rec; b.fight = rec;
+    this.fights.push(rec);
+    this.fightsStarted++;
+    let watchers = 0;                                  // people nearby stop and watch
+    for (const p of this.pedestrians) {
+      if (watchers >= 6) break;
+      if (p === a || p === b || !this.isFree(p, true)) continue;
+      if (Math.hypot(p.mesh.position.x - rec.cx, p.mesh.position.z - rec.cz) > 14) continue;
+      this.startActivity(p, 'look', 10 + Math.random() * 4, rec.cx, rec.cz);
+      watchers++;
+    }
+    return true;
+  }
+
+  /** The nearest pair of free near-tier adults (6–38 m from the camera, within 12 m of each other) starts a fight. */
+  private tryStartFight() {
+    const cam = this.lastCam;
+    if (!cam) return;
+    let pa: PedestrianNPC | null = null, pb: PedestrianNPC | null = null, best = 12;
+    const ped = this.pedestrians;
+    for (let i = 0; i < ped.length; i++) {
+      const a = ped[i];
+      if (a.lod !== 'near' || !this.isFree(a)) continue;
+      const da = Math.hypot(a.mesh.position.x - cam.x, a.mesh.position.z - cam.z);
+      if (da < 6 || da > 38) continue;
+      for (let j = i + 1; j < ped.length; j++) {
+        const b = ped[j];
+        if (b.lod !== 'near' || !this.isFree(b)) continue;
+        const d = Math.hypot(a.mesh.position.x - b.mesh.position.x, a.mesh.position.z - b.mesh.position.z);
+        if (d >= 1.5 && d < best) { best = d; pa = a; pb = b; }
+      }
+    }
+    if (pa && pb) this.startFight(pa, pb);
+  }
+
+  private updateFights(dt: number) {
+    this.fightTimer -= dt;
+    if (this.fightTimer <= 0) {
+      this.fightTimer = this.fightEvery * (0.7 + Math.random() * 0.6);
+      if (this.fights.length < this.maxFights) this.tryStartFight();
+    }
+    for (let i = this.fights.length - 1; i >= 0; i--) {
+      const rec = this.fights[i], a = rec.a, b = rec.b;
+      const alive = rec.phase === 'aftermath'
+        ? !!rec.winner && rec.winner.active && rec.winner.state === 'brawl'
+        : a.active && b.active && a.state === 'brawl' && b.state === 'brawl';   // knocked down by the vendor etc. ends it
+      if (!alive) { this.endFight(rec, i, 'interrupted'); continue; }
+      rec.t += dt;
+      const ax = a.mesh.position.x, az = a.mesh.position.z, bx = b.mesh.position.x, bz = b.mesh.position.z;
+      rec.cx = (ax + bx) / 2; rec.cz = (az + bz) / 2;
+      if (rec.phase !== 'aftermath') {
+        let police = false;
+        for (let k = 0; k < this.officers.length && !police; k++) {
+          police = Math.hypot(this.officers[k].x - rec.cx, this.officers[k].z - rec.cz) < 14;
+        }
+        if (police) { this.endFight(rec, i, 'dispersed'); continue; }   // an officer is close: everyone scatters
+      }
+      const dist = Math.hypot(bx - ax, bz - az);
+      if (rec.phase === 'approach') {
+        if (dist > 1.05) {
+          const ux = (bx - ax) / dist, uz = (bz - az) / dist, step = Math.min(1.8 * dt, (dist - 1.0) / 2);
+          const sa = this.clampOffRoad(ax, az, ux * step, uz * step, step + 0.01);
+          const sb = this.clampOffRoad(bx, bz, -ux * step, -uz * step, step + 0.01);
+          a.mesh.position.x = sa.x; a.mesh.position.z = sa.z; b.mesh.position.x = sb.x; b.mesh.position.z = sb.z;
+        }
+        if (dist <= 1.1 || rec.t > 4) { rec.phase = 'faceoff'; rec.t = 0; }
+      } else if (rec.phase === 'faceoff') {
+        if (rec.t >= 1.6) { rec.phase = 'brawl'; rec.t = 0; rec.blowIn = 0.3; }
+      } else if (rec.phase === 'brawl') {
+        rec.swing = Math.max(0, rec.swing - dt / 0.3);
+        rec.blowIn -= dt;
+        if (rec.blowIn <= 0) this.fightBlow(rec);
+      } else if (rec.t >= 1.4) {
+        this.endFight(rec, i, 'finished');       // the winner has caught their breath and walks off
+      }
+    }
+  }
+
+  private fightBlow(rec: FightRec) {
+    rec.attacker = rec.attacker === 0 ? 1 : 0;
+    const att = rec.attacker === 0 ? rec.a : rec.b, vic = att === rec.a ? rec.b : rec.a;
+    rec.swing = 1; rec.blows++; rec.blowIn = 0.55 + Math.random() * 0.45;
+    const dx = vic.mesh.position.x - att.mesh.position.x, dz = vic.mesh.position.z - att.mesh.position.z, d = Math.hypot(dx, dz) || 1;
+    vic.knockbackDist = 0; vic.knockbackVx = dx / d * 1.1; vic.knockbackVz = dz / d * 1.1;
+    vic.damageTaken = Math.min(100, vic.damageTaken + 12);
+    vic.rage = Math.min(100, vic.rage + 6);
+    if (rec.blows >= rec.maxBlows) {
+      rec.winner = att; rec.phase = 'aftermath'; rec.t = 0;
+      vic.fight = null;
+      this.fightKnockDown(vic, att);
+    }
+  }
+
+  /** Same fall as a hard thela hit: lies 3 s, gets up holding the head, limps for a minute, blood pools on the ground. */
+  private fightKnockDown(p: PedestrianNPC, from: PedestrianNPC) {
+    const dx = p.mesh.position.x - from.mesh.position.x, dz = p.mesh.position.z - from.mesh.position.z, d = Math.hypot(dx, dz) || 1;
+    const outX = dx / d, outZ = dz / d;
+    p.hitCooldown = 4.4;
+    p.rage = Math.min(100, p.rage + 30);
+    p.damageTaken = Math.min(100, p.damageTaken + 40);
+    p.isInjured = true; p.state = 'injured'; p.injuredTimer = 4.2; p.stumbleTimer = 0;
+    p.knockbackDist = 0; p.knockbackVx = outX * 3.0; p.knockbackVz = outZ * 3.0;
+    p.heading = Math.atan2(-outX, outZ); p.mesh.rotation.y = -p.heading;
+    const rest = this.clampOffRoad(p.mesh.position.x, p.mesh.position.z, outX * 0.45, outZ * 0.45, 1.5);
+    const head = this.clampOffRoad(rest.x, rest.z, outX * 1.15, outZ * 1.15, 1.5);
+    this.bloodDecals.spawnKnockdownBlood(head.x, head.z);
+  }
+
+  private endFight(rec: FightRec, index: number, reason: 'finished' | 'dispersed' | 'interrupted') {
+    const release = (p: PedestrianNPC) => {
+      p.fight = null;
+      if (p.state !== 'brawl') return;               // knocked down: the injured routine takes over
+      p.state = 'walking';
+      p.hurryTimer = reason === 'dispersed' ? 6 : 3;
+      this.resetPose(p);
+      this.startTrip(p);
+    };
+    release(rec.a); release(rec.b);
+    this.fights.splice(index, 1);
+  }
+
+  private resetPose(p: PedestrianNPC) {
+    p.mesh.rotation.x = 0; p.mesh.position.y = 0;
+    p.body.rotation.x = 0; p.body.rotation.z = 0;
+    p.leftArm.rotation.set(0, 0, -0.06); p.rightArm.rotation.set(0, 0, 0.06);
+    p.leftLeg.rotation.set(0, 0, 0); p.rightLeg.rotation.set(0, 0, 0);
+  }
+
+  /** Fighters face each other: fists up while closing in, a pointing argument, then punches and recoil. */
+  private animateBrawl(p: PedestrianNPC, dt: number) {
+    const rec = p.fight;
+    if (!rec) { p.state = 'walking'; this.resetPose(p); return; }
+    const isA = rec.a === p, partner = isA ? rec.b : rec.a;
+    const dx = partner.mesh.position.x - p.mesh.position.x, dz = partner.mesh.position.z - p.mesh.position.z;
+    if (Math.abs(dx) + Math.abs(dz) > 0.01) {
+      let diff = Math.atan2(dx, -dz) - p.heading;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      p.heading += diff * Math.min(1, dt * 10);
+      p.mesh.rotation.y = -p.heading;
+    }
+    p.walkCycle += dt * (rec.phase === 'approach' ? 9 : 4);
+    const wob = Math.sin(p.walkCycle);
+    const myTurn = rec.attacker === (isA ? 0 : 1);
+    const hit = rec.phase === 'brawl' && myTurn ? rec.swing : 0;
+    const taken = rec.phase === 'brawl' && !myTurn ? rec.swing : 0;
+    p.mesh.position.y = 0;
+    if (rec.phase === 'approach') {
+      p.leftLeg.rotation.x = wob * 0.5; p.rightLeg.rotation.x = -wob * 0.5;
+      p.leftArm.rotation.set(-0.9, 0, -0.2); p.rightArm.rotation.set(-0.9, 0, 0.2);
+      p.body.rotation.x = 0.08;
+    } else if (rec.phase === 'faceoff') {
+      p.leftLeg.rotation.x = -0.15; p.rightLeg.rotation.x = 0.15;
+      p.rightArm.rotation.set(-1.45 + wob * 0.2, 0, 0.1); p.leftArm.rotation.set(-0.55, 0, -0.15);
+      p.body.rotation.x = 0.1; p.body.rotation.z = wob * 0.07;
+    } else if (rec.phase === 'brawl') {
+      p.leftLeg.rotation.x = -0.28; p.rightLeg.rotation.x = 0.28;
+      p.rightArm.rotation.set(-1.0 - 1.0 * hit, 0, 0.15); p.leftArm.rotation.set(-0.95 + 0.4 * taken, 0, -0.15);
+      p.body.rotation.x = 0.12 + 0.3 * hit - 0.28 * taken; p.body.rotation.z = wob * 0.06;
+    } else {
+      p.leftLeg.rotation.x = 0; p.rightLeg.rotation.x = 0;
+      p.leftArm.rotation.set(0.1, 0, -0.1); p.rightArm.rotation.set(0.1, 0, 0.1);
+      p.body.rotation.x = 0.16 + Math.sin(p.walkCycle * 1.5) * 0.05; p.body.rotation.z = 0;
+    }
   }
 
   dispose() {

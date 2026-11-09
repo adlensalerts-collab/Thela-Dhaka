@@ -61,6 +61,8 @@ Between listed levels, interpolate (Nov 2026: more officers and +40 % sight than
 
 A crowd-anger meter that turns the street against the player. **Graphic (owner decision, Nov 2026):** injuries, blood and beatings are shown: hit reactions and knock-downs, brawls, and a mob beating when the vendor is caught. Guardrails: no health bars for NPCs (the vendor keeps his Life bar); adult characters only (any child/school-age model flees and never fights or gets hurt); nobody dies and there is no dismemberment or gore pile (injured people limp off); blood is cheap, as pooled instanced decals plus short particles with a hard cap (24, or 8 on Low quality). Being caught means losing money, stock and time.
 
+**Street fights (Sprint 15g):** every so often (about once a minute, more often as rage sensitivity rises) two free adults near the player start an argument, walk up, point and shout, and trade blows. The loser is knocked down and bleeds, the winner walks off, and bystanders stop to watch. An officer within 14 m breaks a fight up and everybody scatters. Children never fight.
+
 **Rage rises from:**
 
 | Cause | Rage |
